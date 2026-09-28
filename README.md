@@ -6,11 +6,11 @@ Persian RTL AI meal and recipe demo (آشپزخونه).
 
 | Service | Image | URL |
 | --- | --- | --- |
-| web | nginx, static landing page | http://localhost:8080 |
+| web | nginx, Persian pantry UI | http://localhost:8080 |
 | api | Python (Flask + Gunicorn) | http://localhost:8000 |
 | db | Postgres 16 | localhost:5432 |
 
-The API includes a shared GapGPT client (`api/gapgpt.py`) for later recipe and fridge-vision work. Later tickets add pantry, recipes, fridge vision, and the meal plan. Product UI will be Persian RTL. This scaffold’s docs and code comments are English. The landing page title is آشپزخونه.
+The web page is a Persian RTL pantry. You can add and remove ingredient chips, load a sample set of Iranian staples, and set a numeric week budget. The list and budget stay in this browser (`localStorage`); they are not stored in Postgres. The API includes a shared GapGPT client (`api/gapgpt.py`) for later recipe and fridge-vision work. Later tickets add recipes, fridge vision, and the meal plan. Product UI is Persian RTL. This scaffold’s docs and code comments are English.
 
 The GitHub repository is public.
 
@@ -75,11 +75,30 @@ text = GapGPTClient().chat_text([
 | Other upstream HTTP error | 502 | `upstream_error` |
 | Success | 200 | `ok: true` plus `reply` |
 
+## Pantry UI
+
+After `docker compose up --build`, open http://localhost:8080.
+
+The page is Persian, right to left, and set in Vazirmatn. On a new browser the kitchen is empty and shows «هنوز چیزی در آشپزخانه نیست».
+
+- «بارگذاری نمونه» loads eight staples: برنج، پیاز، عدس، لوبیا، سیب‌زمینی، گوجه‌فرنگی، ماست، روغن. Loading again does not duplicate them.
+- Type a name and press «افزودن». The same name, including extra spaces and Arabic/Persian letter variants, is ignored.
+- Tap a chip to remove it. «پاک کردن» empties the list and leaves the week budget as it is. «بارگذاری نمونه» then restores those eight staples.
+- «بودجه هفته» in the header is the numeric week budget in تومان. Reload the page and it is still there.
+
+Ingredient rules without a browser:
+
+```bash
+node --test web/pantry.test.js
+```
+
+Web `/health` is unchanged.
+
 ## Demo path (QA)
 
 1. From a clean shell (no `GAP_CODE_API_KEY` in the environment, and no real key in `.env`), run `docker compose up --build`.
 2. Wait until `web`, `api`, and `db` are running. `docker compose ps` should show them healthy.
-3. Open http://localhost:8080 and confirm the آشپزخونه landing page.
+3. Open http://localhost:8080 and confirm the آشپزخونه pantry (empty state, then «بارگذاری نمونه»). See [Pantry UI](#pantry-ui).
 4. Confirm web health:
 
    ```bash

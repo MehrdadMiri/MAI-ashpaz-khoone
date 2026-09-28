@@ -1,51 +1,95 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fa" dir="rtl">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>آشپزخونه</title>
-    <style>
-      body {
-        margin: 0;
-        font-family: Georgia, "Times New Roman", serif;
-        background: #f6f1e7;
-        color: #1f1a14;
-      }
-
-      main {
-        max-width: 40rem;
-        margin: 4rem auto;
-        padding: 0 1.5rem;
-      }
-
-      h1 {
-        font-family: Tahoma, "Noto Naskh Arabic", sans-serif;
-        font-size: 2.5rem;
-        font-weight: 600;
-        margin-bottom: 0.25rem;
-      }
-
-      p {
-        line-height: 1.5;
-      }
-
-      code {
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      }
-    </style>
+    <link rel="stylesheet" href="pantry.css" />
   </head>
   <body>
-    <main>
-      <h1 dir="rtl" lang="fa">آشپزخونه</h1>
-      <p>Scaffold is up. This is the meal and recipe demo foundation.</p>
-      <p>
-        Web health:
-        <a href="/health"><code>/health</code></a>
-      </p>
-      <p>
-        API health:
-        <a href="http://localhost:8000/health"><code>localhost:8000/health</code></a>
-      </p>
-    </main>
+    <div class="page">
+      <header class="topbar">
+        <div class="brand">
+          <h1>آشپزخونه</h1>
+          <p class="lede">مواد اولیه همین هفته</p>
+        </div>
+        <label class="budget-chip">
+          <span class="budget-kicker" id="budget-label">بودجه هفته</span>
+          <span class="budget-field">
+            <input
+              id="week-budget"
+              name="week-budget"
+              type="text"
+              inputmode="numeric"
+              dir="ltr"
+              maxlength="13"
+              autocomplete="off"
+              spellcheck="false"
+              aria-labelledby="budget-label"
+              data-testid="week-budget"
+            />
+            <span class="budget-unit">تومان</span>
+          </span>
+        </label>
+      </header>
+
+      <main class="panel" id="pantry">
+        <div class="panel-head">
+          <h2>
+            مواد آشپزخانه
+            <span id="count" class="count" data-testid="pantry-count" hidden></span>
+          </h2>
+          <p id="chip-hint" class="hint" hidden>برای حذف، روی ماده بزنید.</p>
+        </div>
+
+        <div id="empty" class="empty" data-testid="empty-state">
+          <p class="empty-title">هنوز چیزی در آشپزخانه نیست</p>
+          <p class="empty-help">یک ماده اضافه کنید یا نمونه را بارگذاری کنید.</p>
+          <div id="empty-actions" class="empty-actions">
+            <button type="button" id="seed" class="is-emphasis" data-testid="seed-button">
+              بارگذاری نمونه
+            </button>
+          </div>
+        </div>
+
+        <ul
+          id="chips"
+          class="chips"
+          data-testid="pantry-chips"
+          aria-label="مواد آشپزخانه"
+          hidden
+        ></ul>
+
+        <form id="add-form" class="add-form" autocomplete="off">
+          <label class="sr-only" for="ingredient">نام ماده</label>
+          <input
+            id="ingredient"
+            name="ingredient"
+            type="text"
+            maxlength="40"
+            placeholder="مثلاً برنج"
+            autocomplete="off"
+            enterkeyhint="done"
+            data-testid="ingredient-input"
+          />
+          <button type="submit" data-testid="add-button">افزودن</button>
+        </form>
+
+        <div class="actions" id="actions" hidden>
+          <button type="button" id="clear" data-testid="clear-button" disabled>پاک کردن</button>
+        </div>
+
+        <p id="status" class="status" role="status" aria-live="polite" data-testid="status"></p>
+      </main>
+
+      <footer class="footer">
+        <span>فهرست در همین مرورگر می‌ماند.</span>
+        <a href="/health">سلامت سرویس</a>
+      </footer>
+    </div>
+    <noscript>
+      <p class="noscript">برای استفاده از آشپزخانه، جاوااسکریپت را روشن کنید.</p>
+    </noscript>
+    <script src="pantry.js"></script>
   </body>
 </html>
