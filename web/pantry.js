@@ -314,6 +314,7 @@
 
     clearBtn.addEventListener("click", function () {
       pantry.clear();
+      input.value = "";
       setStatus("آشپزخانه خالی شد");
       render();
     });
