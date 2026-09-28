@@ -1,7 +1,8 @@
-"""Ashpaz-khoone API scaffold.
+"""Ashpaz-khoone API.
 
-Later tickets add the GapGPT client, pantry, recipes, and meal plan.
-This process starts when GAP_CODE_API_KEY is unset. /health stays OK either way.
+The shared GapGPT client lives in gapgpt.py. /health reports whether a key
+is configured and does not call the model. POST /gapgpt/smoke sends one
+fixed chat completion when GAP_CODE_API_KEY is set.
 """
 
 import os
@@ -9,7 +10,11 @@ import os
 import psycopg
 from flask import Flask, jsonify
 
+from gapgpt import GapGPTClient, GapGPTConfig, GapGPTError
+
 app = Flask(__name__)
+# Insertion order, so documented smoke JSON matches the response body.
+app.json.sort_keys = False
 
 
 def setting(name, default=""):
@@ -18,11 +23,11 @@ def setting(name, default=""):
 
 def gapgpt_status():
     # Report whether a key is present. Never include the key itself.
-    return {
-        "configured": bool(setting("GAP_CODE_API_KEY")),
-        "base_url": setting("GAPGPT_BASE_URL") or "https://api.gapgpt.app/v1",
-        "model": setting("GAPGPT_MODEL") or "gpt-5.6-luna",
-    }
+    return GapGPTConfig.from_env().public_status()
+
+
+def build_gapgpt_client():
+    return GapGPTClient()
 
 
 def database_ok():
@@ -44,6 +49,26 @@ def database_ok():
         return False
 
 
+def respond_gapgpt(fn, failure_message):
+    """Run a GapGPT call and return JSON. Unexpected failures omit exception text."""
+    try:
+        return jsonify(fn())
+    except GapGPTError as exc:
+        return jsonify(exc.to_dict()), exc.http_status
+    except Exception as exc:
+        app.logger.warning("gapgpt call failed: %s", exc.__class__.__name__)
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": "internal_error",
+                    "message": failure_message,
+                }
+            ),
+            500,
+        )
+
+
 @app.get("/")
 def root():
     return jsonify(
@@ -51,6 +76,7 @@ def root():
             "service": "api",
             "name": "ashpaz-khoone",
             "health": "/health",
+            "gapgpt_smoke": "/gapgpt/smoke",
         }
     )
 
@@ -65,3 +91,26 @@ def health():
         "gapgpt": gapgpt_status(),
     }
     return jsonify(body), (200 if db_ok else 503)
+
+
+@app.get("/gapgpt/smoke")
+def gapgpt_smoke_get():
+    return (
+        jsonify(
+            {
+                "ok": False,
+                "error": "method_not_allowed",
+                "message": "Use POST /gapgpt/smoke to run the fixed chat check",
+            }
+        ),
+        405,
+    )
+
+
+@app.post("/gapgpt/smoke")
+def gapgpt_smoke():
+    # Fixed prompt only. The request body is ignored so this is not an open proxy.
+    return respond_gapgpt(
+        lambda: build_gapgpt_client().smoke(),
+        "GapGPT smoke check failed",
+    )
