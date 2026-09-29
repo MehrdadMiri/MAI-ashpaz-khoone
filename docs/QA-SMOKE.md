@@ -1,24 +1,25 @@
-# QA smoke — آشپزخونه v0.2.0
+# QA smoke — آشپزخونه v0.3.0
 
-Release gate for tag `v0.2.0`. `v0.1.0` is already tagged (pantry chips, one fridge photo, recipe cards, the 7-day plan, and the empty, loading, and error polish). This checklist is the full path that must be green before that next tag. It keeps the v0.1 path and adds the v0.2 theme:
+Release gate for tag `v0.3.0`. `v0.2.0` is already tagged (shopping, leftover regenerate, multi-photo fridge, Postgres persist, nutrition, share/print, diet filters, and a home-screen install). `v0.1.0` is the tagged MVP (pantry chips, one fridge photo, recipe cards, the 7-day plan, and the empty, loading, and error polish). This checklist is the full path that must be green before `v0.3.0`. It keeps that earlier path and adds the v0.3 theme:
 
-| v0.2 feature | Step |
+| Feature | Step |
 | --- | --- |
-| Shopping list (مواد خرید) | 7b |
+| 21-slot meals (صبحانه / ناهار / شام) | 5 |
+| Household size (تعداد نفرات scales amounts and cost) | 4d |
+| Okala prices and سبد اُکالا | 7d |
+| Shopping list, including manual مواد خرید rows | 7b |
+| Multi-user isolation («کاربر جدید») | 7e |
+| پیشنهاد دستور → «پیشنهاد دستورهای بیشتر», plus the count heuristic | 4 |
+| Single-slot assign vs explicit «برنامه ۷ روزه» | 5 |
 | Leftover-aware regenerate | 5b |
 | Multi-photo fridge vision | 3b |
 | Postgres pantry/plan persist + localStorage fallback | 7c |
 | Nutrition on cards (soft-fail) | 4c |
 | Share/print week (`#p=` + A4 poster) | 7 |
 | Diet filters (گیاهی / بدون پیاز / مناسب دیابت) | 4b |
-| Household size (تعداد نفرات scales amounts and cost) | 4d |
-| Okala prices and assisted cart (ticket #20) | 7d |
-| Multi-user pantry, plan, and shopping (ticket #23) | 7e |
 | PWA install (manifest, service worker shell-only, install note) | 9 |
 
-Do **not** create the `v0.2.0` tag or a GitHub Release from this checklist. SE tags after this path is green. Short notes for that tag are [RELEASE.md](RELEASE.md).
-
-Steps 5, 5b, 7, and 7b also cover the v0.3 week (صبحانه، ناهار، شام — ۲۱ slots). Step 7d covers v0.3 Okala prices. Do **not** create a `v0.3.0` tag from those checks.
+Do **not** create the `v0.3.0` tag or a GitHub Release from this checklist. SE tags after this path is green. Short notes for that tag are [RELEASE.md](RELEASE.md).
 
 ## Repo and secrets
 
@@ -92,7 +93,7 @@ On a fresh browser profile (or after «پاک کردن»):
 
 ### 3b. Several fridge photos — confidence and merged names
 
-Up to six photos share one confirm flow. This step is part of the v0.2.0 gate. The tag itself is step 10.
+Up to six photos share one confirm flow. This step is part of the v0.3.0 gate. The tag itself is step 10.
 
 - Add at least two photos before detection: multi-select in «انتخاب عکس», or «ثبت این عکس» twice, or one of each plus «عکس دیگر». The tray lists them in that order. «حذف» drops one and keeps the rest in order.
 - «تشخیص مواد» sends one request. The sheet shows those photos and «در حال تشخیص مواد…». Cancel still adds nothing.
@@ -116,7 +117,7 @@ curl -sS -X POST http://localhost:8000/vision/fridge \
 
 Missing key: HTTP 503, `"error": "not_configured"`. Invalid key: HTTP 502, `"error": "unauthorized"`.
 
-Live smoke with a real key only in the host file `…/MAI/.env` (or this repo’s gitignored `.env`). Do not echo the value. Do not tag `v0.2.0` from this step.
+Live smoke with a real key only in the host file `…/MAI/.env` (or this repo’s gitignored `.env`). Do not echo the value. Do not tag from this step. The tag is step 10.
 
 ```bash
 set -a
@@ -182,7 +183,7 @@ Expected: HTTP 200, `"available": false`, and `null` for that recipe. With a rea
 
 ### 4d. تعداد نفرات — portions and cost
 
-This check is the v0.3 household-size slice (ticket #19). Do **not** create a `v0.3.0` tag from it.
+This step is part of the v0.3.0 gate (تعداد نفرات). The tag itself is step 10.
 
 The header control is «تعداد نفرات». It starts at ۴, next to «بودجه هفته». «−» and «+» move it. The allowed range is ۱ to ۱۲.
 
@@ -214,7 +215,7 @@ cd api && python3 -m unittest tests.test_recipes tests.test_store tests.test_sta
 
 ### 5. Seven-day plan — صبحانه، ناهار، شام
 
-This check is the v0.3 meal-slot slice (ticket #18). Do **not** create a `v0.3.0` tag from it.
+This step is part of the v0.3.0 gate (۲۱ meal slots, and a single-slot assign versus «برنامه ۷ روزه»). The tag itself is step 10.
 
 - The week is شنبه through جمعه. Each day shows سه وعده: صبحانه، ناهار، شام. An empty slot says «خالی» and offers «انتخاب».
 - «برنامه ۷ روزه» fills every empty slot from the cards. With more than one recipe, one day does not get the same dish for all three meals. A single recipe may fill every empty slot. Slots you already filled stay as they are.
@@ -225,7 +226,7 @@ This check is the v0.3 meal-slot slice (ticket #18). Do **not** create a `v0.3.0
 
 ### 5b. Leftover regenerate vs full regenerate
 
-Needs at least one filled day (step 5) and the sample chips (step 2). This step is part of the v0.2.0 gate. The tag itself is step 10.
+Needs at least one filled day (step 5) and the sample chips (step 2). This step is part of the v0.3.0 gate. The tag itself is step 10.
 
 - Mark one شام «خورده شد». That slot shows the meal is eaten. The other meals, the other days, and the chips stay. Marking صبحانه does not mark ناهار or شام.
 - Press «پیشنهاد دستور» (or «پیشنهاد دستورهای بیشتر» if cards are already showing). The request uses the chips that eaten meal did not use, and it skips that meal’s title. The week budget is still sent. The first success shows three cards. A later «بیشتر» adds cards and keeps the earlier titles. The eaten slot stays. The pantry chips are unchanged.
@@ -247,7 +248,7 @@ curl -sS -X POST http://localhost:8000/recipes/generate \
 
 Missing key: HTTP 503, `"error": "not_configured"`. Invalid key: HTTP 502, `"error": "unauthorized"`. Empty `remaining` without `"full": true` is HTTP 400, `"error": "no_remaining"`, and does not call GapGPT.
 
-Live smoke with a real key only in the host file `…/MAI/.env` (or this repo’s gitignored `.env`). Do not echo the value. Do not tag `v0.2.0` from this step.
+Live smoke with a real key only in the host file `…/MAI/.env` (or this repo’s gitignored `.env`). Do not echo the value. Do not tag from this step. The tag is step 10.
 
 ```bash
 set -a
@@ -275,7 +276,7 @@ Repeat the two curls. Leftover: HTTP 200, `"mode": "leftovers"`, three recipes, 
 
 ### 7b. مواد خرید
 
-After the week has at least one meal (step 5) and the pantry has chips (step 2). This check does not call GapGPT. Do **not** create a `v0.3.0` tag from it.
+After the week has at least one meal (step 5) and the pantry has chips (step 2). This check does not call GapGPT. This step is part of the v0.3.0 gate (plan rows and manual مواد خرید). The tag itself is step 10.
 
 - «مواد خرید» on the plan scrolls to the shopping list.
 - Rows are ingredients on every planned meal (صبحانه، ناهار، شام) that are not already chips. A chip covers the usual spelling variants (spacing, ZWNJ, Arabic/Persian letters). Filling all ۲۱ slots still drops chips you already have and adds quantities across those slots.
@@ -290,7 +291,7 @@ Without a key, the same list can be checked after «بارگذاری نمونه�
 
 ### 7c. Pantry and plan survive refresh
 
-With `db` and `api` healthy. No API key is required. This step is part of the v0.2.0 gate.
+With `db` and `api` healthy. No API key is required. This step is part of the v0.3.0 gate. The tag itself is step 10.
 
 - Add a chip and a week budget. Turn on one diet chip (step 4b). Set تعداد نفرات to something other than ۴ (step 4d). Reload http://localhost:8080. The chip, the budget, the diet chip, and the headcount are still there.
 - Assign a شام and a صبحانه, and mark «خورده شد» on one of them. Reload. Both meals and that mark are still there. The other meal is not marked eaten.
@@ -305,7 +306,7 @@ docker compose start api
 
 ### 7d. Okala prices and assisted cart
 
-This check is the v0.3 price slice (ticket #20). Do **not** create a `v0.3.0` tag from it. It does not need `GAP_CODE_API_KEY`. `/health` does not call Okala.
+This step is part of the v0.3.0 gate (Okala prices and «سبد اُکالا»). The tag itself is step 10. It does not need `GAP_CODE_API_KEY`. `/health` does not call Okala.
 
 The pantry button «به‌روزرسانی قیمت‌ها» is the primary refresh. It posts the pantry and shopping names to `POST /api/prices/refresh`. The page does not scrape on its own.
 
@@ -335,7 +336,7 @@ The quote for ۲۰۰ گرم برنج at ۸ نفر is `165000` toman from the fix
 
 ### 7e. Two users do not see each other's kitchen
 
-This check is the v0.3 multi-user slice (ticket #23). Do **not** create a `v0.3.0` tag from it. No API key is required. The page stays Persian and right to left. «کاربر جدید» is the only new control.
+This step is part of the v0.3.0 gate (multi-user isolation). The tag itself is step 10. No API key is required. The page stays Persian and right to left. «کاربر جدید» is the only new control.
 
 With `db` and `api` healthy:
 
@@ -415,4 +416,4 @@ curl -fsS http://localhost:8080/sw.js
 
 ### 10. Tag is SE, after this gate
 
-When every step above is green, stop. Do not create tag `v0.2.0` and do not publish a GitHub Release. SE tags `v0.2.0` after this checklist is green. The release notes for that tag are [RELEASE.md](RELEASE.md).
+When every step above is green, stop. Do not create tag `v0.3.0` and do not publish a GitHub Release. SE tags `v0.3.0` after this checklist is green. The release notes for that tag are [RELEASE.md](RELEASE.md).

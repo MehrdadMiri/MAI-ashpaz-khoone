@@ -14,7 +14,7 @@ The web page is a Persian RTL pantry. You can add and remove ingredient chips, l
 
 The GitHub repository is public: https://github.com/MehrdadMiri/MAI-ashpaz-khoone. `.env` is gitignored. `.env.example` has placeholders only, and `GAP_CODE_API_KEY` there is empty. Do not commit a real key.
 
-`v0.1.0` is the tagged MVP. `v0.2.0` is the next tag: shopping, leftover regenerate, fridge v2, Postgres persist, nutrition, share/print, diet filters, and a home-screen install. Notes for that tag are [docs/RELEASE.md](docs/RELEASE.md). The gate is [QA smoke](#qa-smoke). This repository does not create the tag here.
+`v0.1.0` is the tagged MVP. `v0.2.0` is already tagged. The release gate for `v0.3.0` is [docs/QA-SMOKE.md](docs/QA-SMOKE.md). Notes for that tag are [docs/RELEASE.md](docs/RELEASE.md). This repository does not create the tag here.
 
 ## Run
 
@@ -261,7 +261,7 @@ Without a key this is HTTP 200, `"available": false`, and the body does not cont
 
 ## Fridge photo
 
-«عکس یخچال» is on the pantry page. It does not add anything by itself. One confirm flow can take up to six photos. Tagging `v0.2.0` waits for the release gate in [QA smoke](#qa-smoke).
+«عکس یخچال» is on the pantry page. It does not add anything by itself. One confirm flow can take up to six photos. Tagging waits for the `v0.3.0` gate in [docs/QA-SMOKE.md](docs/QA-SMOKE.md).
 
 1. Open «عکس یخچال». «گرفتن عکس» calls `getUserMedia` with `facingMode: environment` (the back camera when the phone has one) and shows a preview. «انتخاب عکس» opens a file picker that accepts several photos (`multiple`).
 2. If the camera API is missing, «گرفتن عکس» uses a file input with `capture="environment"`.
@@ -356,7 +356,7 @@ node --test web/recipes.test.js web/plan.test.js
 cd api && python3 -m unittest tests.test_recipes tests.test_recipes_endpoint -v
 ```
 
-Live smoke, only with a real key in the host file `…/MAI/.env` (gitignored; never print it, never commit it). This repo’s `.env` is gitignored too. Load the variable without echoing it, recreate api, then call both shapes. Do not create a `v0.2.0` tag from this check; the gate is [QA smoke](#qa-smoke).
+Live smoke, only with a real key in the host file `…/MAI/.env` (gitignored; never print it, never commit it). This repo’s `.env` is gitignored too. Load the variable without echoing it, recreate api, then call both shapes. Do not create a tag from this check. The `v0.3.0` gate is [docs/QA-SMOKE.md](docs/QA-SMOKE.md).
 
 ```bash
 set -a
@@ -495,7 +495,7 @@ cd api && python3 -m unittest tests.test_okala tests.test_okala_endpoint -v
 
 ## QA smoke
 
-The release gate for `v0.2.0` is [docs/QA-SMOKE.md](docs/QA-SMOKE.md). `v0.1.0` is already tagged. Run the gate with a real key only in the gitignored `.env` or the environment. Do not print the key. `.env.example` stays placeholders only (`GAP_CODE_API_KEY` empty, model `gpt-5.6-luna`). The repository is public. Do not create the `v0.2.0` tag or a GitHub Release from this checklist. SE tags after the path is green. The notes for that tag are [docs/RELEASE.md](docs/RELEASE.md).
+The release gate for `v0.3.0` is [docs/QA-SMOKE.md](docs/QA-SMOKE.md). `v0.2.0` is already tagged. Run the gate with a real key only in the gitignored `.env` or the environment. Do not print the key. `.env.example` stays placeholders only (`GAP_CODE_API_KEY` empty, model `gpt-5.6-luna`). The repository is public. Do not create the `v0.3.0` tag or a GitHub Release from this checklist. SE tags after the path is green. The notes for that tag are [docs/RELEASE.md](docs/RELEASE.md).
 
 1. Compose up with the key set. The آشپزخونه page loads.
 2. «بارگذاری نمونه» shows at least eight chips.
@@ -510,7 +510,7 @@ The release gate for `v0.2.0` is [docs/QA-SMOKE.md](docs/QA-SMOKE.md). `v0.1.0` 
 11. Chips, budget, diet filters, the week, and a manual مواد خرید row survive a reload in Postgres for this browser id. With api stopped, the same browser still shows its `localStorage` copy (`ashpaz-khoone.pantry.v1.<id>`, `ashpaz-khoone.plan.v1.<id>`, `ashpaz-khoone.shopping.v1.<id>`). «کاربر جدید» starts an empty store and leaves the previous id in Postgres.
 12. Break or unset `GAP_CODE_API_KEY`, recreate api, and confirm a Persian error with «تلاش دوباره» and no key value. Nutrition without a usable key stays HTTP 200 with `"available": false`. Restore the key and generate again.
 13. The manifest and `/sw.js` are served for install. The footer says «افزودن به صفحهٔ اصلی». The worker caches the page shell only and does not call GapGPT. Chrome can install from http://localhost:8080; any other host needs HTTPS.
-14. Leave tagging `v0.2.0` for SE after this path is green. Do not tag `v0.3.0` from the Okala check or from the multi-user check.
+14. Leave tagging `v0.3.0` for SE after this path is green. Do not create the tag or a GitHub Release from this checklist.
 
 The longer [demo path](#demo-path-qa) below still covers a boot with no key.
 
@@ -596,7 +596,7 @@ The longer [demo path](#demo-path-qa) below still covers a boot with no key.
    docker compose up -d --build --force-recreate api web
    ```
 
-   Do not tag `v0.2.0` from this step; see [QA smoke](#qa-smoke). Repeat the curl in step 7 with a real fridge photo instead of the tiny JPEG. For two photos, repeat the field in order (the page does the same):
+   Do not tag from this step. The `v0.3.0` gate is [docs/QA-SMOKE.md](docs/QA-SMOKE.md). Repeat the curl in step 7 with a real fridge photo instead of the tiny JPEG. For two photos, repeat the field in order (the page does the same):
 
    ```bash
    curl -sS -X POST http://localhost:8000/vision/fridge \
