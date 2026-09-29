@@ -196,6 +196,67 @@ class EndpointTests(unittest.TestCase):
         body = self.client.get("/").get_json()
         self.assertEqual(body["pantry"], "/pantry")
         self.assertEqual(body["plan"], "/plan")
+        self.assertEqual(body["shopping"], "/shopping")
+
+    def test_shopping_roundtrip_keeps_manual_rows_and_plan_edits(self):
+        saved = self.client.put(
+            "/api/shopping",
+            headers={"X-Local-User-Id": USER},
+            json={
+                "shopping": {
+                    "manual": [
+                        {
+                            "id": "m-zaferan",
+                            "name": "  زعفران ",
+                            "qty": "۲",
+                            "unit": "گرم",
+                            "checked": False,
+                        },
+                        {"id": "bad id", "name": "زعفران", "qty": 9, "unit": "گرم"},
+                    ],
+                    "overrides": {
+                        "گوشت": {
+                            "qtyOwned": True,
+                            "qty": 3,
+                            "unit": "عدد",
+                            "name": "گوشت چرخ‌کرده",
+                            "checked": True,
+                        },
+                        "برنج": {"removed": True},
+                    },
+                }
+            },
+        )
+        self.assertEqual(saved.status_code, 200)
+        body = saved.get_json()
+        self.assertTrue(body["found"])
+        self.assertEqual(len(body["shopping"]["manual"]), 1)
+        self.assertEqual(body["shopping"]["manual"][0]["name"], "زعفران")
+        self.assertEqual(body["shopping"]["manual"][0]["qty"], 2)
+        self.assertEqual(body["shopping"]["manual"][0]["unit"], "گرم")
+        self.assertEqual(body["shopping"]["overrides"]["گوشت"]["qty"], 3)
+        self.assertTrue(body["shopping"]["overrides"]["گوشت"]["qtyOwned"])
+        self.assertTrue(body["shopping"]["overrides"]["برنج"]["removed"])
+
+        loaded = self.client.get("/shopping", headers={"X-Local-User-Id": USER})
+        self.assertEqual(loaded.get_json()["shopping"]["manual"][0]["name"], "زعفران")
+        self.assertFalse(self.client.get("/pantry", headers={"X-Local-User-Id": USER}).get_json()["found"])
+
+        rejected = self.client.post(
+            "/shopping",
+            headers={"X-Local-User-Id": USER},
+            json={"shopping": {"manual": []}},
+        )
+        self.assertEqual(rejected.status_code, 405)
+
+        with patch.dict(os.environ, {"GAP_CODE_API_KEY": KEY}):
+            secret = self.client.put(
+                "/shopping",
+                headers={"X-Local-User-Id": USER},
+                json={"shopping": {"manual": [{"id": "m1", "name": KEY}]}},
+            )
+        self.assertEqual(secret.status_code, 400)
+        self.assertNotIn(KEY, secret.get_data(as_text=True))
 
 
 class PostgresEndpointTests(unittest.TestCase):

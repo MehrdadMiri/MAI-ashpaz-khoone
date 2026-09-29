@@ -264,19 +264,7 @@
     return "هر " + row.unit + " " + money(row.unit_price_toman) + " تومان · اُکالا";
   }
 
-  function priceParts(name, parts, now) {
-    var row = lookup(name);
-    if (!row) return { source: "missing", label: "", toman: 0, productUrl: "" };
-    var url = safeProductUrl(row.product_url);
-    if (isStale(row, now)) {
-      var staleLabel = unitPhrase(row);
-      return {
-        source: "stale",
-        label: staleLabel ? staleLabel + " · کهنه" : COPY.staleNote,
-        toman: 0,
-        productUrl: url,
-      };
-    }
+  function pricedAmount(row, parts) {
     var total = 0;
     var priced = 0;
     (Array.isArray(parts) ? parts : []).forEach(function (part) {
@@ -286,13 +274,41 @@
       total += cost;
       priced += 1;
     });
-    if (priced > 0) {
-      var toman = Math.round(total);
-      return { source: "okala", label: labelFor("okala", toman), toman: toman, productUrl: url };
+    return { total: total, priced: priced };
+  }
+
+  function priceParts(name, parts, now) {
+    var row = lookup(name);
+    if (!row) return { source: "missing", label: "", toman: 0, productUrl: "", unitOnly: false };
+    var url = safeProductUrl(row.product_url);
+    var amount = pricedAmount(row, parts);
+    if (isStale(row, now)) {
+      if (amount.priced > 0) {
+        var staleToman = Math.round(amount.total);
+        return {
+          source: "stale",
+          label: "حدود " + money(staleToman) + " تومان · کهنه",
+          toman: staleToman,
+          productUrl: url,
+          unitOnly: false,
+        };
+      }
+      var staleLabel = unitPhrase(row);
+      return {
+        source: "stale",
+        label: staleLabel ? staleLabel + " · کهنه" : COPY.staleNote,
+        toman: 0,
+        productUrl: url,
+        unitOnly: !!staleLabel,
+      };
+    }
+    if (amount.priced > 0) {
+      var toman = Math.round(amount.total);
+      return { source: "okala", label: labelFor("okala", toman), toman: toman, productUrl: url, unitOnly: false };
     }
     var phrase = unitPhrase(row);
     if (phrase) return { source: "okala", label: phrase, toman: row.unit_price_toman, productUrl: url, unitOnly: true };
-    return { source: "missing", label: "", toman: 0, productUrl: url };
+    return { source: "missing", label: "", toman: 0, productUrl: url, unitOnly: false };
   }
 
   function cartAssist(items) {
@@ -403,7 +419,15 @@
     var plan = planApi && planApi.active;
     if (shopApi && plan && typeof plan.week === "function" && typeof shopApi.buildShoppingList === "function") {
       var people = pantry && typeof pantry.household === "function" ? pantry.household() : undefined;
-      var list = shopApi.buildShoppingList(pantry && pantry.items ? pantry.items() : [], plan.week(), people);
+      var extras = null;
+      var shopModel = shopApi.active;
+      if (shopModel && typeof shopModel.snapshot === "function") extras = shopModel.snapshot();
+      var list = shopApi.buildShoppingList(
+        pantry && pantry.items ? pantry.items() : [],
+        plan.week(),
+        people,
+        extras
+      );
       (list.categories || []).forEach(function (cat) {
         (cat.items || []).forEach(function (item) {
           names.push(item.name);

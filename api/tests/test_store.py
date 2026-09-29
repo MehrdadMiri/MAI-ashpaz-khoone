@@ -179,6 +179,35 @@ class SanitizeTests(unittest.TestCase):
         self.assertNotIn(secret, caught.exception.message)
         self.assertNotIn(secret, str(caught.exception.to_dict()))
 
+    def test_shopping_keeps_a_manual_row_and_a_user_owned_quantity(self):
+        shopping = store.sanitize_shopping(
+            {
+                "manual": [
+                    {"id": "m-zaferan", "name": "زعفران", "qty": "۱٫۵", "unit": "گرم", "checked": True},
+                    {"id": "m-nope", "name": "123", "qty": 1, "unit": "عدد"},
+                    {"name": "روغن", "qty": -1, "unit": "لیتر"},
+                ],
+                "overrides": {
+                    "گوشت": {"qtyOwned": True, "qty": 3, "unit": "عدد", "removed": False},
+                    "برنج": {"removed": True},
+                    "": {"removed": True},
+                },
+                "extra": True,
+            }
+        )
+        self.assertEqual(shopping["manual"][0]["name"], "زعفران")
+        self.assertEqual(shopping["manual"][0]["qty"], 1.5)
+        self.assertEqual(shopping["manual"][0]["unit"], "گرم")
+        self.assertTrue(shopping["manual"][0]["checked"])
+        self.assertEqual(shopping["manual"][1]["name"], "روغن")
+        self.assertIsNone(shopping["manual"][1]["qty"])
+        self.assertEqual(shopping["manual"][1]["unit"], "")
+        self.assertEqual(shopping["overrides"]["گوشت"]["qty"], 3)
+        self.assertTrue(shopping["overrides"]["گوشت"]["qtyOwned"])
+        self.assertTrue(shopping["overrides"]["برنج"]["removed"])
+        self.assertNotIn("extra", shopping)
+        self.assertEqual(store.sanitize_shopping(None), {"manual": [], "overrides": {}})
+
     def test_user_id_rules(self):
         self.assertEqual(store.require_user_id("  local-user-demo1  "), USER)
         with self.assertRaises(store.StoreError) as caught:
@@ -231,6 +260,7 @@ class SchemaTests(unittest.TestCase):
         text = "\n".join(first.statements)
         self.assertIn("CREATE TABLE IF NOT EXISTS pantry_state", text)
         self.assertIn("CREATE TABLE IF NOT EXISTS week_plan_state", text)
+        self.assertIn("CREATE TABLE IF NOT EXISTS shopping_state", text)
         self.assertIn("SELECT 1", text)
 
         second = FakeConn()
@@ -267,6 +297,10 @@ class SchemaTests(unittest.TestCase):
         self.assertIn("pgdata:/var/lib/postgresql/data", compose)
         self.assertIn(
             "./api/migrations/001_kitchen_state.sql:/docker-entrypoint-initdb.d/001_kitchen_state.sql:ro",
+            compose,
+        )
+        self.assertIn(
+            "./api/migrations/003_shopping_state.sql:/docker-entrypoint-initdb.d/003_shopping_state.sql:ro",
             compose,
         )
         self.assertIn("store.py", dockerfile)
@@ -308,6 +342,7 @@ class PostgresKitchenTests(unittest.TestCase):
             with store.connect() as conn:
                 conn.execute("DELETE FROM pantry_state WHERE local_user_id LIKE 'tst%'")
                 conn.execute("DELETE FROM week_plan_state WHERE local_user_id LIKE 'tst%'")
+                conn.execute("DELETE FROM shopping_state WHERE local_user_id LIKE 'tst%'")
         except Exception:
             pass
         self._env.stop()
@@ -348,6 +383,26 @@ class PostgresKitchenTests(unittest.TestCase):
         cleared = self.kitchen.save_pantry(self.user, {"items": [], "budget": "1500000"})
         self.assertEqual(cleared["pantry"]["items"], [])
         self.assertEqual(self.kitchen.load_plan(self.user)["plan"]["slots"]["sat"]["dinner"], "r:عدسپلو")
+
+    def test_shopping_roundtrip_does_not_touch_the_plan(self):
+        self.kitchen.save_plan(
+            self.user,
+            {"recipes": [recipe()], "slots": {"sat": "r:عدسپلو"}, "used": {"sat": False}},
+        )
+        saved = self.kitchen.save_shopping(
+            self.user,
+            {
+                "manual": [{"id": "m-zaferan", "name": "زعفران", "qty": 2, "unit": "گرم"}],
+                "overrides": {"گوشت": {"removed": True}},
+            },
+        )
+        self.assertTrue(saved["found"])
+        self.assertEqual(saved["shopping"]["manual"][0]["name"], "زعفران")
+        self.assertEqual(saved["shopping"]["manual"][0]["qty"], 2)
+        loaded = self.kitchen.load_shopping(self.user)
+        self.assertEqual(loaded["shopping"]["overrides"]["گوشت"]["removed"], True)
+        self.assertEqual(self.kitchen.load_plan(self.user)["plan"]["slots"]["sat"]["dinner"], "r:عدسپلو")
+        self.assertFalse(self.kitchen.load_shopping("tst" + uuid.uuid4().hex)["found"])
 
 
 if __name__ == "__main__":
