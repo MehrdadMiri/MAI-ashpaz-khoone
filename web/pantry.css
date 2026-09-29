@@ -513,6 +513,22 @@ h2 {
   background: var(--accent-dark);
 }
 
+#regenerate-full {
+  min-height: 2.75rem;
+  padding: 0.7rem 1.1rem;
+  border: 1px solid #efd0c4;
+  border-radius: 0.9rem;
+  background: #fff;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+#regenerate-full:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--accent);
+  color: #fffdf8;
+}
+
 #recipe-status {
   min-height: 0;
   margin-top: 0.35rem;
@@ -872,6 +888,31 @@ h2 {
   border-color: var(--line);
 }
 
+.day-card.is-used {
+  background: #fff6f3;
+  border-color: #e7b2a8;
+}
+
+.day-eaten {
+  align-self: flex-start;
+  min-height: 2.1rem;
+  margin-top: 0.35rem;
+  padding: 0.35rem 0.75rem;
+  border: 1px dashed var(--chip-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.day-eaten.is-on {
+  border-style: solid;
+  border-color: transparent;
+  background: #9f3d24;
+  color: #fffdf8;
+}
+
 .day-name {
   margin: 0;
   font-size: 1.02rem;
@@ -1210,8 +1251,10 @@ h2 {
   .empty-actions .empty-cta,
   #suggest,
   #recipe-retry,
+  #regenerate-full,
   .plan-button,
   .day-action,
+  .day-eaten,
   #build-plan,
   #plan-export,
   #shop-open,
@@ -1334,6 +1377,7 @@ h2 {
   .plan-toolbar,
   .shop-toolbar,
   .day-action,
+  .day-eaten,
   #plan-status,
   #shop-status {
     display: none !important;

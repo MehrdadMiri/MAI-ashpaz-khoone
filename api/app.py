@@ -4,6 +4,8 @@ The shared GapGPT client lives in gapgpt.py. /health reports whether a key
 is configured and does not call the model. POST /gapgpt/smoke sends one
 fixed chat completion when GAP_CODE_API_KEY is set. POST /recipes/generate
 asks that client for Persian recipes from pantry items and a week budget.
+Leftover fields prefer remaining chips and skip eaten dinners. ``full``
+ignores that skip.
 POST /vision/fridge sends one fridge photo to that client's vision call and
 returns candidate ingredient names. It does not store them.
 """
@@ -269,14 +271,17 @@ def recipes_generate_get():
 def recipes_generate():
     # Body fields are pantry data. Error text stays static and never echoes them.
     try:
-        ingredients, budget = parse_generate_body(request.get_json(silent=True))
+        parsed = parse_generate_body(request.get_json(silent=True))
     except RecipeRequestError as exc:
         return jsonify(exc.to_dict()), exc.http_status
     return respond_gapgpt(
         lambda: generate_recipes(
             build_gapgpt_client(timeout=RECIPE_CLIENT_TIMEOUT),
-            ingredients,
-            budget,
+            parsed.ingredients,
+            parsed.budget,
+            remaining=parsed.remaining,
+            skip=parsed.skip,
+            full=parsed.full,
         ),
         "Recipe generation failed",
     )

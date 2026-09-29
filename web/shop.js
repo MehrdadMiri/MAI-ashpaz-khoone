@@ -498,6 +498,21 @@
     return false;
   }
 
+  function lineUsesChip(chip, line) {
+    var chipKey = identityKey(chip);
+    if (!chipKey || chipKey.length < 2) return false;
+    var items = expandLine(line);
+    if (!items.length) {
+      var name = displayName(line);
+      if (!name) return false;
+      items = [{ name: name }];
+    }
+    for (var i = 0; i < items.length; i += 1) {
+      if (keyCovered(identityKey(items[i].name), chipKey)) return true;
+    }
+    return false;
+  }
+
   function coveredByPantry(name, pantryKeys) {
     var key = identityKey(name);
     for (var i = 0; i < pantryKeys.length; i += 1) {
@@ -1144,6 +1159,7 @@
     COPY: COPY,
     CATEGORIES: CATEGORIES,
     buildShoppingList: buildShoppingList,
+    lineUsesChip: lineUsesChip,
     markdownDocument: markdownDocument,
     parseIngredient: parseIngredient,
     expandLine: expandLine,

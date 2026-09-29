@@ -1,8 +1,10 @@
 # QA smoke — آشپزخونه
 
-Release check for the Persian RTL meal demo after empty, loading, and error states are in place (US-08, Designs §4). This is the path to run before anyone tags `v0.1.0`.
+Release check for the Persian RTL meal demo after empty, loading, and error states are in place (US-08, Designs §4), plus leftover-aware regenerate (remaining chips / skip eaten dinners).
 
 Do **not** create the `v0.1.0` tag from this checklist. Tagging is ticket #8, and only after this path is green.
+
+Do **not** create a `v0.2.0` tag from the leftover checks below. Those checks are the smoke for this slice only.
 
 The key never goes in git, the shell history, a screenshot, or a log paste. Put `GAP_CODE_API_KEY` only in the gitignored `.env` or the environment. Confirm it without printing it:
 
@@ -64,6 +66,43 @@ On a fresh browser profile (or after «پاک کردن»):
 - The week is شنبه through جمعه. A day with no شام says «خالی» and offers «انتخاب».
 - «برنامه ۷ روزه» fills every empty day from the cards (repeating recipes when there are fewer than seven). Days you already filled stay as they are.
 - «افزودن به برنامه» on a card assigns that recipe to one day. «جایگزین» swaps a filled day. «خالی» on that sheet clears the day.
+- On a filled day, «خورده شد» toggles that شام. The day stays filled. Press again to undo. «جایگزین» or «خالی» clears the mark. The pantry chips do not change.
+
+### 5b. Leftover regenerate vs full regenerate
+
+Needs at least one filled day (step 5) and the sample chips (step 2). This check does not create a `v0.2.0` tag.
+
+- Mark شنبه «خورده شد». The card shows the dinner is eaten. The other days and the chips stay.
+- Press «پیشنهاد دستور». The request uses the chips that dinner did not use, and it skips that dinner’s title. The week budget is still sent. At least three new cards replace the previous cards. شنبه stays the eaten dinner. The pantry chips are unchanged.
+- Press «بازتولید کامل». This call uses every chip, keeps the same budget, and does not skip the eaten title. The cards refresh. The chips and the eaten mark stay.
+- If the eaten dinners have used every chip, «پیشنهاد دستور» does not call the API. It asks you to add a chip or press «بازتولید کامل». «بازتولید کامل» still calls with the full chip list.
+
+Shell, key missing or invalid (the body must not contain the key or a traceback):
+
+```bash
+curl -sS -X POST http://localhost:8000/recipes/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"ingredients":["برنج","عدس","پیاز","ماست"],"budget":1500000,"remaining":["ماست"],"skip":["عدس‌پلو"],"full":false}'
+
+curl -sS -X POST http://localhost:8000/recipes/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"ingredients":["برنج","عدس","پیاز","ماست"],"budget":1500000,"full":true}'
+```
+
+Missing key: HTTP 503, `"error": "not_configured"`. Invalid key: HTTP 502, `"error": "unauthorized"`. Empty `remaining` without `"full": true` is HTTP 400, `"error": "no_remaining"`, and does not call GapGPT.
+
+Live smoke with a real key only in the host file `…/MAI/.env` (or this repo’s gitignored `.env`). Do not echo the value. Do not tag `v0.2.0`.
+
+```bash
+set -a
+# shellcheck disable=SC1091
+source /path/to/MAI/.env
+set +a
+test -n "$GAP_CODE_API_KEY" && echo "GAP_CODE_API_KEY is set (value hidden)"
+docker compose up -d --force-recreate api
+```
+
+Repeat the two curls. Leftover: HTTP 200, `"mode": "leftovers"`, three recipes, titles not «عدس‌پلو». Full: HTTP 200, `"mode": "full"`, three recipes, budget still applied, the eaten title is allowed. Neither body contains the key. On the page, a bad key still shows the Persian error and «تلاش دوباره» for both buttons, and retry repeats the button you pressed.
 
 ### 6. Edit the pantry — generate again
 

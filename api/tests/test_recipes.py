@@ -277,6 +277,168 @@ class StubClient:
         return self.text
 
 
+class LeftoverRequestTests(unittest.TestCase):
+    def test_remaining_and_skip_are_kept(self):
+        parsed = parse_generate_body(
+            {
+                "ingredients": ["برنج", "عدس", "ماست"],
+                "budget": 1500000,
+                "remaining": ["ماست", "  ماست "],
+                "skip": ["عدس پلو", "عدس‌پلو"],
+                "full": False,
+            }
+        )
+        self.assertEqual(parsed.ingredients, ["برنج", "عدس", "ماست"])
+        self.assertEqual(parsed.budget, 1500000)
+        self.assertEqual(parsed.remaining, ["ماست"])
+        self.assertEqual(parsed.skip, ["عدس پلو"])
+        self.assertFalse(parsed.full)
+        items, budget = parsed
+        self.assertEqual(items, ["برنج", "عدس", "ماست"])
+        self.assertEqual(budget, 1500000)
+
+    def test_empty_remaining_is_controlled(self):
+        secret = "SECRET-DINNER"
+        with self.assertRaises(RecipeRequestError) as caught:
+            parse_generate_body(
+                {
+                    "ingredients": ["برنج"],
+                    "remaining": [],
+                    "skip": [secret],
+                    "budget": 10,
+                }
+            )
+        self.assertEqual(caught.exception.code, "no_remaining")
+        self.assertEqual(caught.exception.http_status, 400)
+        rendered = caught.exception.message + json.dumps(caught.exception.to_dict())
+        self.assertNotIn(secret, rendered)
+        self.assertNotIn("Traceback", rendered)
+
+    def test_full_regenerate_allows_empty_remaining(self):
+        parsed = parse_generate_body(
+            {
+                "ingredients": ["برنج", "ماست"],
+                "remaining": [],
+                "skip": ["عدس‌پلو"],
+                "full": True,
+                "budget": 0,
+            }
+        )
+        self.assertTrue(parsed.full)
+        self.assertEqual(parsed.remaining, [])
+        self.assertEqual(parsed.skip, ["عدس‌پلو"])
+        self.assertEqual(parsed.budget, 0)
+
+    def test_bad_leftover_fields_do_not_echo_values(self):
+        secret = "skip-secret-value"
+        cases = (
+            {"ingredients": ["برنج"], "full": secret},
+            {"ingredients": ["برنج"], "remaining": secret},
+            {"ingredients": ["برنج"], "skip": [secret + "\n"]},
+            {"ingredients": ["برنج"], "skip": [1]},
+            {"ingredients": ["برنج"], "remaining": ["ن" * 80]},
+        )
+        for body in cases:
+            with self.assertRaises(RecipeRequestError) as caught:
+                parse_generate_body(body)
+            self.assertEqual(caught.exception.http_status, 400)
+            rendered = caught.exception.message + json.dumps(caught.exception.to_dict())
+            self.assertNotIn(secret, rendered)
+            self.assertNotIn("Traceback", rendered)
+
+
+class LeftoverPromptTests(unittest.TestCase):
+    def test_leftover_prompt_prefers_remaining_and_skips_titles(self):
+        messages = build_messages(
+            ["برنج", "عدس", "ماست"],
+            1500000,
+            remaining=["ماست"],
+            skip=["عدس‌پلو"],
+        )
+        self.assertEqual(messages[0]["content"], SYSTEM_PROMPT)
+        self.assertIn("week budget", SYSTEM_PROMPT)
+        user = messages[1]["content"]
+        self.assertIn("مواد باقی‌مانده:", user)
+        self.assertIn("\n- ماست", user)
+        self.assertIn("شام‌های خورده‌شده:", user)
+        self.assertIn("عدس‌پلو", user)
+        self.assertIn("نباید تکرار شوند", user)
+        self.assertIn("بودجه هفته: 1500000 تومان", user)
+        self.assertIn("دستورها را بیشتر با مواد باقی‌مانده بساز.", user)
+
+    def test_same_remaining_list_does_not_duplicate_the_pantry(self):
+        user = build_messages(
+            ["برنج"],
+            None,
+            remaining=["برنج"],
+            skip=["سوپ جو"],
+        )[1]["content"]
+        self.assertEqual(user.count("\n- برنج"), 1)
+        self.assertNotIn("مواد باقی‌مانده:", user)
+        self.assertIn("سوپ جو", user)
+        self.assertIn("بودجه هفته: مشخص نشده.", user)
+
+    def test_full_prompt_ignores_leftover_skip(self):
+        user = build_messages(
+            ["برنج", "ماست"],
+            400000,
+            remaining=["ماست"],
+            skip=["عدس‌پلو"],
+            full=True,
+        )[1]["content"]
+        self.assertIn("بازتولید کامل:", user)
+        self.assertIn("بودجه هفته: 400000 تومان", user)
+        self.assertIn("برنج", user)
+        self.assertIn("ماست", user)
+        self.assertNotIn("عدس‌پلو", user)
+        self.assertNotIn("شام‌های خورده‌شده:", user)
+        self.assertNotIn("مواد باقی‌مانده:", user)
+
+
+class LeftoverParseTests(unittest.TestCase):
+    def test_skip_drops_eaten_titles_including_spelling_variants(self):
+        extra = dish(
+            "کوکو سبزی",
+            ["سبزی", "تخم‌مرغ"],
+            ["سبزی را خرد کن", "تخم‌مرغ را بزن", "سرخ کن"],
+            110000,
+        )
+        variant = dish(
+            "عدس‌پلو با کشمش",
+            ["برنج", "عدس"],
+            ["عدس را بپز", "برنج را دم کن", "کشمش را اضافه کن"],
+        )
+        payload = {"recipes": sample_recipes() + [extra, variant]}
+        recipes = parse_recipes(
+            json.dumps(payload, ensure_ascii=False),
+            ["ماست", "روغن"],
+            skip=["عدس پلو"],
+        )
+        titles = [item["title"] for item in recipes]
+        self.assertEqual(len(titles), 3)
+        self.assertNotIn("عدس‌پلو", titles)
+        self.assertNotIn("عدس‌پلو با کشمش", titles)
+        self.assertIn("ماست و سبزی", titles)
+
+    def test_too_few_after_skip_hides_the_title(self):
+        marker = "SECRET-DINNER"
+        payload = {
+            "recipes": [
+                dish(marker, ["برنج"], ["برنج را بپز", "دم کن", "سرو کن"]),
+                dish(
+                    "لوبیا پلو",
+                    ["برنج", "لوبیا"],
+                    ["لوبیا را بپز", "برنج را دم کن", "سرو کن"],
+                ),
+            ]
+        }
+        with self.assertRaises(GapGPTError) as caught:
+            parse_recipes(json.dumps(payload, ensure_ascii=False), PANTRY, skip=[marker])
+        self.assertEqual(caught.exception.code, "bad_response")
+        rendered = json.dumps(caught.exception.to_dict()) + str(caught.exception)
+        self.assertNotIn(marker, rendered)
+
+
 class GenerateTests(unittest.TestCase):
     def test_generate_returns_three_recipes(self):
         stub = StubClient(json.dumps(sample_payload(), ensure_ascii=False))
@@ -347,6 +509,48 @@ class GenerateTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "bad_response")
         self.assertNotIn(key, str(caught.exception))
         self.assertNotIn(key, json.dumps(caught.exception.to_dict()))
+
+    def test_leftover_generate_skips_used_dinners(self):
+        extra = dish(
+            "کوکو سبزی",
+            ["سبزی", "تخم‌مرغ"],
+            ["سبزی را خرد کن", "تخم‌مرغ را بزن", "سرخ کن"],
+            110000,
+        )
+        stub = StubClient(json.dumps({"recipes": sample_recipes() + [extra]}, ensure_ascii=False))
+        result = generate_recipes(
+            stub,
+            ["برنج", "عدس", "ماست"],
+            1500000,
+            remaining=["ماست"],
+            skip=["عدس‌پلو"],
+        )
+        self.assertEqual(result["mode"], "leftovers")
+        titles = [item["title"] for item in result["recipes"]]
+        self.assertEqual(len(titles), 3)
+        self.assertNotIn("عدس‌پلو", titles)
+        user = stub.messages[1]["content"]
+        self.assertIn("مواد باقی‌مانده:", user)
+        self.assertIn("عدس‌پلو", user)
+        self.assertIn("بودجه هفته: 1500000 تومان", user)
+
+    def test_full_generate_ignores_skip(self):
+        stub = StubClient(json.dumps(sample_payload(), ensure_ascii=False))
+        result = generate_recipes(
+            stub,
+            ["برنج", "عدس", "ماست"],
+            1500000,
+            remaining=["ماست"],
+            skip=["عدس‌پلو"],
+            full=True,
+        )
+        self.assertEqual(result["mode"], "full")
+        self.assertEqual(result["recipes"][0]["title"], "عدس‌پلو")
+        user = stub.messages[1]["content"]
+        self.assertIn("بازتولید کامل:", user)
+        self.assertIn("بودجه هفته: 1500000 تومان", user)
+        self.assertNotIn("عدس‌پلو", user)
+        self.assertNotIn("شام‌های خورده‌شده:", user)
 
 
 if __name__ == "__main__":
