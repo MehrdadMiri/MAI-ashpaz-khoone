@@ -9,7 +9,7 @@ import urllib.error
 from unittest.mock import patch
 
 import app as app_module
-from gapgpt import DEFAULT_MODEL, GapGPTClient, GapGPTConfig
+from gapgpt import DEFAULT_MODEL, MAX_FRIDGE_IMAGES, MAX_IMAGE_BYTES, GapGPTClient, GapGPTConfig
 from vision import USER_PROMPT, VISION_CLIENT_TIMEOUT
 
 KEY = "unit-test-key"
@@ -138,7 +138,17 @@ class EndpointTests(unittest.TestCase):
         res, builder = self._post_file(gap_client)
         self.assertEqual(res.status_code, 200, res.get_data(as_text=True))
         body = res.get_json()
-        self.assertEqual(body, {"ok": True, "ingredients": ["شیر", "تخم‌مرغ"]})
+        self.assertEqual(
+            body,
+            {
+                "ok": True,
+                "ingredients": [
+                    {"name": "شیر", "confidence": None},
+                    {"name": "تخم‌مرغ", "confidence": None},
+                ],
+            },
+        )
+        self.assertEqual(set(body["ingredients"][0].keys()), {"name", "confidence"})
         text = res.get_data(as_text=True)
         encoded = base64.b64encode(JPEG).decode("ascii")
         self.assertNotIn(encoded, text)
@@ -155,7 +165,13 @@ class EndpointTests(unittest.TestCase):
 
         prefixed, _builder = self._post_file(gap_client, path="/api/vision/fridge")
         self.assertEqual(prefixed.status_code, 200, prefixed.get_data(as_text=True))
-        self.assertEqual(prefixed.get_json()["ingredients"], ["شیر", "تخم‌مرغ"])
+        self.assertEqual(
+            prefixed.get_json()["ingredients"],
+            [
+                {"name": "شیر", "confidence": None},
+                {"name": "تخم‌مرغ", "confidence": None},
+            ],
+        )
 
     def test_png_magic_wins_over_declared_type(self):
         seen = {}
@@ -189,7 +205,10 @@ class EndpointTests(unittest.TestCase):
         with patch("app.build_gapgpt_client", return_value=gap_client):
             res = self.client.post("/vision/fridge", json=payload)
         self.assertEqual(res.status_code, 200, res.get_data(as_text=True))
-        self.assertEqual(res.get_json()["ingredients"], ["پیاز"])
+        self.assertEqual(
+            res.get_json()["ingredients"],
+            [{"name": "پیاز", "confidence": None}],
+        )
         self.assertNotIn(KEY, res.get_data(as_text=True))
 
     def test_larger_multipart_file_is_accepted(self):
@@ -202,7 +221,10 @@ class EndpointTests(unittest.TestCase):
         gap_client = self._client(transport)
         res, _builder = self._post_file(gap_client, raw=raw)
         self.assertEqual(res.status_code, 200, res.get_data(as_text=True))
-        self.assertEqual(res.get_json()["ingredients"], ["دوغ"])
+        self.assertEqual(
+            res.get_json()["ingredients"],
+            [{"name": "دوغ", "confidence": None}],
+        )
 
     def test_empty_model_list(self):
         def transport(request, timeout):
@@ -253,9 +275,10 @@ class EndpointTests(unittest.TestCase):
         marker = "data:image/jpeg;base64,SHOULD-NOT-LOG"
 
         class Boom(GapGPTClient):
-            def chat_with_image(self, text, image, mime, **options):
-                del text, image, mime, options
-                raise RuntimeError(f"exploded {KEY} {marker}")
+            def chat_with_images(self, text, images, **options):
+                del text, options
+                leaked = base64.b64encode(images[0][0]).decode("ascii")
+                raise RuntimeError(f"exploded {KEY} {marker} {leaked}")
 
         records = []
 
@@ -274,11 +297,184 @@ class EndpointTests(unittest.TestCase):
         text = res.get_data(as_text=True)
         self.assertNotIn(KEY, text)
         self.assertNotIn(marker, text)
+        self.assertNotIn(base64.b64encode(JPEG).decode("ascii"), text)
         self.assertNotIn("Traceback", text)
         logged = "\n".join(records)
         self.assertNotIn(KEY, logged)
         self.assertNotIn(marker, logged)
+        self.assertNotIn(base64.b64encode(JPEG).decode("ascii"), logged)
         self.assertTrue(any("RuntimeError" in line for line in records))
+
+    def test_two_photos_are_one_call_in_order_and_hide_bytes(self):
+        seen = {}
+
+        def transport(request, timeout):
+            del timeout
+            seen["payload"] = json.loads(request.data.decode("utf-8"))
+            return chat_response(
+                json.dumps(
+                    {
+                        "ingredients": [
+                            {"name": "شیر", "confidence": 0.33},
+                            {"name": "شیر", "confidence": 0.8},
+                            {"name": "پنیر", "confidence": 0.5},
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            )
+
+        gap_client = self._client(transport)
+        records = []
+
+        class ListHandler(logging.Handler):
+            def emit(self, record):
+                records.append(self.format(record))
+
+        handler = ListHandler()
+        app_module.app.logger.addHandler(handler)
+        try:
+            with patch("app.build_gapgpt_client", return_value=gap_client):
+                res = self.client.post(
+                    "/vision/fridge",
+                    data={
+                        "image": [
+                            (io.BytesIO(JPEG), "first.jpg", "image/jpeg"),
+                            (io.BytesIO(PNG), "second.png", "image/png"),
+                        ]
+                    },
+                )
+        finally:
+            app_module.app.logger.removeHandler(handler)
+        self.assertEqual(res.status_code, 200, res.get_data(as_text=True))
+        body = res.get_json()
+        self.assertEqual(
+            body["ingredients"],
+            [
+                {"name": "شیر", "confidence": 0.8},
+                {"name": "پنیر", "confidence": 0.5},
+            ],
+        )
+        parts = seen["payload"]["messages"][1]["content"]
+        self.assertEqual(parts[0]["text"], USER_PROMPT)
+        self.assertTrue(parts[1]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
+        self.assertTrue(parts[2]["image_url"]["url"].startswith("data:image/png;base64,"))
+        text = res.get_data(as_text=True)
+        jpeg_b64 = base64.b64encode(JPEG).decode("ascii")
+        png_b64 = base64.b64encode(PNG).decode("ascii")
+        self.assertNotIn(jpeg_b64, text)
+        self.assertNotIn(png_b64, text)
+        self.assertNotIn("data:image", text)
+        self.assertNotIn(KEY, text)
+        logged = "\n".join(records)
+        self.assertNotIn(jpeg_b64, logged)
+        self.assertNotIn(png_b64, logged)
+        self.assertNotIn(KEY, logged)
+
+    def test_json_images_keep_order(self):
+        seen = {}
+
+        def transport(request, timeout):
+            del timeout
+            seen["payload"] = json.loads(request.data.decode("utf-8"))
+            return chat_response('{"ingredients":[{"name":"دوغ","confidence":0.7}]}')
+
+        gap_client = self._client(transport)
+        payload = {
+            "images": [
+                base64.b64encode(JPEG).decode("ascii"),
+                "data:image/png;base64," + base64.b64encode(PNG).decode("ascii"),
+            ]
+        }
+        with patch("app.build_gapgpt_client", return_value=gap_client):
+            res = self.client.post("/vision/fridge", json=payload)
+        self.assertEqual(res.status_code, 200, res.get_data(as_text=True))
+        self.assertEqual(
+            res.get_json()["ingredients"],
+            [{"name": "دوغ", "confidence": 0.7}],
+        )
+        parts = seen["payload"]["messages"][1]["content"]
+        self.assertTrue(parts[1]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
+        self.assertTrue(parts[2]["image_url"]["url"].startswith("data:image/png;base64,"))
+        self.assertNotIn(KEY, res.get_data(as_text=True))
+
+    def test_too_many_images_skip_upstream(self):
+        seen = []
+
+        def transport(request, timeout):
+            del request, timeout
+            seen.append(True)
+
+        gap_client = self._client(transport)
+        payload = {
+            "images": [base64.b64encode(JPEG).decode("ascii")] * (MAX_FRIDGE_IMAGES + 1)
+        }
+        with patch("app.build_gapgpt_client", return_value=gap_client):
+            res = self.client.post("/vision/fridge", json=payload)
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.get_json()["error"], "too_many_images")
+        self.assertEqual(seen, [])
+        text = res.get_data(as_text=True)
+        self.assertNotIn(KEY, text)
+        self.assertNotIn(base64.b64encode(JPEG).decode("ascii"), text)
+
+    def test_invalid_second_photo_skips_upstream(self):
+        seen = []
+
+        def transport(request, timeout):
+            del request, timeout
+            seen.append(True)
+
+        gap_client = self._client(transport)
+        secret = b"<html>" + KEY.encode() + b"</html>"
+        with patch("app.build_gapgpt_client", return_value=gap_client):
+            res = self.client.post(
+                "/vision/fridge",
+                data={
+                    "image": [
+                        (io.BytesIO(JPEG), "ok.jpg", "image/jpeg"),
+                        (io.BytesIO(secret), "bad.html", "text/html"),
+                    ]
+                },
+            )
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.get_json()["error"], "invalid_image")
+        self.assertEqual(seen, [])
+        text = res.get_data(as_text=True)
+        self.assertNotIn(KEY, text)
+        self.assertNotIn("<html>", text)
+        self.assertNotIn(base64.b64encode(JPEG).decode("ascii"), text)
+
+    def test_oversize_photo_in_a_batch_skips_upstream(self):
+        seen = []
+
+        def transport(request, timeout):
+            del request, timeout
+            seen.append(True)
+
+        gap_client = self._client(transport)
+        huge = b"\xff\xd8\xff" + (b"\x00" * MAX_IMAGE_BYTES)
+        with patch("app.build_gapgpt_client", return_value=gap_client):
+            res = self.client.post(
+                "/vision/fridge",
+                data={
+                    "image": [
+                        (io.BytesIO(JPEG), "ok.jpg", "image/jpeg"),
+                        (io.BytesIO(huge), "big.jpg", "image/jpeg"),
+                    ]
+                },
+            )
+        self.assertEqual(res.status_code, 413)
+        self.assertEqual(res.get_json()["error"], "image_too_large")
+        self.assertEqual(seen, [])
+        self.assertNotIn(KEY, res.get_data(as_text=True))
+
+    def test_body_cap_fits_every_photo_as_base64(self):
+        per_image = ((MAX_IMAGE_BYTES + 2) // 3) * 4
+        self.assertGreaterEqual(
+            app_module.VISION_REQUEST_MAX_BYTES,
+            MAX_FRIDGE_IMAGES * per_image,
+        )
 
     def test_route_body_cap_stays_above_recipe_json(self):
         res = self.client.post(

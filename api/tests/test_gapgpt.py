@@ -258,6 +258,35 @@ class ClientTests(unittest.TestCase):
         self.assertNotIn(KEY, str(caught.exception))
         self.assertEqual(recorder.requests, [])
 
+    def test_chat_with_images_keeps_order_and_rejects_too_many(self):
+        recorder = Recorder()
+        client = GapGPTClient(make_config(), transport=recorder)
+        jpeg = b"\xff\xd8\xff\xd9"
+        png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 4
+        text = client.chat_with_images(
+            "مواد یخچال؟",
+            [(jpeg, "image/jpeg"), (png, "image/png")],
+            system="list foods",
+        )
+        self.assertEqual(text, "pong")
+        payload = json.loads(recorder.requests[0].data.decode("utf-8"))
+        parts = payload["messages"][1]["content"]
+        self.assertEqual(parts[0]["text"], "مواد یخچال؟")
+        self.assertTrue(parts[1]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
+        self.assertTrue(parts[2]["image_url"]["url"].startswith("data:image/png;base64,"))
+        self.assertNotIn(KEY, json.dumps(payload))
+        self.assertEqual(len(recorder.requests), 1)
+
+        with self.assertRaises(GapGPTError) as caught:
+            client.chat_with_images(
+                "مواد؟",
+                [(jpeg, "image/jpeg")] * (gapgpt.MAX_FRIDGE_IMAGES + 1),
+            )
+        self.assertEqual(caught.exception.code, "invalid_request")
+        self.assertEqual(caught.exception.http_status, 400)
+        self.assertNotIn(KEY, str(caught.exception))
+        self.assertEqual(len(recorder.requests), 1)
+
     def test_list_content_response(self):
         recorder = Recorder(
             body={

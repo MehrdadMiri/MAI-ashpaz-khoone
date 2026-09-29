@@ -6,8 +6,9 @@ fixed chat completion when GAP_CODE_API_KEY is set. POST /recipes/generate
 asks that client for Persian recipes from pantry items and a week budget.
 Leftover fields prefer remaining chips and skip eaten dinners. ``full``
 ignores that skip.
-POST /vision/fridge sends one fridge photo to that client's vision call and
-returns candidate ingredient names. It does not store them.
+POST /vision/fridge sends one or more fridge photos, in order, to that
+client's vision call and returns candidate ingredient names with confidence.
+It does not store them.
 """
 
 import json
@@ -17,7 +18,7 @@ import psycopg
 from flask import Flask, jsonify, request
 from werkzeug.exceptions import HTTPException
 
-from gapgpt import MAX_IMAGE_BYTES, GapGPTClient, GapGPTConfig, GapGPTError
+from gapgpt import MAX_FRIDGE_IMAGES, MAX_IMAGE_BYTES, GapGPTClient, GapGPTConfig, GapGPTError
 from recipes import (
     RECIPE_CLIENT_TIMEOUT,
     RecipeRequestError,
@@ -32,8 +33,10 @@ from vision import (
 )
 
 # Recipe JSON stays small. Fridge photos need a higher cap; nginx matches it.
+# Each photo may arrive as base64 (about 4/3) plus a short JSON wrapper.
 JSON_MAX_BYTES = 64 * 1024
-VISION_REQUEST_MAX_BYTES = MAX_IMAGE_BYTES + (2 * 1024 * 1024)
+_PER_IMAGE_BODY = ((MAX_IMAGE_BYTES + 2) // 3) * 4 + 2048
+VISION_REQUEST_MAX_BYTES = MAX_FRIDGE_IMAGES * _PER_IMAGE_BODY + 65536
 
 class ApiPrefixMiddleware:
     """Treat /api/... as an alias of /... so nginx can forward the path unchanged."""
@@ -56,7 +59,7 @@ app.wsgi_app = ApiPrefixMiddleware(app.wsgi_app)
 app.json.sort_keys = False
 app.json.ensure_ascii = False
 # Fridge uploads are the largest accepted body. Other routes stay at JSON_MAX_BYTES
-# via before_request. Non-file form fields stay small; the image is a file part.
+# via before_request. Non-file form fields stay small; photos are file parts.
 app.config["MAX_CONTENT_LENGTH"] = VISION_REQUEST_MAX_BYTES
 app.config["MAX_FORM_MEMORY_SIZE"] = JSON_MAX_BYTES
 
@@ -303,16 +306,15 @@ def vision_fridge_get():
 
 @app.post("/vision/fridge")
 def vision_fridge():
-    # The image is untrusted and is not logged. Errors never echo it or the key.
+    # Photos are untrusted and are not logged. Errors never echo them or the key.
     try:
-        image, mime = read_fridge_request(request)
+        images = read_fridge_request(request)
     except VisionRequestError as exc:
         return jsonify(exc.to_dict()), exc.http_status
     return respond_gapgpt(
         lambda: recognize_fridge(
             build_gapgpt_client(timeout=VISION_CLIENT_TIMEOUT),
-            image,
-            mime,
+            images,
         ),
         "Fridge vision failed",
     )

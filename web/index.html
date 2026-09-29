@@ -99,7 +99,7 @@
               عکس یخچال
             </button>
             <p class="hint" id="fridge-hint">
-              عکس را بررسی می‌کنید؛ تا قبل از تأیید چیزی به انبار اضافه نمی‌شود.
+              چند عکس را با هم بررسی می‌کنید؛ تا قبل از تأیید چیزی به انبار اضافه نمی‌شود.
             </p>
             <input
               id="fridge-capture"
@@ -114,6 +114,7 @@
               id="fridge-file"
               type="file"
               accept="image/jpeg,image/png,image/webp,image/gif"
+              multiple
               hidden
               data-testid="fridge-file"
               tabindex="-1"
@@ -254,7 +255,7 @@
         </div>
 
         <div id="fridge-chooser" data-testid="fridge-chooser">
-          <p class="hint">یک عکس از داخل یخچال بگیرید یا از گالری انتخاب کنید.</p>
+          <p class="hint">چند عکس از داخل یخچال بگیرید یا از گالری انتخاب کنید. ترتیب عکس‌ها حفظ می‌شود.</p>
           <div class="sheet-actions">
             <button type="button" id="fridge-camera" data-testid="fridge-camera">گرفتن عکس</button>
             <button type="button" id="fridge-pick" data-testid="fridge-pick">انتخاب عکس</button>
@@ -263,16 +264,34 @@
 
         <div id="fridge-camera-view" hidden data-testid="fridge-camera-view">
           <video id="fridge-video" autoplay playsinline muted data-testid="fridge-video"></video>
+          <p id="fridge-camera-count" class="fridge-note" data-testid="fridge-camera-count"></p>
           <div class="sheet-actions">
-            <button type="button" id="fridge-shutter" data-testid="fridge-shutter">گرفتن عکس</button>
+            <button type="button" id="fridge-shutter" data-testid="fridge-shutter">ثبت این عکس</button>
+            <button type="button" id="fridge-camera-detect" data-testid="fridge-camera-detect" hidden>تشخیص مواد</button>
+            <button type="button" id="fridge-camera-review" data-testid="fridge-camera-review" disabled>بازبینی عکس‌ها</button>
           </div>
         </div>
 
         <p id="fridge-denied" class="fridge-note" hidden data-testid="fridge-denied"></p>
 
+        <div id="fridge-queue" hidden data-testid="fridge-queue">
+          <p class="hint" id="fridge-queue-hint">عکس‌ها به همین ترتیب فرستاده می‌شوند. می‌توانید عکس دیگری اضافه کنید.</p>
+          <p id="fridge-queue-count" class="fridge-note" data-testid="fridge-queue-count"></p>
+          <ul id="fridge-queue-list" class="fridge-queue-list" data-testid="fridge-queue-list"></ul>
+          <p id="fridge-queue-status" class="status" data-testid="fridge-queue-status"></p>
+          <div class="sheet-actions">
+            <button type="button" id="fridge-detect" data-testid="fridge-detect" disabled>تشخیص مواد</button>
+            <button type="button" id="fridge-add-photo" data-testid="fridge-add-photo">عکس دیگر</button>
+            <button type="button" id="fridge-queue-camera" data-testid="fridge-queue-camera">گرفتن عکس</button>
+            <button type="button" id="fridge-queue-clear" data-testid="fridge-queue-clear">انصراف</button>
+          </div>
+        </div>
+
         <div id="fridge-loading-panel" hidden data-testid="fridge-loading-panel">
           <div id="fridge-preview-wrap" class="fridge-preview-wrap" hidden data-testid="fridge-preview-wrap">
-            <img id="fridge-preview" class="fridge-preview" alt="پیش‌نمایش عکس یخچال" data-testid="fridge-preview" />
+            <div id="fridge-preview-row" class="fridge-preview-row" data-testid="fridge-preview-row">
+              <img id="fridge-preview" class="fridge-preview" alt="پیش‌نمایش عکس یخچال" data-testid="fridge-preview" />
+            </div>
           </div>
           <p id="fridge-loading" class="status" role="status" aria-live="polite" data-testid="fridge-loading">در حال تشخیص مواد…</p>
           <div class="sheet-actions">
@@ -287,9 +306,10 @@
         </div>
 
         <div id="fridge-confirm" hidden data-testid="fridge-confirm">
-          <p class="hint">مواد پیدا شده را ویرایش یا کنار بگذارید. فقط بعد از تأیید به انبار اضافه می‌شوند.</p>
+          <p class="hint">هر ماده با میزان اطمینان نشان داده شده. مواد تکراری یکی شده‌اند. فقط انتخاب‌شده‌ها بعد از تأیید به انبار می‌روند.</p>
+          <p id="fridge-merged" class="fridge-note" hidden data-testid="fridge-merged">مواد تکراری یا هم‌نام یکی شدند.</p>
           <p id="fridge-none" class="confirm-empty" hidden data-testid="fridge-none">
-            موردی در این عکس پیدا نشد. می‌توانید ماده را بنویسید یا دوباره تلاش کنید.
+            موردی در این عکس‌ها پیدا نشد. می‌توانید ماده را بنویسید یا دوباره تلاش کنید.
           </p>
           <ul id="fridge-candidates" class="confirm-list" data-testid="fridge-candidates"></ul>
           <p id="fridge-confirm-status" class="status" data-testid="fridge-confirm-status"></p>

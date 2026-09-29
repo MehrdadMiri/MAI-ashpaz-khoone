@@ -1,8 +1,9 @@
 """Shared GapGPT client (OpenAI-compatible chat completions).
 
 Recipe generation calls ``GapGPTClient.chat``. Fridge vision calls
-``GapGPTClient.chat_with_image``, which sends the same ``/chat/completions``
-request with an image part. Configuration comes only from the environment:
+``GapGPTClient.chat_with_image`` for one photo and ``chat_with_images`` for
+several, in order. Both send the same ``/chat/completions`` request with
+image parts. Configuration comes only from the environment:
 
   GAP_CODE_API_KEY   required to call the API; never logged or returned
   GAPGPT_BASE_URL    default https://api.gapgpt.app/v1
@@ -35,6 +36,8 @@ MAX_RESPONSE_BYTES = 2_000_000
 # Vision uploads are capped here so a caller cannot turn the chat method
 # into an unbounded encoder. The fridge route applies the same product limit.
 MAX_IMAGE_BYTES = 6 * 1024 * 1024
+# One fridge confirm can attach several photos. The route enforces the same cap.
+MAX_FRIDGE_IMAGES = 6
 ALLOWED_IMAGE_MIME = frozenset(
     {"image/jpeg", "image/png", "image/webp", "image/gif"}
 )
@@ -354,21 +357,71 @@ class GapGPTClient:
         It is not written to logs here. ``mime`` must be an allowed image type;
         callers should already have checked the file magic.
         """
+        return self.chat_with_images(
+            text,
+            [(image, mime)],
+            system=system,
+            model=model,
+            **options,
+        )
+
+    def chat_with_images(
+        self,
+        text: str,
+        images: list,
+        *,
+        system: str | None = None,
+        model: str | None = None,
+        **options: Any,
+    ) -> str:
+        """POST one chat completion with image data URLs in ``images`` order.
+
+        ``images`` is a list of ``(bytes, mime)``. Bytes are not written to
+        logs here. A failure raises ``GapGPTError`` with a static message.
+        """
+        if not isinstance(text, str) or not text.strip():
+            self._raise(
+                "invalid_request",
+                "image prompt is empty",
+                http_status=400,
+            )
+        if not isinstance(images, (list, tuple)) or isinstance(images, (bytes, bytearray)):
+            self._raise(
+                "invalid_request",
+                "image is empty",
+                http_status=400,
+            )
+        if not images:
+            self._raise(
+                "invalid_request",
+                "image is empty",
+                http_status=400,
+            )
+        if len(images) > MAX_FRIDGE_IMAGES:
+            self._raise(
+                "invalid_request",
+                "too many images",
+                http_status=400,
+            )
+        parts: list[dict[str, Any]] = [{"type": "text", "text": text}]
+        for item in images:
+            if not isinstance(item, (list, tuple)) or len(item) != 2:
+                self._raise(
+                    "invalid_request",
+                    "image is empty",
+                    http_status=400,
+                )
+            raw, mime = item
+            parts.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": _image_data_url(raw, mime)},
+                }
+            )
         messages: list[dict[str, Any]] = []
         if isinstance(system, str) and system.strip():
             messages.append({"role": "system", "content": system})
-        messages.append(
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": text},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": _image_data_url(image, mime)},
-                    },
-                ],
-            }
-        )
+        messages.append({"role": "user", "content": parts})
         return self.chat_text(messages, model=model, **options)
 
     def smoke(self) -> dict[str, Any]:

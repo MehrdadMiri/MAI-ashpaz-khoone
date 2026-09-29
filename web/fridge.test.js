@@ -144,10 +144,22 @@ function fakeDocument() {
   register("fridge-camera-view", "div", true);
   register("fridge-video", "video");
   register("fridge-shutter", "button");
+  register("fridge-camera-count", "p");
+  register("fridge-camera-detect", "button", true);
+  register("fridge-camera-review", "button");
   register("fridge-denied", "p", true);
+  register("fridge-queue", "div", true);
+  register("fridge-queue-count", "p");
+  register("fridge-queue-list", "ul");
+  register("fridge-queue-status", "p");
+  register("fridge-detect", "button");
+  register("fridge-add-photo", "button");
+  register("fridge-queue-camera", "button");
+  register("fridge-queue-clear", "button");
   register("fridge-launch", "div");
   register("fridge-loading-panel", "div", true);
   register("fridge-preview-wrap", "div", true);
+  register("fridge-preview-row", "div");
   register("fridge-preview", "img");
   register("fridge-loading", "p", true);
   register("fridge-loading-cancel", "button");
@@ -157,6 +169,7 @@ function fakeDocument() {
   register("fridge-retry", "button");
   register("empty-add", "label");
   register("fridge-confirm", "div", true);
+  register("fridge-merged", "p", true);
   register("fridge-none", "p", true);
   register("fridge-candidates", "ul");
   register("fridge-confirm-status", "p");
@@ -214,10 +227,26 @@ function mountFridge(options) {
   return { doc, store, calls, resolveFetch: () => resolveFetch, fetchImpl };
 }
 
-function pickFile(doc, id, file) {
+function pickFiles(doc, id, files) {
   const input = doc.nodes[id];
-  input.files = [file || jpegBlob()];
+  const list = files == null ? [jpegBlob()] : Array.isArray(files) ? files : [files];
+  input.files = list;
   input.listeners.change();
+}
+
+function pickFile(doc, id, file) {
+  pickFiles(doc, id, file || null);
+}
+
+async function stageFiles(doc, id, files) {
+  pickFiles(doc, id, files);
+  await flush();
+}
+
+async function sendFiles(ctx, id, files) {
+  await stageFiles(ctx.doc, id, files);
+  ctx.doc.nodes["fridge-detect"].listeners.click();
+  await flush();
 }
 
 test("copy and endpoint match the confirm-before-merge flow", () => {
@@ -239,7 +268,11 @@ test("page wires capture, upload, and the confirm button", () => {
   assert.match(html, /عکس یخچال/);
   assert.match(html, /id="fridge-capture"[\s\S]*?capture="environment"/);
   assert.match(html, /id="fridge-file"/);
-  assert.equal(html.includes('id="fridge-file"') && html.slice(html.indexOf('id="fridge-file"'), html.indexOf('id="fridge-file"') + 220).includes("capture="), false);
+  assert.match(html, /id="fridge-file"[\s\S]*?multiple/);
+  assert.equal(html.includes('id="fridge-file"') && html.slice(html.indexOf('id="fridge-file"'), html.indexOf('id="fridge-file"') + 280).includes("capture="), false);
+  assert.match(html, /id="fridge-detect"/);
+  assert.match(html, /id="fridge-queue"/);
+  assert.match(html, /id="fridge-merged"/);
   assert.match(html, /تأیید و افزودن به انبار/);
   assert.match(html, /در حال تشخیص مواد…/);
   assert.match(html, /id="fridge-preview"/);
@@ -253,9 +286,43 @@ test("page wires capture, upload, and the confirm button", () => {
 });
 
 test("candidate names are normalized and nothing merges until asked", () => {
-  assert.deepEqual(fridge.selectIngredients(["  \u0643\u0631\u0641\u0633 ", "کرفس", "شیر"]), ["کرفس", "شیر"]);
+  assert.equal(fridge.MAX_PHOTOS, 6);
+  assert.deepEqual(fridge.selectIngredients(["  \u0643\u0631\u0641\u0633 ", "کرفس", "شیر"]), [
+    { name: "کرفس", confidence: null, merged: true },
+    { name: "شیر", confidence: null, merged: false },
+  ]);
   assert.deepEqual(fridge.selectIngredients([]), []);
   assert.equal(fridge.selectIngredients("شیر"), null);
+  assert.deepEqual(
+    fridge.selectIngredients([
+      { name: "گوجه", confidence: 0.95 },
+      { name: "گوجه\u200cفرنگی", confidence: 0.4 },
+      { name: "پیاز", confidence: 0.7 },
+      { name: "پیازچه", confidence: 0.66 },
+      { name: "شیر", confidence: 80 },
+      { name: "شیر", score: "۹۲٪" },
+    ]),
+    [
+      { name: "گوجه\u200cفرنگی", confidence: 0.95, merged: true },
+      { name: "پیاز", confidence: 0.7, merged: false },
+      { name: "پیازچه", confidence: 0.66, merged: false },
+      { name: "شیر", confidence: 0.92, merged: true },
+    ],
+  );
+  assert.deepEqual(fridge.selectIngredients([{ name: "گوجه", confidence: 0.5 }]), [
+    { name: "گوجه", confidence: 0.5, merged: false },
+  ]);
+  assert.deepEqual(fridge.selectIngredients([{ name: "بد", confidence: 1.5 }]), [
+    { name: "بد", confidence: null, merged: false },
+  ]);
+  assert.deepEqual(fridge.selectIngredients(["شیر", "sk-testsecret", "https://evil.test/x"]), [
+    { name: "شیر", confidence: null, merged: false },
+  ]);
+  const secret = ["unit", "test", "key"].join("-");
+  assert.equal(fridge.confidenceCopy(0.92, false), "اطمینان ۹۲٪");
+  assert.equal(fridge.confidenceLevel(0.92, false), "high");
+  assert.equal(fridge.confidenceCopy(null, false), "نامشخص");
+  assert.equal(fridge.confidenceCopy(null, true), "دستی");
 
   const store = pantry.createPantry({ storage: pantry.createMemoryStorage() });
   store.add("کرفس");
@@ -264,11 +331,11 @@ test("candidate names are normalized and nothing merges until asked", () => {
   assert.deepEqual(merged.duplicate, ["کرفس"]);
   assert.deepEqual(store.items(), ["کرفس", "ماست"]);
   assert.equal(fridge.summarizeMerge(merged), "۱ ماده به انبار اضافه شد. ۱ ماده از قبل بود.");
-  const secret = ["unit", "test", "key"].join("-");
-  assert.equal(fridge.messageForFailure(502, { error: "unauthorized", message: secret }), ERROR_COPY.unauthorized);
+  assert.equal(fridge.messageForFailure(502, { error: "unauthorized", message: secret }), ERROR_COPY.unauthorized)
   assert.equal(fridge.messageForFailure(502, { error: "unauthorized", message: secret }).includes(secret), false);
   assert.equal(fridge.hintForFailure({ error: "invalid_image", message: secret }), "");
   assert.equal(fridge.hintForFailure({ error: "image_too_large" }), "");
+  assert.equal(fridge.hintForFailure({ error: "too_many_images" }), "");
   const hint = fridge.hintForFailure({ error: "not_configured", message: `Bearer ${secret}` });
   assert.equal(hint, fridge.SERVICE_HINT);
   assert.match(hint, /GAP_CODE_API_KEY/);
@@ -284,7 +351,13 @@ test("vision results stay out of the pantry until confirm", async () => {
   assert.equal(doc.nodes["fridge-sheet"].hidden, false);
   assert.equal(calls.length, 0);
 
-  pickFile(doc, "fridge-file");
+  await stageFiles(doc, "fridge-file");
+  assert.equal(calls.length, 0);
+  assert.equal(doc.nodes["fridge-queue"].hidden, false);
+  assert.equal(doc.nodes["fridge-queue-list"].children.length, 1);
+  assert.deepEqual(store.items(), []);
+
+  doc.nodes["fridge-detect"].listeners.click();
   await flush();
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, ENDPOINT);
@@ -292,14 +365,14 @@ test("vision results stay out of the pantry until confirm", async () => {
   assert.equal(calls[0].init.headers.Accept, "application/json");
   assert.equal(calls[0].init.headers["Content-Type"], undefined);
   assert.equal(calls[0].init.body instanceof FormData, true);
-  assert.ok(calls[0].init.body.get("image"));
+  assert.equal(calls[0].init.body.getAll("image").length, 1);
   assert.equal(doc.nodes["fridge-loading"].hidden, false);
   assert.equal(doc.nodes["fridge-loading"].textContent, COPY.loading);
   assert.equal(doc.nodes["fridge-loading-panel"].hidden, false);
   assert.equal(doc.nodes["fridge-loading-cancel"].disabled, false);
   assert.deepEqual(store.items(), []);
 
-  doc.nodes["fridge-file"].listeners.change();
+  doc.nodes["fridge-detect"].listeners.click();
   await flush();
   assert.equal(calls.length, 1);
 
@@ -310,6 +383,8 @@ test("vision results stay out of the pantry until confirm", async () => {
   assert.equal(doc.nodes["fridge-loading"].hidden, true);
   assert.equal(doc.nodes["fridge-candidates"].children.length, 2);
   assert.equal(doc.nodes["fridge-candidates"].children[0].children[1].value, "شیر");
+  assert.equal(doc.nodes["fridge-candidates"].children[0].children[2].textContent, "نامشخص");
+  assert.equal(doc.nodes["fridge-merged"].hidden, true);
   assert.deepEqual(store.items(), []);
   assert.equal(doc.nodes.chips.hidden, true);
 
@@ -319,6 +394,7 @@ test("vision results stay out of the pantry until confirm", async () => {
   firstToggle.listeners.change();
   secondField.value = "پنیر";
   secondField.listeners.input();
+  assert.equal(doc.nodes["fridge-candidates"].children[1].children[2].textContent, "دستی");
   assert.equal(doc.nodes["fridge-candidates"].children[0].className.includes("is-off"), true);
 
   doc.nodes["fridge-extra-input"].value = "روغن";
@@ -343,8 +419,7 @@ test("cancel and turning every chip off leave the pantry unchanged", async () =>
   const ctx = mountFridge({});
   const { doc, store } = ctx;
   doc.nodes["fridge-open"].listeners.click();
-  pickFile(doc, "fridge-file");
-  await flush();
+  await sendFiles(ctx, "fridge-file");
   ctx.resolveFetch()(jsonResponse(200, { ok: true, ingredients: ["شیر", "ماست"] }));
   await settle();
 
@@ -366,8 +441,7 @@ test("cancel and turning every chip off leave the pantry unchanged", async () =>
 test("empty vision list can be filled by hand and still waits for confirm", async () => {
   const ctx = mountFridge({});
   const { doc, store } = ctx;
-  pickFile(doc, "fridge-capture");
-  await flush();
+  await sendFiles(ctx, "fridge-capture");
   ctx.resolveFetch()(jsonResponse(200, { ok: true, ingredients: [] }));
   await settle();
   assert.equal(doc.nodes["fridge-none"].hidden, false);
@@ -384,8 +458,7 @@ test("errors are Persian, retry resends, and secrets stay hidden", async () => {
   const secret = "unit-test-key";
   const ctx = mountFridge({});
   const { doc, store, calls } = ctx;
-  pickFile(doc, "fridge-file");
-  await flush();
+  await sendFiles(ctx, "fridge-file");
   ctx.resolveFetch()(
     jsonResponse(502, { ok: false, error: "unauthorized", message: secret }),
   );
@@ -442,8 +515,7 @@ test("vision loading shows a preview and cancel leaves the pantry", async () => 
     const ctx = mountFridge({});
     const { doc, store } = ctx;
     doc.nodes["fridge-open"].listeners.click();
-    pickFile(doc, "fridge-file");
-    await flush();
+    await sendFiles(ctx, "fridge-file");
     assert.equal(doc.nodes["fridge-loading-panel"].hidden, false);
     assert.equal(doc.nodes["fridge-preview-wrap"].hidden, false);
     assert.equal(doc.nodes["fridge-preview"].src, "blob:fridge-preview");
@@ -490,8 +562,7 @@ test("camera denial falls back to file upload without calling the API", async ()
 
   doc.nodes["fridge-pick"].listeners.click();
   assert.equal(doc.nodes["fridge-file"].clickCount, 1);
-  pickFile(doc, "fridge-file");
-  await flush();
+  await sendFiles(ctx, "fridge-file");
   assert.equal(calls.length, 1);
   ctx.resolveFetch()(jsonResponse(200, { ok: true, ingredients: [] }));
   await settle();
@@ -532,7 +603,14 @@ test("a granted camera can take a photo and closing stops the stream", async () 
 
   doc.nodes["fridge-shutter"].listeners.click();
   await flush();
+  assert.equal(calls.length, 0);
+  assert.equal(stops.length, 0);
+  assert.equal(doc.nodes["fridge-video"].srcObject, stream);
+  assert.equal(doc.nodes["fridge-camera-detect"].hidden, false);
+  doc.nodes["fridge-camera-detect"].listeners.click();
+  await flush();
   assert.equal(calls.length, 1);
+  assert.equal(calls[0].init.body.getAll("image").length, 1);
   assert.ok(stops.length >= 1);
   assert.equal(doc.nodes["fridge-video"].srcObject, null);
   assert.deepEqual(store.items(), []);
@@ -541,5 +619,152 @@ test("a granted camera can take a photo and closing stops the stream", async () 
   await settle();
   doc.dispatchEvent({ type: "keydown", key: "Escape", preventDefault() {} });
   assert.equal(doc.nodes["fridge-sheet"].hidden, true);
+  assert.deepEqual(store.items(), []);
+});
+
+test("two photos are one request, duplicates merge, and only checked chips are added", async () => {
+  const ctx = mountFridge({});
+  const { doc, store, calls } = ctx;
+  const first = new Blob([Uint8Array.from([0xff, 0xd8, 0xff, 0xd9])], { type: "image/jpeg" });
+  const second = new Blob([Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a])], { type: "image/png" });
+  doc.nodes["fridge-open"].listeners.click();
+  await stageFiles(doc, "fridge-file", [first, second]);
+  assert.equal(calls.length, 0);
+  assert.equal(doc.nodes["fridge-queue-list"].children.length, 2);
+  assert.equal(doc.nodes["fridge-queue-count"].textContent, "۲ عکس آماده است");
+  assert.deepEqual(store.items(), []);
+
+  doc.nodes["fridge-queue-clear"].listeners.click();
+  assert.equal(doc.nodes["fridge-sheet"].hidden, true);
+  assert.equal(calls.length, 0);
+  assert.deepEqual(store.items(), []);
+
+  doc.nodes["fridge-open"].listeners.click();
+  await stageFiles(doc, "fridge-file", [first, second]);
+  const removeFirst = doc.nodes["fridge-queue-list"].children[0].children[1];
+  removeFirst.listeners.click();
+  assert.equal(doc.nodes["fridge-queue-list"].children.length, 1);
+
+  doc.nodes["fridge-add-photo"].listeners.click();
+  assert.equal(doc.nodes["fridge-file"].clickCount, 1);
+  await stageFiles(doc, "fridge-file", [first]);
+  assert.equal(doc.nodes["fridge-queue-list"].children.length, 2);
+
+  doc.nodes["fridge-detect"].listeners.click();
+  await flush();
+  assert.equal(calls.length, 1);
+  const images = calls[0].init.body.getAll("image");
+  assert.equal(images.length, 2);
+  assert.equal(images[0].type, "image/png");
+  assert.equal(images[1].type, "image/jpeg");
+  assert.equal(doc.nodes["fridge-loading"].textContent, COPY.loading);
+  assert.deepEqual(store.items(), []);
+
+  ctx.resolveFetch()(
+    jsonResponse(200, {
+      ok: true,
+      ingredients: [
+        { name: "گوجه", confidence: 0.55 },
+        { name: "گوجه\u200cفرنگی", confidence: 0.9 },
+        { name: "شیر", confidence: 0.42 },
+      ],
+    }),
+  );
+  await settle();
+
+  assert.equal(doc.nodes["fridge-confirm"].hidden, false);
+  assert.equal(doc.nodes["fridge-merged"].hidden, false);
+  assert.equal(doc.nodes["fridge-merged"].textContent, COPY.merged);
+  assert.equal(doc.nodes["fridge-candidates"].children.length, 2);
+  assert.equal(doc.nodes["fridge-candidates"].children[0].children[1].value, "گوجه‌فرنگی");
+  assert.equal(doc.nodes["fridge-candidates"].children[0].children[2].textContent, "اطمینان ۹۰٪");
+  assert.equal(doc.nodes["fridge-candidates"].children[0].children[2].dataset.level, "high");
+  assert.equal(doc.nodes["fridge-candidates"].children[1].children[1].value, "شیر");
+  assert.equal(doc.nodes["fridge-candidates"].children[1].children[2].textContent, "اطمینان ۴۲٪");
+  assert.equal(doc.nodes["fridge-candidates"].children[1].children[2].dataset.level, "low");
+  assert.deepEqual(store.items(), []);
+
+  const milk = doc.nodes["fridge-candidates"].children[1].children[0];
+  milk.checked = false;
+  milk.listeners.change();
+  doc.nodes["fridge-apply"].listeners.click();
+  assert.deepEqual(store.items(), ["گوجه‌فرنگی"]);
+  assert.equal(doc.nodes["fridge-sheet"].hidden, true);
+});
+
+test("a seventh photo is refused and the pantry stays empty", async () => {
+  const ctx = mountFridge({});
+  const { doc, store, calls } = ctx;
+  const many = Array.from({ length: 7 }, () => jpegBlob());
+  doc.nodes["fridge-open"].listeners.click();
+  await stageFiles(doc, "fridge-file", many);
+  assert.equal(calls.length, 0);
+  assert.equal(doc.nodes["fridge-error"].hidden, false);
+  assert.equal(doc.nodes["fridge-error-text"].textContent, ERROR_COPY.too_many_images);
+  assert.equal(doc.nodes["fridge-error-hint"].hidden, true);
+  assert.deepEqual(store.items(), []);
+
+  doc.nodes["fridge-open"].listeners.click();
+  await stageFiles(doc, "fridge-file", many.slice(0, 6));
+  assert.equal(doc.nodes["fridge-queue-list"].children.length, 6);
+  await stageFiles(doc, "fridge-file", [jpegBlob()]);
+  assert.equal(doc.nodes["fridge-queue-list"].children.length, 6);
+  assert.equal(doc.nodes["fridge-queue-status"].textContent, COPY.tooMany);
+  assert.equal(calls.length, 0);
+  assert.deepEqual(store.items(), []);
+});
+
+test("two camera frames stay in order until one detect", async () => {
+  const stops = [];
+  const stream = {
+    getTracks() {
+      return [{ stop() { stops.push("stop"); } }];
+    },
+  };
+  let frames = 0;
+  const ctx = mountFridge({
+    captureFrame() {
+      frames += 1;
+      const byte = frames === 1 ? 0xd8 : 0xd9;
+      return Promise.resolve(new Blob([Uint8Array.from([0xff, byte, 0xff])], { type: "image/jpeg" }));
+    },
+    mediaDevices: {
+      getUserMedia() {
+        return Promise.resolve(stream);
+      },
+    },
+  });
+  const { doc, store, calls } = ctx;
+  doc.nodes["fridge-open"].listeners.click();
+  doc.nodes["fridge-camera"].listeners.click();
+  await settle();
+  doc.nodes["fridge-shutter"].listeners.click();
+  await flush();
+  doc.nodes["fridge-shutter"].listeners.click();
+  await flush();
+  assert.equal(calls.length, 0);
+  assert.equal(doc.nodes["fridge-camera-count"].textContent, "۲ عکس آماده است");
+  assert.equal(stops.length, 0);
+  assert.deepEqual(store.items(), []);
+
+  doc.nodes["fridge-camera-review"].listeners.click();
+  assert.equal(doc.nodes["fridge-queue"].hidden, false);
+  assert.equal(doc.nodes["fridge-queue-list"].children.length, 2);
+  assert.ok(stops.length >= 1);
+
+  doc.nodes["fridge-detect"].listeners.click();
+  await flush();
+  assert.equal(calls.length, 1);
+  const images = calls[0].init.body.getAll("image");
+  assert.equal(images.length, 2);
+  assert.equal(images[0].size, 3);
+  assert.equal(images[1].size, 3);
+  const firstBytes = new Uint8Array(await images[0].arrayBuffer());
+  const secondBytes = new Uint8Array(await images[1].arrayBuffer());
+  assert.equal(firstBytes[1], 0xd8);
+  assert.equal(secondBytes[1], 0xd9);
+  assert.deepEqual(store.items(), []);
+  ctx.resolveFetch()(jsonResponse(200, { ok: true, ingredients: [] }));
+  await settle();
   assert.deepEqual(store.items(), []);
 });
