@@ -1,5 +1,7 @@
-/* Seven-day meal plan for آشپزخونه (US-06, US-07, US-10, ticket #18).
+/* Seven-day meal plan for آشپزخونه (US-06, US-07, US-10, ticket #18, #24).
    Each day شنبه–جمعه has سه وعده: صبحانه، ناهار، شام.
+   Assign and swap write one day and one meal. They do not fill the other
+   days. «برنامه ۷ روزه» (fillEmpty) is the only full-week fill.
    A meal can be marked خورده شد. That flag stays in localStorage with the
    plan and is how leftover regenerate knows which meals to skip.
    Older saves stored one شام per day (slots.sat as a recipe id, used.sat
@@ -1041,9 +1043,15 @@
           recipe = find(normalized.id);
         }
         if (!recipe) return { ok: false, reason: "recipe" };
-        var previous = state.slots[day.id][meal.id];
-        state.slots[day.id][meal.id] = recipe.id;
-        if (previous !== recipe.id) state.used[day.id][meal.id] = false;
+        /* Copy first, then write one cell. Other days and the other meals
+           on this day stay as they were. fillEmpty is not called here. */
+        var nextSlots = copySlotsMap(state.slots);
+        var nextUsed = copyUsedMap(state.used);
+        var previous = nextSlots[day.id][meal.id];
+        nextSlots[day.id][meal.id] = recipe.id;
+        if (previous !== recipe.id) nextUsed[day.id][meal.id] = false;
+        state.slots = nextSlots;
+        state.used = nextUsed;
         prune();
         persist();
         return {
@@ -1074,6 +1082,7 @@
           cleared: had,
         };
       },
+      /* «برنامه ۷ روزه» only. A single assign or swap must not call this. */
       fillEmpty: function () {
         if (!state.recipes.length) return { filled: 0 };
         var cursor = 0;

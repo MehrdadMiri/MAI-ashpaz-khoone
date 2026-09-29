@@ -1,5 +1,10 @@
-/* Recipe suggestions for آشپزخونه (US-05, US-10).
+/* Recipe suggestions for آشپزخونه (US-05, US-10, ticket #24).
    Reads the active pantry (chips + week budget) and asks POST /api/recipes/generate.
+   The first «پیشنهاد دستور» asks for 3 recipes. After one success the button
+   reads «پیشنهاد دستورهای بیشتر» and appends another batch. It does not
+   remove the cards already shown. «بازتولید کامل» replaces them.
+   A richer pantry asks GapGPT for 5 (5–7 names) or 7 (8 or more names).
+   The first click still sends 3. «بیشتر» and «بازتولید کامل» send the allowance.
    «پیشنهاد دستور» is leftover-aware: remaining chips and eaten meals.
    «بازتولید کامل» sends the full pantry and does not skip those meals.
    خورده شد is per meal (صبحانه، ناهار، شام). Older dinner-only weeks
@@ -14,6 +19,8 @@
 
   var COPY = {
     suggest: "پیشنهاد دستور",
+    suggestMore: "پیشنهاد دستورهای بیشتر",
+    moreNote: "دستورهای تازه به همین فهرست اضافه شد.",
     full: "بازتولید کامل",
     loading: "در حال پختن ایده‌ها…",
     retry: "تلاش دوباره",
@@ -70,6 +77,10 @@
     diabetic: "diet-diabetic",
   };
 
+  var SUGGEST_FIVE_AT = 5;
+  var SUGGEST_SEVEN_AT = 8;
+  var MAX_BATCH = 7;
+  var MAX_VISIBLE = 21;
   var REQUEST_TIMEOUT_MS = 100000;
   var NUTRITION_TIMEOUT_MS = 35000;
   var ENDPOINT = "/api/recipes/generate";
@@ -223,6 +234,50 @@
     return payload;
   }
 
+  function suggestCount(ingredientCount) {
+    var count = Number(ingredientCount);
+    if (!isFinite(count) || count < SUGGEST_FIVE_AT) return 3;
+    if (count < SUGGEST_SEVEN_AT) return 5;
+    return 7;
+  }
+
+  function sameNameList(left, right) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+    for (var i = 0; i < left.length; i += 1) {
+      if (identityKey(left[i]) !== identityKey(right[i])) return false;
+    }
+    return true;
+  }
+
+  function cookingNames(payload) {
+    if (!payload) return [];
+    if (payload.full) return Array.isArray(payload.ingredients) ? payload.ingredients : [];
+    if (
+      Array.isArray(payload.remaining) &&
+      payload.remaining.length &&
+      !sameNameList(payload.remaining, payload.ingredients)
+    ) {
+      return payload.remaining;
+    }
+    return Array.isArray(payload.ingredients) ? payload.ingredients : [];
+  }
+
+  function mergeRecipes(previous, incoming) {
+    var seen = Object.create(null);
+    var merged = [];
+    function add(card) {
+      if (!card || typeof card.title !== "string") return;
+      var key = identityKey(card.title);
+      if (!key || seen[key]) return;
+      seen[key] = true;
+      merged.push(card);
+    }
+    (Array.isArray(previous) ? previous : []).forEach(add);
+    (Array.isArray(incoming) ? incoming : []).forEach(add);
+    if (merged.length > MAX_VISIBLE) return merged.slice(0, MAX_VISIBLE);
+    return merged;
+  }
+
   function buildGeneratePayload(pantry, mode) {
     var items = pantry.items().slice();
     var raw = pantry.budget();
@@ -233,24 +288,42 @@
     }
     var household = currentHousehold(pantry);
     var full = !!(mode && mode.full);
+    var more = !!(mode && mode.more);
+    var payload;
     if (full) {
-      return withFilters({ ingredients: items, budget: budget, household: household, full: true }, pantry);
+      payload = withFilters({ ingredients: items, budget: budget, household: household, full: true }, pantry);
+    } else {
+      var leftovers = readLeftovers(pantry);
+      if (!leftovers.used) {
+        payload = withFilters({ ingredients: items, budget: budget, household: household }, pantry);
+      } else {
+        payload = withFilters(
+          {
+            ingredients: items,
+            budget: budget,
+            household: household,
+            remaining: leftovers.remaining,
+            skip: leftovers.skip,
+            full: false,
+          },
+          pantry
+        );
+      }
     }
-    var leftovers = readLeftovers(pantry);
-    if (!leftovers.used) {
-      return withFilters({ ingredients: items, budget: budget, household: household }, pantry);
+    payload.count = more || full ? suggestCount(cookingNames(payload).length) : 3;
+    if (more && mode && Array.isArray(mode.exclude)) {
+      var exclude = [];
+      var seenExclude = Object.create(null);
+      mode.exclude.forEach(function (title) {
+        var text = cleanLine(title, 120);
+        var key = identityKey(text);
+        if (!text || !key || seenExclude[key] || exclude.length >= 24) return;
+        seenExclude[key] = true;
+        exclude.push(text);
+      });
+      if (exclude.length) payload.exclude = exclude;
     }
-    return withFilters(
-      {
-        ingredients: items,
-        budget: budget,
-        household: household,
-        remaining: leftovers.remaining,
-        skip: leftovers.skip,
-        full: false,
-      },
-      pantry
-    );
+    return payload;
   }
 
   function sanitizeDisplay(text) {
@@ -468,7 +541,7 @@
   function selectRecipes(recipes, servingsFallback) {
     if (!Array.isArray(recipes)) return null;
     var selected = [];
-    for (var i = 0; i < recipes.length && selected.length < 6; i += 1) {
+    for (var i = 0; i < recipes.length && selected.length < MAX_BATCH; i += 1) {
       var recipe = recipes[i];
       if (!recipe || typeof recipe !== "object") continue;
       var title = cleanLine(recipe.title, 120);
@@ -512,6 +585,7 @@
     if (!doc || typeof doc.dispatchEvent !== "function") return;
     var detail = { recipes: recipes };
     if (meta && meta.full) detail.full = true;
+    if (meta && meta.append) detail.append = true;
     if (meta && Array.isArray(meta.skip) && meta.skip.length) detail.skip = meta.skip.slice();
     var event;
     if (typeof CustomEvent === "function") {
@@ -642,7 +716,9 @@
 
     clearNutritionCache();
     var gate = createSubmitGate();
-    var lastFull = false;
+    var lastMode = "suggest";
+    var suggested = false;
+    var visible = [];
     var request = typeof fetchImpl === "function" ? fetchImpl : null;
     var nutritionTicket = 0;
     var nutritionAbort = null;
@@ -828,35 +904,54 @@
       hintEl.hidden = !safe;
     }
 
-    function showError(message, hint) {
-      invalidateNutrition();
+    function showError(message, hint, keepCards) {
+      if (!keepCards) invalidateNutrition();
       status.textContent = "";
       errorText.textContent = sanitizeDisplay(message);
       errorBox.hidden = false;
       setHint(hint);
       if (emptyBox) emptyBox.hidden = true;
       if (skeleton) skeleton.hidden = true;
+      if (keepCards && visible.length) {
+        renderRecipeGrid(doc, grid, visible);
+        grid.hidden = false;
+        try {
+          applyNutrition(grid, rememberedEstimates(visible));
+        } catch (err) {
+          /* The cards stay. A missing estimate does not clear them. */
+        }
+        return;
+      }
       grid.hidden = true;
       grid.replaceChildren();
       grid._recipeCards = [];
     }
 
-    function showLoading() {
-      invalidateNutrition();
+    function showLoading(keepCards) {
+      if (!keepCards) invalidateNutrition();
       errorBox.hidden = true;
       setHint("");
       if (emptyBox) emptyBox.hidden = true;
+      status.textContent = COPY.loading;
+      if (keepCards && visible.length) {
+        if (skeleton) skeleton.hidden = true;
+        grid.hidden = false;
+        return;
+      }
       if (skeleton) skeleton.hidden = false;
       grid.hidden = true;
       grid.replaceChildren();
       grid._recipeCards = [];
-      status.textContent = COPY.loading;
     }
 
     function showRecipes(recipes, payload) {
+      visible = recipes.slice();
+      suggested = true;
+      suggestBtn.textContent = COPY.suggestMore;
       errorBox.hidden = true;
       setHint("");
       var notes = [];
+      if (payload && payload.append) notes.push(COPY.moreNote);
       if (payload && payload.full) notes.push(COPY.fullNote);
       else if (payload && payload.skip && payload.skip.length) notes.push(COPY.leftoverNote);
       var diet = dietStatus(payload && payload.filters);
@@ -889,10 +984,26 @@
       setBusy(false);
     }
 
-    function run(full) {
+    function run(mode) {
       if (!gate.begin()) return;
-      lastFull = !!full;
-      var payload = buildGeneratePayload(pantry, { full: lastFull });
+      var nextMode = mode === "full" || mode === "more" || mode === "suggest" ? mode : "suggest";
+      lastMode = nextMode;
+      var appending = nextMode === "more";
+      var payload = buildGeneratePayload(pantry, {
+        full: nextMode === "full",
+        more: appending,
+        exclude: appending
+          ? visible.map(function (card) {
+              return card.title;
+            })
+          : null,
+      });
+      var display = {
+        full: payload.full,
+        skip: payload.skip,
+        filters: payload.filters,
+        append: appending,
+      };
       if (!payload.ingredients.length) {
         gate.end();
         showError(
@@ -915,8 +1026,9 @@
         return;
       }
 
+      var previous = visible.slice();
       setBusy(true);
-      showLoading();
+      showLoading(appending && previous.length);
       var controller = typeof AbortController !== "undefined" ? new AbortController() : null;
       var timer = setTimeout(function () {
         if (controller) controller.abort();
@@ -946,40 +1058,47 @@
             body = null;
           }
           if (!result.response.ok || !body || body.ok === false) {
-            showError(messageForFailure(result.response.status, body), hintForFailure(body));
+            showError(
+              messageForFailure(result.response.status, body),
+              hintForFailure(body),
+              previous.length > 0
+            );
             return;
           }
           var recipes = selectRecipes(body.recipes, body.household != null ? body.household : payload.household);
           if (!recipes) {
             showError(
               messageForFailure(502, { error: "bad_response" }),
-              hintForFailure({ error: "bad_response" })
+              hintForFailure({ error: "bad_response" }),
+              previous.length > 0
             );
             return;
           }
-          showRecipes(recipes, payload);
+          var next = appending ? mergeRecipes(previous, recipes) : recipes;
+          showRecipes(next, display);
         })
         .catch(function (err) {
           var aborted = err && (err.name === "AbortError" || err.code === 20);
           var code = aborted ? "timeout" : "network";
-          showError(messageForFailure(0, { error: code }), hintForFailure({ error: code }));
+          showError(messageForFailure(0, { error: code }), hintForFailure({ error: code }), previous.length > 0);
         })
         .then(function () {
           finish(timer);
         });
     }
 
+    suggestBtn.textContent = COPY.suggest;
     suggestBtn.addEventListener("click", function () {
-      run(false);
+      run(suggested ? "more" : "suggest");
     });
     if (fullBtn) {
       fullBtn.addEventListener("click", function () {
-        run(true);
+        run("full");
       });
     }
     if (retryBtn) {
       retryBtn.addEventListener("click", function () {
-        run(lastFull);
+        run(lastMode);
       });
     }
     bindDietChips();
@@ -1007,6 +1126,12 @@
     DIET_LABELS: DIET_LABELS,
     dietStatus: dietStatus,
     readFilters: readFilters,
+    suggestCount: suggestCount,
+    SUGGEST_FIVE_AT: SUGGEST_FIVE_AT,
+    SUGGEST_SEVEN_AT: SUGGEST_SEVEN_AT,
+    MAX_BATCH: MAX_BATCH,
+    MAX_VISIBLE: MAX_VISIBLE,
+    mergeRecipes: mergeRecipes,
     buildGeneratePayload: buildGeneratePayload,
     readLeftovers: readLeftovers,
     sanitizeDisplay: sanitizeDisplay,

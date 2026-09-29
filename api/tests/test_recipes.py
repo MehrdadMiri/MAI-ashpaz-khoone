@@ -10,6 +10,7 @@ from recipes import (
     parse_generate_body,
     parse_recipes,
     generate_recipes,
+    suggest_count,
     violates_diet,
     RecipeRequestError,
 )
@@ -770,6 +771,141 @@ class HouseholdTests(unittest.TestCase):
         self.assertTrue(all(item["servings"] == 8 for item in result["recipes"]))
         self.assertIn("تعداد نفرات: 8.", stub.messages[1]["content"])
         self.assertEqual(stub.messages[0]["content"], SYSTEM_PROMPT)
+
+
+def numbered_recipes(count):
+    titles = [
+        "عدس‌پلو",
+        "لوبیا پلو",
+        "ماست و سبزی",
+        "کوکو سبزی",
+        "کتلت",
+        "آش رشته",
+        "زرشک‌پلو",
+    ]
+    recipes = []
+    for index in range(count):
+        title = titles[index] if index < len(titles) else f"خوراک {index}"
+        recipes.append(
+            dish(
+                title,
+                ["برنج", "روغن"],
+                ["مواد را آماده کن", "بپز", "سرو کن"],
+                80000 + index,
+            )
+        )
+    return recipes
+
+
+RICH_PANTRY = ["برنج", "عدس", "پیاز", "لوبیا", "ماست", "روغن", "مرغ", "سبزی"]
+
+
+class SuggestCountTests(unittest.TestCase):
+    def test_thresholds(self):
+        self.assertEqual(suggest_count(1), 3)
+        self.assertEqual(suggest_count(4), 3)
+        self.assertEqual(suggest_count(5), 5)
+        self.assertEqual(suggest_count(7), 5)
+        self.assertEqual(suggest_count(8), 7)
+        self.assertEqual(suggest_count(20), 7)
+
+    def test_omitted_count_follows_the_pantry(self):
+        stub = StubClient(json.dumps({"recipes": numbered_recipes(7)}, ensure_ascii=False))
+        result = generate_recipes(stub, RICH_PANTRY, 1500000)
+        self.assertEqual(result["count"], 7)
+        self.assertEqual(len(result["recipes"]), 7)
+        self.assertIn("دقیقاً هفت دستور متفاوت", stub.messages[1]["content"])
+
+        five = RICH_PANTRY[:6]
+        stub = StubClient(json.dumps({"recipes": numbered_recipes(5)}, ensure_ascii=False))
+        result = generate_recipes(stub, five, 1000)
+        self.assertEqual(result["count"], 5)
+        self.assertEqual(len(result["recipes"]), 5)
+        self.assertIn("دقیقاً پنج دستور متفاوت", stub.messages[1]["content"])
+
+    def test_explicit_three_stays_three_on_a_rich_pantry(self):
+        stub = StubClient(json.dumps({"recipes": numbered_recipes(7)}, ensure_ascii=False))
+        parsed = parse_generate_body({"ingredients": RICH_PANTRY, "count": 3, "budget": 10})
+        self.assertEqual(parsed.count, 3)
+        result = generate_recipes(stub, list(parsed.ingredients), parsed.budget, count=parsed.count)
+        self.assertEqual(len(result["recipes"]), 3)
+        self.assertIn("حداقل سه دستور", stub.messages[1]["content"])
+        self.assertNotIn("دقیقاً هفت", stub.messages[1]["content"])
+
+    def test_a_thin_pantry_clamps_a_request_for_seven(self):
+        stub = StubClient(json.dumps(sample_payload(), ensure_ascii=False))
+        result = generate_recipes(stub, ["برنج", "عدس"], 10, count=7)
+        self.assertEqual(result["count"], 3)
+        self.assertEqual(len(result["recipes"]), 3)
+        self.assertIn("حداقل سه دستور", stub.messages[1]["content"])
+
+    def test_bad_count_is_static(self):
+        secret = "count-secret-value"
+        for value in (4, 9, secret, True, 5.5):
+            with self.assertRaises(RecipeRequestError) as caught:
+                parse_generate_body({"ingredients": ["برنج"], "count": value})
+            self.assertEqual(caught.exception.code, "invalid_request")
+            rendered = caught.exception.message + json.dumps(caught.exception.to_dict())
+            self.assertNotIn(secret, rendered)
+            self.assertNotIn("Traceback", rendered)
+
+    def test_persian_digit_count_is_accepted(self):
+        parsed = parse_generate_body({"ingredients": RICH_PANTRY, "count": "۵"})
+        self.assertEqual(parsed.count, 5)
+
+    def test_exclude_drops_titles_already_on_the_page(self):
+        payload = {"recipes": numbered_recipes(7)}
+        recipes = parse_recipes(
+            json.dumps(payload, ensure_ascii=False),
+            RICH_PANTRY,
+            count=5,
+            exclude=["عدس‌پلو", "لوبیا پلو"],
+        )
+        titles = [item["title"] for item in recipes]
+        self.assertGreaterEqual(len(titles), 3)
+        self.assertLessEqual(len(titles), 5)
+        self.assertNotIn("عدس‌پلو", titles)
+        self.assertNotIn("لوبیا پلو", titles)
+
+    def test_more_prompt_names_the_cards_already_shown(self):
+        stub = StubClient(json.dumps({"recipes": numbered_recipes(5)}, ensure_ascii=False))
+        result = generate_recipes(
+            stub,
+            RICH_PANTRY[:6],
+            1000,
+            count=5,
+            exclude=["عدس‌پلو"],
+        )
+        self.assertNotIn("عدس‌پلو", [item["title"] for item in result["recipes"]])
+        user = stub.messages[1]["content"]
+        self.assertIn("دستورهای روی صفحه:", user)
+        self.assertIn("عدس‌پلو", user)
+        self.assertIn("این نام‌ها را تکرار نکن", user)
+
+    def test_full_regenerate_ignores_exclude_and_uses_the_allowance(self):
+        stub = StubClient(json.dumps({"recipes": numbered_recipes(7)}, ensure_ascii=False))
+        result = generate_recipes(
+            stub,
+            RICH_PANTRY,
+            1000,
+            full=True,
+            exclude=["عدس‌پلو"],
+        )
+        self.assertEqual(result["mode"], "full")
+        self.assertEqual(result["count"], 7)
+        self.assertIn("عدس‌پلو", [item["title"] for item in result["recipes"]])
+        user = stub.messages[1]["content"]
+        self.assertNotIn("دستورهای روی صفحه:", user)
+        self.assertIn("دقیقاً هفت دستور متفاوت", user)
+
+    def test_short_model_reply_is_rejected_when_nothing_was_dropped(self):
+        with self.assertRaises(GapGPTError) as caught:
+            parse_recipes(
+                json.dumps({"recipes": numbered_recipes(3)}, ensure_ascii=False),
+                RICH_PANTRY,
+                count=7,
+            )
+        self.assertEqual(caught.exception.code, "bad_response")
 
 
 if __name__ == "__main__":

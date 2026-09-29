@@ -494,6 +494,7 @@ test("افزودن به برنامه assigns one meal, then جایگزین swaps
   assert.match(view.doc.nodes["plan-status"].textContent, /شنبه/);
   assert.equal(childByTestId(slotOf(dayCards(view.doc)[0], "dinner"), "day-meal").textContent, "عدس‌پلو");
   assert.equal(childByTestId(slotOf(dayCards(view.doc)[0], "breakfast"), "day-meal").textContent, "خالی");
+  assert.deepEqual(filledDayMeals(view.doc), ["sat:dinner:عدس‌پلو"]);
 
   click(view.doc, childByTestId(slotOf(dayCards(view.doc)[0], "dinner"), "day-swap"));
   assert.equal(view.doc.nodes["plan-sheet"].dataset.mode, "swap");
@@ -503,6 +504,7 @@ test("افزودن به برنامه assigns one meal, then جایگزین swaps
   const other = swaps.find((button) => button.children[0].textContent === "لوبیا پلو");
   click(view.doc, other);
   assert.equal(childByTestId(slotOf(dayCards(view.doc)[0], "dinner"), "day-meal").textContent, "لوبیا پلو");
+  assert.deepEqual(filledDayMeals(view.doc), ["sat:dinner:لوبیا پلو"]);
   assert.match(view.doc.nodes["plan-status"].textContent, /جایگزین/);
 
   click(view.doc, childByTestId(slotOf(dayCards(view.doc)[0], "dinner"), "day-swap"));
@@ -510,6 +512,43 @@ test("افزودن به برنامه assigns one meal, then جایگزین swaps
   assert.equal(clear.children[0].textContent, "خالی");
   click(view.doc, clear);
   assert.equal(childByTestId(slotOf(dayCards(view.doc)[0], "dinner"), "day-meal").textContent, "خالی");
+  assert.deepEqual(filledDayMeals(view.doc), []);
+});
+
+function filledDayMeals(doc) {
+  const found = [];
+  dayCards(doc).forEach((card) => {
+    mealSlots(card).forEach((slot) => {
+      const text = childByTestId(slot, "day-meal").textContent;
+      if (text !== "خالی") found.push(card.dataset.day + ":" + slot.dataset.meal + ":" + text);
+    });
+  });
+  return found;
+}
+
+function filledSlots(model) {
+  const found = [];
+  model.week().forEach((day) => {
+    day.meals.forEach((meal) => {
+      if (meal.recipe) found.push(day.id + ":" + meal.id + ":" + meal.recipe.title);
+    });
+  });
+  return found;
+}
+
+test("assigning one meal does not fill the rest of the week", () => {
+  const model = fresh();
+  model.assign("wed", THREE[1], "lunch");
+  assert.deepEqual(filledSlots(model), ["wed:lunch:لوبیا پلو"]);
+  model.assign("wed", THREE[0], "lunch");
+  assert.deepEqual(filledSlots(model), ["wed:lunch:عدس‌پلو"]);
+  model.clearDay("wed", "lunch");
+  assert.deepEqual(filledSlots(model), []);
+  model.remember(THREE);
+  model.assign("fri", THREE[2], "dinner");
+  assert.deepEqual(filledSlots(model), ["fri:dinner:ماست و خیار"]);
+  assert.equal(model.fillEmpty().filled, 20);
+  assert.equal(filledSlots(model).length, 21);
 });
 
 test("a click on the choice label still selects that meal slot", () => {

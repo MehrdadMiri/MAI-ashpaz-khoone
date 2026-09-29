@@ -7,6 +7,7 @@ from pathlib import Path
 
 from gapgpt import DEFAULT_MODEL, GapGPTClient, GapGPTConfig, GapGPTError
 from nutrition import (
+    MAX_NUTRITION_RECIPES,
     NUTRITION_CLIENT_TIMEOUT,
     NUTRITION_SYSTEM_PROMPT,
     NutritionRequestError,
@@ -83,7 +84,7 @@ class BodyTests(unittest.TestCase):
             {"recipes": secret},
             {"recipes": [secret]},
             {"recipes": [dish(title="برنج\nsecret")]},
-            {"recipes": [dish()] * 7},
+            {"recipes": [dish()] * (MAX_NUTRITION_RECIPES + 1)},
         )
         for body in cases:
             with self.assertRaises(NutritionRequestError) as caught:

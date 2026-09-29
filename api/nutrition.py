@@ -32,7 +32,8 @@ from recipes import (
 # nginx proxy_read_timeout. A slow estimate must not hold up generate.
 NUTRITION_CLIENT_TIMEOUT = 30.0
 
-MAX_NUTRITION_RECIPES = 6
+# The page can show up to 21 cards (a first batch of 3 plus appended batches).
+MAX_NUTRITION_RECIPES = 21
 MAX_KCAL = 5000
 MAX_MACRO_G = 500
 _CACHE_MAX = 256
