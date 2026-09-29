@@ -1031,6 +1031,8 @@ h2 {
 #fridge-open,
 #fridge-camera,
 #fridge-shutter,
+#fridge-detect,
+#fridge-camera-detect,
 #fridge-apply,
 #fridge-retry {
   border: 1px solid transparent;
@@ -1048,6 +1050,8 @@ h2 {
 #fridge-open:hover:not(:disabled),
 #fridge-camera:hover:not(:disabled),
 #fridge-shutter:hover:not(:disabled),
+#fridge-detect:hover:not(:disabled),
+#fridge-camera-detect:hover:not(:disabled),
 #fridge-apply:hover:not(:disabled),
 #fridge-retry:hover:not(:disabled) {
   background: var(--accent-dark);
@@ -1057,13 +1061,24 @@ h2 {
 
 #fridge-pick,
 #fridge-cancel,
-#fridge-loading-cancel {
+#fridge-loading-cancel,
+#fridge-add-photo,
+#fridge-queue-camera,
+#fridge-queue-clear,
+#fridge-camera-review {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
   font-weight: 600;
 }
 
 #fridge-pick:hover:not(:disabled),
 #fridge-cancel:hover:not(:disabled),
 #fridge-loading-cancel:hover:not(:disabled),
+#fridge-add-photo:hover:not(:disabled),
+#fridge-queue-camera:hover:not(:disabled),
+#fridge-queue-clear:hover:not(:disabled),
+#fridge-camera-review:hover:not(:disabled),
 #plan-sheet-cancel:hover:not(:disabled),
 #shop-sheet-cancel:hover:not(:disabled),
 #fridge-close:hover:not(:disabled),
@@ -1145,13 +1160,72 @@ h2 {
   margin-top: 0.75rem;
 }
 
+.fridge-preview-row {
+  display: flex;
+  gap: 0.45rem;
+  align-items: stretch;
+  overflow-x: auto;
+}
+
 .fridge-preview {
   display: block;
-  width: 100%;
-  max-height: 16rem;
-  border-radius: 1rem;
+  width: 4.75rem;
+  height: 4.75rem;
+  flex: none;
+  border-radius: 0.85rem;
   background: #1f1a14;
   object-fit: cover;
+}
+
+.fridge-preview-row .fridge-preview:first-child {
+  flex: 1;
+  width: auto;
+  height: auto;
+  max-height: 16rem;
+  min-height: 8rem;
+}
+
+.fridge-queue-list {
+  display: flex;
+  gap: 0.55rem;
+  overflow-x: auto;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fridge-queue-item {
+  position: relative;
+  flex: none;
+}
+
+.fridge-queue-thumb {
+  display: block;
+  width: 5.5rem;
+  height: 5.5rem;
+  border-radius: 0.85rem;
+  background: #1f1a14;
+  object-fit: cover;
+}
+
+.fridge-queue-remove {
+  position: absolute;
+  inset-inline-start: 0.3rem;
+  top: 0.3rem;
+  min-height: 0;
+  padding: 0.15rem 0.45rem;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(31, 26, 20, 0.72);
+  color: #fffdf8;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+#fridge-camera-count:empty,
+#fridge-queue-count:empty,
+#fridge-queue-status:empty {
+  display: none;
 }
 
 #fridge-loading {
@@ -1180,8 +1254,37 @@ h2 {
   min-height: 2.75rem;
   padding: 0.3rem 0.45rem 0.3rem 0.7rem;
   border: 1px solid var(--chip-line);
-  border-radius: 999px;
+  border-radius: 1rem;
   background: var(--chip-bg);
+}
+
+.confidence {
+  flex: none;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.confidence-high {
+  background: #e5f6e8;
+  color: #1d6b32;
+}
+
+.confidence-mid {
+  background: #fff4d6;
+  color: #8a5a00;
+}
+
+.confidence-low {
+  background: #fde8e4;
+  color: #9a3412;
+}
+
+.confidence-unknown {
+  background: #f3efe8;
+  color: #6b6258;
 }
 
 .confirm-chip input[type="checkbox"] {

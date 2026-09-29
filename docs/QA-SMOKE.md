@@ -49,10 +49,49 @@ On a fresh browser profile (or after «پاک کردن»):
 
 ### 3. Fridge photo — confirm — pantry
 
-- «عکس یخچال» → «انتخاب عکس» (or the camera) and pick a JPEG of food.
+- «عکس یخچال» → «انتخاب عکس» (or the camera). A gallery photo or a camera frame waits in the tray. Press «تشخیص مواد».
 - While the request runs, the sheet shows that photo and «در حال تشخیص مواد…». «پیشنهاد دستور» is unrelated; this sheet’s own controls stay single-submit.
-- «انصراف» during that wait closes the sheet, adds nothing, and does not show an error. The pantry is unchanged. Try the photo again.
-- On the confirm sheet, uncheck or edit a name if you want. «تأیید و افزودن به انبار» adds only the checked names, without duplicates. «انصراف» on the confirm sheet adds nothing.
+- «انصراف» on the tray, before detection, closes the sheet and adds nothing. «انصراف» during the wait closes the sheet, adds nothing, and does not show an error. The pantry is unchanged. Try the photo again.
+- On the confirm sheet, each chip shows «اطمینان …٪» or «نامشخص». Uncheck or edit a name if you want. «تأیید و افزودن به انبار» adds only the checked names, without duplicates. «انصراف» on the confirm sheet adds nothing.
+
+### 3b. Several fridge photos — confidence and merged names
+
+This check does not create a `v0.2.0` tag. Up to six photos share one confirm flow.
+
+- Add at least two photos before detection: multi-select in «انتخاب عکس», or «ثبت این عکس» twice, or one of each plus «عکس دیگر». The tray lists them in that order. «حذف» drops one and keeps the rest in order.
+- «تشخیص مواد» sends one request. The sheet shows those photos and «در حال تشخیص مواد…». Cancel still adds nothing.
+- Confirm chips show a confidence. The same food from more than one photo is a single chip (spacing, ZWNJ, and Arabic/Persian letters). گوجه together with گوجه‌فرنگی is also one chip, labeled گوجه‌فرنگی, and the sheet says «مواد تکراری یا هم‌نام یکی شدند». پیاز and پیازچه stay separate.
+- Uncheck one chip. «تأیید و افزودن به انبار» adds only the checked names. «انصراف» adds nothing.
+- A seventh photo is refused in Persian. The pantry does not change.
+
+Shell, key missing or invalid (the body must not contain the key, a traceback, or the image):
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+jpeg = bytes.fromhex("ffd8ffe000104a46494600010100000100010000ffd9")
+Path("/tmp/fridge-a.jpg").write_bytes(jpeg)
+Path("/tmp/fridge-b.jpg").write_bytes(jpeg)
+PY
+curl -sS -X POST http://localhost:8000/vision/fridge \
+  -F "image=@/tmp/fridge-a.jpg;type=image/jpeg" \
+  -F "image=@/tmp/fridge-b.jpg;type=image/jpeg"
+```
+
+Missing key: HTTP 503, `"error": "not_configured"`. Invalid key: HTTP 502, `"error": "unauthorized"`.
+
+Live smoke with a real key only in the host file `…/MAI/.env` (or this repo’s gitignored `.env`). Do not echo the value. Do not tag `v0.2.0`.
+
+```bash
+set -a
+# shellcheck disable=SC1091
+source /path/to/MAI/.env
+set +a
+test -n "$GAP_CODE_API_KEY" && echo "GAP_CODE_API_KEY is set (value hidden)"
+docker compose up -d --force-recreate api
+```
+
+Repeat the two-photo curl with real fridge JPEGs instead of the tiny file. Expected HTTP 200, `"ok": true`, and `ingredients` as objects `{"name","confidence"}`. Confidence is from 0 to 1, or `null`. The body must not contain the key or the image bytes. On the page, confirm only the chips you leave checked.
 
 ### 4. Budget — generate at least three
 
@@ -138,7 +177,7 @@ docker compose up -d --force-recreate api
 ```
 
 - «پیشنهاد دستور» shows «در حال پختن ایده‌ها…», then a short Persian error and «تلاش دوباره». The hint may name `GAP_CODE_API_KEY` and docker compose logs. It must not show the key value, a stack trace, or the raw server body. The pantry chips stay.
-- «عکس یخچال» with a JPEG does the same for vision: Persian error, «تلاش دوباره», preview only while the request was running, pantry unchanged.
+- «عکس یخچال» with one or two JPEGs, then «تشخیص مواد», does the same for vision: Persian error, «تلاش دوباره», preview only while the request was running, pantry unchanged.
 - «تلاش دوباره» sends the request again and shows the same friendly error while the key is still bad. The page does not crash.
 - Put the real key back in `.env` only, recreate api, and repeat steps 4 and 3. Generate returns at least three cards. A fridge photo can be confirmed into the pantry again.
 

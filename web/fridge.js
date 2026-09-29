@@ -1,9 +1,14 @@
-/* Fridge photo → confirm → pantry (US-05b).
-   Capture or upload a photo, ask POST /api/vision/fridge, then show candidate
-   chips. Nothing is written to the pantry until «تأیید و افزودن به انبار».
-   The API key stays on the server. This file never sees it. */
+/* Fridge photos → confirm → pantry.
+   Capture or upload one or more photos, in order, then ask POST /api/vision/fridge.
+   The confirm sheet shows each candidate with a confidence and merges
+   near-duplicate Persian names before anything is written. Nothing is written
+   to the pantry until «تأیید و افزودن به انبار».
+   The API key stays on the server. This file never sees it. Image bytes are
+   not logged. */
 (function (global) {
   "use strict";
+
+  var TOO_MANY = "حداکثر شش عکس در هر بار. یکی را بردارید و دوباره تلاش کنید.";
 
   var COPY = {
     open: "عکس یخچال",
@@ -13,7 +18,13 @@
     cameraDenied: "دسترسی به دوربین داده نشد. می‌توانید یک عکس انتخاب کنید.",
     noneChosen: "حداقل یک ماده را انتخاب کنید.",
     alreadyInDraft: "این ماده در فهرست هست.",
-    noneFound: "موردی در این عکس پیدا نشد. می‌توانید ماده را بنویسید یا دوباره تلاش کنید.",
+    noneFound: "موردی در این عکس‌ها پیدا نشد. می‌توانید ماده را بنویسید یا دوباره تلاش کنید.",
+    detect: "تشخیص مواد",
+    addPhoto: "عکس دیگر",
+    tooMany: TOO_MANY,
+    merged: "مواد تکراری یا هم‌نام یکی شدند.",
+    manual: "دستی",
+    confidenceUnknown: "نامشخص",
   };
 
   var ERROR_COPY = {
@@ -26,6 +37,7 @@
     upstream_error: "الان نمی‌توانیم مواد را تشخیص دهیم. دوباره تلاش کنید.",
     invalid_image: "این عکس قابل استفاده نیست. یک عکس JPEG یا PNG انتخاب کنید.",
     image_too_large: "حجم عکس زیاد است. یک عکس کوچک‌تر انتخاب کنید.",
+    too_many_images: TOO_MANY,
     invalid_request: "عکس فرستاده نشد. دوباره تلاش کنید.",
     network: "ارتباط با سرور برقرار نشد. دوباره تلاش کنید.",
     internal_error: "تشخیص مواد انجام نشد. دوباره تلاش کنید.",
@@ -39,13 +51,23 @@
   var LOCAL_ERRORS = {
     invalid_image: true,
     image_too_large: true,
+    too_many_images: true,
     invalid_request: true,
   };
+
+  // Short names the model uses for the same food. The last label is the one
+  // shown when two of these arrive together. A single short name is not rewritten.
+  var ALIAS_GROUPS = [
+    ["گوجه", "گوجه فرنگی", "گوجه\u200cفرنگی"],
+    ["فلفل دلمه", "فلفل دلمه ای", "فلفل دلمه\u200cای"],
+    ["رب گوجه", "رب گوجه فرنگی", "رب گوجه\u200cفرنگی"],
+  ];
 
   var ENDPOINT = "/api/vision/fridge";
   var REQUEST_TIMEOUT_MS = 100000;
   var MAX_NAME_LENGTH = 40;
   var MAX_CANDIDATES = 30;
+  var MAX_PHOTOS = 6;
   var CLIENT_IMAGE_LIMIT = 12 * 1024 * 1024;
 
   function pantryApi() {
@@ -56,6 +78,11 @@
     var api = pantryApi();
     if (api && typeof api.displayName === "function") return api.displayName(value);
     return String(value || "")
+      .replace(/[\u200e\u200f]/g, "")
+      .replace(/[يى]/g, "ی")
+      .replace(/ك/g, "ک")
+      .replace(/[ةۀ]/g, "ه")
+      .replace(/\u0640/g, "")
       .replace(/\s+/g, " ")
       .trim();
   }
@@ -63,7 +90,20 @@
   function keyOf(value) {
     var api = pantryApi();
     if (api && typeof api.identityKey === "function") return api.identityKey(value);
-    return showName(value).replace(/\s+/g, "").toLowerCase();
+    return showName(value)
+      .replace(/[\u200c\u200d]/g, "")
+      .replace(/\s+/g, "")
+      .toLowerCase();
+  }
+
+  function toAsciiDigits(value) {
+    return String(value)
+      .replace(/[۰-۹]/g, function (digit) {
+        return String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit));
+      })
+      .replace(/[٠-٩]/g, function (digit) {
+        return String("٠١٢٣٤٥٦٧٨٩".indexOf(digit));
+      });
   }
 
   function toPersianDigits(value) {
@@ -72,18 +112,141 @@
     });
   }
 
+  function aliasIndex() {
+    var map = Object.create(null);
+    ALIAS_GROUPS.forEach(function (group) {
+      var canonical = showName(group[group.length - 1]);
+      var groupId = keyOf(canonical);
+      group.forEach(function (label) {
+        map[keyOf(label)] = { group: groupId, canonical: canonical };
+      });
+    });
+    return map;
+  }
+
+  function groupKey(name, aliases) {
+    var key = keyOf(name);
+    var alias = aliases[key];
+    return alias ? alias.group : key;
+  }
+
+  function readConfidence(value) {
+    if (typeof value === "boolean" || value == null || value === "") return null;
+    var number = null;
+    var scale = false;
+    if (typeof value === "number") {
+      number = value;
+      scale = number > 1 && Math.floor(number) === number;
+    } else if (typeof value === "string") {
+      var raw = toAsciiDigits(value).trim();
+      var text = raw.replace(/[%٪]/g, "").replace(/\s+/g, "");
+      if (!text) return null;
+      number = Number(text);
+      scale =
+        number > 1 &&
+        (raw.indexOf("%") !== -1 || raw.indexOf("٪") !== -1 || text.indexOf(".") === -1);
+    } else {
+      return null;
+    }
+    if (!isFinite(number)) return null;
+    if (scale && number <= 100) number = number / 100;
+    if (number < 0 || number > 1) return null;
+    return Math.round(number * 100) / 100;
+  }
+
+  function higherConfidence(current, next) {
+    if (next == null) return current;
+    if (current == null || next > current) return next;
+    return current;
+  }
+
+  function candidateFrom(value) {
+    var rawName = value;
+    var confidence = null;
+    if (value && typeof value === "object") {
+      rawName = value.name || value.item || value.title || "";
+      if (Object.prototype.hasOwnProperty.call(value, "confidence")) {
+        confidence = readConfidence(value.confidence);
+      } else if (Object.prototype.hasOwnProperty.call(value, "score")) {
+        confidence = readConfidence(value.score);
+      }
+    }
+    var cleaned = String(rawName == null ? "" : rawName).replace(
+      /^[\d۰-۹٠-٩]+[.)\-\u2013]\s*/,
+      "",
+    );
+    var name = showName(cleaned);
+    var key = keyOf(name);
+    if (!key || name.length > MAX_NAME_LENGTH) return null;
+    if (/https?:\/\/|www\./i.test(name)) return null;
+    if (/sk-[A-Za-z0-9]|bearer\s|api[_-]?key|gap_code|\[redacted\]/i.test(name)) return null;
+    return { name: name, confidence: confidence };
+  }
+
   function selectIngredients(value) {
     if (!Array.isArray(value)) return null;
-    var seen = Object.create(null);
-    var names = [];
-    for (var i = 0; i < value.length && names.length < MAX_CANDIDATES; i += 1) {
-      var name = showName(value[i]);
-      var key = keyOf(name);
-      if (!key || name.length > MAX_NAME_LENGTH || seen[key]) continue;
-      seen[key] = true;
-      names.push(name);
+    var aliases = aliasIndex();
+    var groups = [];
+    var indexByGroup = Object.create(null);
+    for (var i = 0; i < value.length; i += 1) {
+      var item = candidateFrom(value[i]);
+      if (!item) continue;
+      var key = groupKey(item.name, aliases);
+      if (!key) continue;
+      var existing = indexByGroup[key];
+      if (existing == null) {
+        if (groups.length >= MAX_CANDIDATES) continue;
+        indexByGroup[key] = groups.length;
+        var alias = aliases[keyOf(item.name)];
+        groups.push({
+          name: item.name,
+          confidence: item.confidence,
+          count: 1,
+          canonical: alias ? alias.canonical : "",
+        });
+        continue;
+      }
+      var group = groups[existing];
+      group.count += 1;
+      group.confidence = higherConfidence(group.confidence, item.confidence);
+      if (!group.canonical) {
+        var again = aliases[keyOf(item.name)];
+        if (again) group.canonical = again.canonical;
+      }
     }
-    return names;
+    return groups.map(function (group) {
+      var name = group.count > 1 && group.canonical ? group.canonical : group.name;
+      return {
+        name: name,
+        confidence: group.confidence,
+        merged: group.count > 1,
+      };
+    });
+  }
+
+  function confidenceLevel(value, manual) {
+    if (manual || typeof value !== "number" || !isFinite(value)) return "unknown";
+    if (value >= 0.75) return "high";
+    if (value >= 0.45) return "mid";
+    return "low";
+  }
+
+  function confidenceCopy(value, manual) {
+    if (manual) return COPY.manual;
+    if (typeof value !== "number" || !isFinite(value)) return COPY.confidenceUnknown;
+    var pct = Math.round(value * 100);
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    return "اطمینان " + toPersianDigits(pct) + "٪";
+  }
+
+  function queueCountCopy(count) {
+    return toPersianDigits(count) + " عکس آماده است";
+  }
+
+  function detectCopy(count) {
+    if (!count || count <= 1) return COPY.detect;
+    return "تشخیص " + toPersianDigits(count) + " عکس";
   }
 
   function mergeIntoPantry(pantry, names) {
@@ -277,6 +440,14 @@
     doc.dispatchEvent(event);
   }
 
+  function fileExtension(blob) {
+    var type = (blob && blob.type) || "";
+    if (type === "image/png") return "png";
+    if (type === "image/webp") return "webp";
+    if (type === "image/gif") return "gif";
+    return "jpg";
+  }
+
   function mount(doc, pantry, options) {
     options = options || {};
     var openBtn = doc.getElementById("fridge-open");
@@ -289,10 +460,22 @@
     var cameraView = doc.getElementById("fridge-camera-view");
     var video = doc.getElementById("fridge-video");
     var shutter = doc.getElementById("fridge-shutter");
+    var cameraCount = doc.getElementById("fridge-camera-count");
+    var cameraDetect = doc.getElementById("fridge-camera-detect");
+    var cameraReview = doc.getElementById("fridge-camera-review");
     var denied = doc.getElementById("fridge-denied");
+    var queuePanel = doc.getElementById("fridge-queue");
+    var queueList = doc.getElementById("fridge-queue-list");
+    var queueCount = doc.getElementById("fridge-queue-count");
+    var queueStatus = doc.getElementById("fridge-queue-status");
+    var detectBtn = doc.getElementById("fridge-detect");
+    var addPhotoBtn = doc.getElementById("fridge-add-photo");
+    var queueCameraBtn = doc.getElementById("fridge-queue-camera");
+    var queueClear = doc.getElementById("fridge-queue-clear");
     var loadingPanel = doc.getElementById("fridge-loading-panel");
     var loading = doc.getElementById("fridge-loading");
     var previewWrap = doc.getElementById("fridge-preview-wrap");
+    var previewRow = doc.getElementById("fridge-preview-row");
     var previewImg = doc.getElementById("fridge-preview");
     var loadingCancel = doc.getElementById("fridge-loading-cancel");
     var errorBox = doc.getElementById("fridge-error");
@@ -300,6 +483,7 @@
     var hintEl = doc.getElementById("fridge-error-hint");
     var retryBtn = doc.getElementById("fridge-retry");
     var confirmBox = doc.getElementById("fridge-confirm");
+    var mergedNote = doc.getElementById("fridge-merged");
     var none = doc.getElementById("fridge-none");
     var candidates = doc.getElementById("fridge-candidates");
     var confirmStatus = doc.getElementById("fridge-confirm-status");
@@ -322,6 +506,14 @@
       !candidates ||
       !applyBtn ||
       !cancelBtn ||
+      !queuePanel ||
+      !queueList ||
+      !detectBtn ||
+      !addPhotoBtn ||
+      !queueClear ||
+      !cameraDetect ||
+      !cameraReview ||
+      !previewRow ||
       !pantry
     ) {
       return;
@@ -333,72 +525,150 @@
     var captureFrame = typeof options.captureFrame === "function" ? options.captureFrame : defaultCaptureFrame;
     var gate = createSubmitGate();
     var draft = [];
-    var lastImage = null;
+    var queue = [];
+    var lastImages = [];
     var stream = null;
     var generation = 0;
     var cameraToken = 0;
     var activeController = null;
-    var previewUrl = "";
+    var preparing = false;
+    var previewUrls = [];
+    var queueUrls = [];
+    var tail = Promise.resolve();
 
     function setBusy(busy) {
       openBtn.disabled = busy;
       cameraBtn.disabled = busy;
       pickBtn.disabled = busy;
-      if (shutter) shutter.disabled = busy;
+      addPhotoBtn.disabled = busy;
+      if (queueCameraBtn) queueCameraBtn.disabled = busy;
       if (retryBtn) retryBtn.disabled = busy;
       if (closeBtn) closeBtn.disabled = false;
       if (loadingCancel) loadingCancel.disabled = false;
+      if (queueClear) queueClear.disabled = false;
       sheet.setAttribute("aria-busy", busy ? "true" : "false");
       sheet.classList.toggle("is-busy", busy);
       syncApply();
+      syncDetect();
+    }
+
+    function syncDetect() {
+      var locked = gate.isBusy() || preparing;
+      detectBtn.disabled = locked || queue.length === 0;
+      detectBtn.textContent = detectCopy(queue.length);
+      cameraDetect.disabled = locked || queue.length === 0;
+      cameraDetect.hidden = queue.length === 0;
+      cameraDetect.textContent = detectCopy(queue.length);
+      cameraReview.disabled = locked || queue.length === 0;
+      if (shutter) shutter.disabled = locked;
+      if (queueCount && queuePanel && !queuePanel.hidden) {
+        queueCount.textContent = queue.length ? queueCountCopy(queue.length) : "";
+      }
+      if (cameraCount && cameraView && !cameraView.hidden) {
+        cameraCount.textContent = queue.length ? queueCountCopy(queue.length) : "";
+      }
+    }
+
+    function objectUrl(blob) {
+      var urlApi = global.URL || global.webkitURL;
+      if (!blob || !urlApi || typeof urlApi.createObjectURL !== "function") return "";
+      try {
+        return urlApi.createObjectURL(blob) || "";
+      } catch (err) {
+        return "";
+      }
+    }
+
+    function revokeAll(urls) {
+      var urlApi = global.URL || global.webkitURL;
+      urls.forEach(function (current) {
+        if (urlApi && typeof urlApi.revokeObjectURL === "function") {
+          try {
+            urlApi.revokeObjectURL(current);
+          } catch (err) {
+            /* The preview is already dropped. */
+          }
+        }
+      });
+      urls.length = 0;
     }
 
     function revokePreview() {
-      if (!previewUrl) return;
-      var urlApi = global.URL || global.webkitURL;
-      var current = previewUrl;
-      previewUrl = "";
-      if (urlApi && typeof urlApi.revokeObjectURL === "function") {
+      revokeAll(previewUrls);
+    }
+
+    function revokeQueueUrls() {
+      revokeAll(queueUrls);
+    }
+
+    function detachChild(child) {
+      if (!child) return;
+      var parent = child.parentNode || child.parent;
+      if (!parent) return;
+      if (typeof parent.removeChild === "function") {
         try {
-          urlApi.revokeObjectURL(current);
+          parent.removeChild(child);
         } catch (err) {
-          /* The preview is already dropped. */
+          /* Already gone. */
         }
+        return;
+      }
+      if (parent.children && parent.children.filter) {
+        parent.children = parent.children.filter(function (item) {
+          return item !== child;
+        });
+        child.parent = null;
       }
     }
 
-    function showPreview(blob) {
+    function clearExtraPreviews() {
+      if (!previewRow.children) return;
+      var extras = [];
+      for (var i = 0; i < previewRow.children.length; i += 1) {
+        if (previewRow.children[i] !== previewImg) extras.push(previewRow.children[i]);
+      }
+      extras.forEach(detachChild);
+    }
+
+    function showPreviews(blobs) {
       revokePreview();
-      if (!previewImg) return;
-      var urlApi = global.URL || global.webkitURL;
-      if (!blob || !urlApi || typeof urlApi.createObjectURL !== "function") {
-        if ("src" in previewImg) previewImg.src = "";
-        if (previewImg.removeAttribute) previewImg.removeAttribute("src");
+      clearExtraPreviews();
+      var list = blobs && blobs.length ? blobs : [];
+      if (!previewImg || !list.length) {
+        if (previewImg && "src" in previewImg) previewImg.src = "";
+        if (previewImg && previewImg.removeAttribute) previewImg.removeAttribute("src");
         if (previewWrap) previewWrap.hidden = true;
         return;
       }
-      try {
-        previewUrl = urlApi.createObjectURL(blob) || "";
-      } catch (err) {
-        previewUrl = "";
-      }
-      if (!previewUrl) {
-        if (previewWrap) previewWrap.hidden = true;
-        return;
-      }
-      previewImg.src = previewUrl;
-      if (previewImg.setAttribute) previewImg.setAttribute("alt", "پیش‌نمایش عکس یخچال");
-      if (previewWrap) previewWrap.hidden = false;
+      list.forEach(function (blob, index) {
+        var img = previewImg;
+        if (index > 0) {
+          img = doc.createElement("img");
+          img.className = "fridge-preview";
+          if (previewRow.append) previewRow.append(img);
+        }
+        var label = "پیش‌نمایش عکس " + toPersianDigits(index + 1);
+        if (img.setAttribute) img.setAttribute("alt", label);
+        else img.alt = label;
+        var url = objectUrl(blob);
+        if (!url) return;
+        previewUrls.push(url);
+        img.src = url;
+      });
+      if (previewWrap) previewWrap.hidden = previewUrls.length === 0;
     }
 
     function hideStages() {
       chooser.hidden = true;
       if (cameraView) cameraView.hidden = true;
       if (denied) denied.hidden = true;
+      queuePanel.hidden = true;
       loading.hidden = true;
       if (loadingPanel) loadingPanel.hidden = true;
       revokePreview();
+      clearExtraPreviews();
       if (previewWrap) previewWrap.hidden = true;
+      if (previewImg && "src" in previewImg) previewImg.src = "";
       if (previewImg && previewImg.removeAttribute) previewImg.removeAttribute("src");
       errorBox.hidden = true;
       if (hintEl) hintEl.hidden = true;
@@ -415,11 +685,17 @@
     function showCamera() {
       hideStages();
       if (cameraView) cameraView.hidden = false;
+      if (cameraCount) cameraCount.textContent = queue.length ? queueCountCopy(queue.length) : "";
       sheet.hidden = false;
+      syncDetect();
     }
 
     function showDenied() {
       stopCamera();
+      if (queue.length) {
+        showQueue(COPY.cameraDenied);
+        return;
+      }
       hideStages();
       chooser.hidden = false;
       if (denied) {
@@ -429,18 +705,64 @@
       sheet.hidden = false;
     }
 
-    function showLoading(blob) {
+    function renderQueue() {
+      revokeQueueUrls();
+      if (typeof queueList.replaceChildren === "function") queueList.replaceChildren();
+      queue.forEach(function (blob, index) {
+        var li = doc.createElement("li");
+        li.className = "fridge-queue-item";
+        var img = doc.createElement("img");
+        img.className = "fridge-queue-thumb";
+        img.alt = "عکس " + toPersianDigits(index + 1);
+        var url = objectUrl(blob);
+        if (url) {
+          queueUrls.push(url);
+          img.src = url;
+        }
+        var remove = doc.createElement("button");
+        remove.type = "button";
+        remove.className = "fridge-queue-remove";
+        remove.textContent = "حذف";
+        if (!remove.dataset) remove.dataset = {};
+        remove.dataset.testid = "fridge-queue-remove";
+        remove.setAttribute("aria-label", "حذف عکس " + toPersianDigits(index + 1));
+        remove.addEventListener("click", function () {
+          queue.splice(index, 1);
+          if (!queue.length) showChooser();
+          else showQueue("");
+        });
+        li.append(img, remove);
+        queueList.append(li);
+      });
+      if (queueCount) queueCount.textContent = queue.length ? queueCountCopy(queue.length) : "";
+      syncDetect();
+    }
+
+    function showQueue(message) {
+      stopCamera();
+      hideStages();
+      queuePanel.hidden = false;
+      renderQueue();
+      if (queueStatus) queueStatus.textContent = sanitizeDisplay(message || "");
+      sheet.hidden = false;
+      sheet.classList.toggle("is-busy", false);
+      setBusy(false);
+    }
+
+    function showLoading(blobs) {
       stopCamera();
       hideStages();
       if (loadingPanel) loadingPanel.hidden = false;
       loading.hidden = false;
       loading.textContent = COPY.loading;
-      if (blob) showPreview(blob);
+      if (blobs && blobs.length) showPreviews(blobs);
       sheet.hidden = false;
       sheet.classList.toggle("is-busy", true);
     }
 
     function showError(message, hint) {
+      queue = [];
+      revokeQueueUrls();
       hideStages();
       errorText.textContent = sanitizeDisplay(message);
       var safeHint = sanitizeDisplay(hint || "");
@@ -472,6 +794,15 @@
       applyBtn.disabled = gate.isBusy() || chosenNames().length === 0;
     }
 
+    function paintBadge(badge, item) {
+      var level = confidenceLevel(item.confidence, item.manual);
+      badge.className = "confidence confidence-" + level;
+      badge.textContent = confidenceCopy(item.confidence, item.manual);
+      if (!badge.dataset) badge.dataset = {};
+      badge.dataset.testid = "fridge-confidence";
+      badge.dataset.level = level;
+    }
+
     function renderDraft() {
       if (typeof candidates.replaceChildren === "function") candidates.replaceChildren();
       draft.forEach(function (item) {
@@ -485,7 +816,10 @@
         toggle.checked = !!item.included;
         if (!toggle.dataset) toggle.dataset = {};
         toggle.dataset.testid = "fridge-toggle";
-        toggle.setAttribute("aria-label", "انتخاب " + (item.name || "ماده"));
+        toggle.setAttribute(
+          "aria-label",
+          "انتخاب " + (item.name || "ماده") + "، " + confidenceCopy(item.confidence, item.manual),
+        );
         toggle.addEventListener("change", function () {
           item.included = !!toggle.checked;
           li.className = "confirm-chip" + (item.included ? "" : " is-off");
@@ -499,27 +833,58 @@
         if (!field.dataset) field.dataset = {};
         field.dataset.testid = "fridge-chip-edit";
         field.setAttribute("aria-label", "ویرایش " + (item.name || "ماده"));
+
+        var badge = doc.createElement("span");
+        paintBadge(badge, item);
+
         field.addEventListener("input", function () {
           item.name = field.value;
-          field.setAttribute("aria-label", "ویرایش " + (showName(field.value) || "ماده"));
+          var edited = showName(field.value);
+          if (edited === item.originalName) {
+            item.confidence = item.originalConfidence;
+            item.manual = false;
+          } else {
+            item.confidence = null;
+            item.manual = true;
+          }
+          field.setAttribute("aria-label", "ویرایش " + (edited || "ماده"));
+          paintBadge(badge, item);
           if (confirmStatus) confirmStatus.textContent = "";
           syncApply();
         });
 
-        li.append(toggle, field);
+        li.append(toggle, field, badge);
         candidates.append(li);
       });
       if (none) {
         none.hidden = draft.length !== 0;
         none.textContent = COPY.noneFound;
       }
+      if (mergedNote) {
+        var anyMerged = draft.some(function (item) {
+          return item.merged;
+        });
+        mergedNote.hidden = !anyMerged;
+        mergedNote.textContent = anyMerged ? COPY.merged : "";
+      }
       syncApply();
     }
 
-    function showConfirm(names) {
-      draft = names.map(function (name) {
-        return { name: name, included: true };
+    function showConfirm(items) {
+      draft = items.map(function (item) {
+        var name = showName(item.name);
+        return {
+          name: name,
+          originalName: name,
+          confidence: item.confidence,
+          originalConfidence: item.confidence,
+          manual: false,
+          merged: !!item.merged,
+          included: true,
+        };
       });
+      queue = [];
+      revokeQueueUrls();
       hideStages();
       confirmBox.hidden = false;
       if (confirmStatus) confirmStatus.textContent = "";
@@ -544,28 +909,34 @@
         activeController = null;
       }
       gate.end();
+      preparing = false;
+      queue = [];
+      lastImages = [];
       stopCamera();
       revokePreview();
+      revokeQueueUrls();
       sheet.hidden = true;
       sheet.classList.toggle("is-busy", false);
       setBusy(false);
     }
 
-    function postImage(blob, ticket) {
+    function postImages(blobs, ticket) {
       if (!request) {
         showError(messageForFailure(0, { error: "network" }), hintForFailure({ error: "network" }));
         gate.end();
         return;
       }
-      showLoading(blob);
+      lastImages = blobs.slice();
+      showLoading(blobs);
       var controller = typeof global.AbortController !== "undefined" ? new global.AbortController() : null;
       activeController = controller;
       var timer = setTimeout(function () {
         if (controller) controller.abort();
       }, REQUEST_TIMEOUT_MS);
       var body = new global.FormData();
-      var filename = blob && blob.type === "image/png" ? "fridge.png" : "fridge.jpg";
-      body.append("image", blob, filename);
+      blobs.forEach(function (blob, index) {
+        body.append("image", blob, "fridge-" + (index + 1) + "." + fileExtension(blob));
+      });
       var fetchOptions = {
         method: "POST",
         headers: { Accept: "application/json" },
@@ -594,15 +965,15 @@
             showError(messageForFailure(result.response.status, failure), hintForFailure(failure));
             return;
           }
-          var names = selectIngredients(parsed.ingredients);
-          if (!names) {
+          var items = selectIngredients(parsed.ingredients);
+          if (!items) {
             showError(
               messageForFailure(502, { error: "bad_response" }),
-              hintForFailure({ error: "bad_response" })
+              hintForFailure({ error: "bad_response" }),
             );
             return;
           }
-          showConfirm(names);
+          showConfirm(items);
         })
         .catch(function (err) {
           if (ticket !== generation) return;
@@ -619,36 +990,84 @@
         });
     }
 
-    function beginUpload(file) {
-      if (!file || !gate.begin()) return;
+    function beginDetectFrom(blobs) {
+      if (!blobs || !blobs.length || preparing || !gate.begin()) return;
       var ticket = generation;
       setBusy(true);
-      showLoading(file);
-      Promise.resolve()
+      postImages(blobs.slice(), ticket);
+    }
+
+    function prepareAll(files) {
+      return files.reduce(function (chain, file) {
+        return chain.then(function (ready) {
+          return prepareImage(file).then(function (blob) {
+            if (!blob) throw clientError("invalid_image");
+            ready.push(blob);
+            return ready;
+          });
+        });
+      }, Promise.resolve([]));
+    }
+
+    function enqueue(list, options) {
+      if (gate.isBusy()) return;
+      if (queue.length + list.length > MAX_PHOTOS) {
+        if (queue.length) showQueue(COPY.tooMany);
+        else showError(messageForFailure(0, { error: "too_many_images" }), "");
+        return;
+      }
+      var ticket = generation;
+      preparing = true;
+      syncDetect();
+      return Promise.resolve()
         .then(function () {
-          return prepareImage(file);
+          return prepareAll(list);
         })
-        .then(function (blob) {
+        .then(function (blobs) {
           if (ticket !== generation) return;
-          if (!blob) throw clientError("invalid_image");
-          lastImage = blob;
-          postImage(blob, ticket);
+          blobs.forEach(function (blob) {
+            queue.push(blob);
+          });
+          if (options.returnTo === "camera" && stream) showCamera();
+          else showQueue("");
         })
         .catch(function (err) {
           if (ticket !== generation) return;
           var code = err && err.code;
           if (code !== "invalid_image" && code !== "image_too_large") code = "invalid_image";
-          showError(messageForFailure(0, { error: code }), hintForFailure({ error: code }));
-          gate.end();
-          setBusy(false);
+          var message = messageForFailure(0, { error: code });
+          if (queue.length) showQueue(message);
+          else showError(message, hintForFailure({ error: code }));
+        })
+        .then(function () {
+          preparing = false;
+          if (ticket !== generation) return;
+          syncDetect();
         });
     }
 
+    function addFiles(list, options) {
+      if (!list || !list.length || gate.isBusy()) return Promise.resolve();
+      var run = tail.then(function () {
+        return enqueue(list, options || {});
+      });
+      tail = run.then(
+        function () {
+          return null;
+        },
+        function () {
+          return null;
+        },
+      );
+      return run;
+    }
+
     function onFile(input) {
-      var file = input.files && input.files[0];
+      var list = input.files ? Array.prototype.slice.call(input.files) : [];
       if (input && "value" in input) input.value = "";
-      if (!file) return;
-      beginUpload(file);
+      if (input) input.files = null;
+      if (!list.length) return;
+      addFiles(list);
     }
 
     function requestCamera() {
@@ -687,12 +1106,15 @@
           if (token !== cameraToken || sheet.hidden) return;
           cameraBtn.disabled = false;
           showDenied();
-          if (pickBtn && typeof pickBtn.focus === "function") pickBtn.focus();
+          if (!queue.length && pickBtn && typeof pickBtn.focus === "function") pickBtn.focus();
         });
     }
 
     openBtn.addEventListener("click", function () {
-      if (gate.isBusy()) return;
+      if (gate.isBusy() || preparing) return;
+      queue = [];
+      lastImages = [];
+      revokeQueueUrls();
       if (denied) denied.hidden = true;
       showChooser();
       if (closeBtn && typeof closeBtn.focus === "function") closeBtn.focus();
@@ -702,28 +1124,50 @@
     pickBtn.addEventListener("click", function () {
       if (typeof fileInput.click === "function") fileInput.click();
     });
-    if (captureInput) captureInput.addEventListener("change", function () { onFile(captureInput); });
-    fileInput.addEventListener("change", function () { onFile(fileInput); });
+    if (captureInput) {
+      captureInput.addEventListener("change", function () {
+        onFile(captureInput);
+      });
+    }
+    fileInput.addEventListener("change", function () {
+      onFile(fileInput);
+    });
 
     if (shutter) {
       shutter.addEventListener("click", function () {
-        if (!video) return;
+        if (!video || preparing || gate.isBusy()) return;
         captureFrame(video)
           .then(function (blob) {
-            beginUpload(blob);
+            return addFiles([blob], { returnTo: "camera" });
           })
           .catch(function () {
-            showError(
-              messageForFailure(0, { error: "invalid_image" }),
-              hintForFailure({ error: "invalid_image" })
-            );
+            var message = messageForFailure(0, { error: "invalid_image" });
+            if (queue.length) showQueue(message);
+            else {
+              showError(message, hintForFailure({ error: "invalid_image" }));
+            }
           });
       });
     }
 
+    detectBtn.addEventListener("click", function () {
+      beginDetectFrom(queue);
+    });
+    cameraDetect.addEventListener("click", function () {
+      beginDetectFrom(queue);
+    });
+    cameraReview.addEventListener("click", function () {
+      if (queue.length) showQueue("");
+    });
+    addPhotoBtn.addEventListener("click", function () {
+      if (typeof fileInput.click === "function") fileInput.click();
+    });
+    if (queueCameraBtn) queueCameraBtn.addEventListener("click", requestCamera);
+    queueClear.addEventListener("click", closeSheet);
+
     if (retryBtn) {
       retryBtn.addEventListener("click", function () {
-        if (lastImage) beginUpload(lastImage);
+        if (lastImages.length) beginDetectFrom(lastImages);
         else showChooser();
       });
     }
@@ -747,7 +1191,15 @@
           if (confirmStatus) confirmStatus.textContent = COPY.alreadyInDraft;
           return;
         }
-        draft.push({ name: name, included: true });
+        draft.push({
+          name: name,
+          originalName: name,
+          confidence: null,
+          originalConfidence: null,
+          manual: true,
+          merged: false,
+          included: true,
+        });
         if (extraInput) extraInput.value = "";
         if (confirmStatus) confirmStatus.textContent = "";
         renderDraft();
@@ -786,6 +1238,7 @@
     });
 
     syncApply();
+    syncDetect();
   }
 
   function boot() {
@@ -801,9 +1254,12 @@
     ERROR_COPY: ERROR_COPY,
     SERVICE_HINT: SERVICE_HINT,
     ENDPOINT: ENDPOINT,
+    MAX_PHOTOS: MAX_PHOTOS,
     sanitizeDisplay: sanitizeDisplay,
     hintForFailure: hintForFailure,
     selectIngredients: selectIngredients,
+    confidenceCopy: confidenceCopy,
+    confidenceLevel: confidenceLevel,
     mergeIntoPantry: mergeIntoPantry,
     summarizeMerge: summarizeMerge,
     messageForFailure: messageForFailure,

@@ -62,7 +62,7 @@ text = GapGPTClient().chat_text([
 ])
 ```
 
-`chat` returns the JSON object. `content` may be a string or a list of parts. `chat_with_image` builds that list for one image (`image_url` data URL) and posts it to the same `/chat/completions` endpoint. Fridge vision uses it. The key is not written to logs, error messages, or return values. Image bytes are not written to logs or API responses. JSON responses are scrubbed again before they leave the api process: a configured key of 8 or more characters is replaced, and a body that contains a Python traceback is replaced with a static `internal_error`. Unexpected exceptions return that same JSON shape and log only the exception class name.
+`chat` returns the JSON object. `content` may be a string or a list of parts. `chat_with_image` builds that list for one image (`image_url` data URL). `chat_with_images` does the same for several photos, in the order given, as one `/chat/completions` call. Fridge vision uses that. The key is not written to logs, error messages, or return values. Image bytes are not written to logs or API responses. JSON responses are scrubbed again before they leave the api process: a configured key of 8 or more characters is replaced, and a body that contains a Python traceback is replaced with a static `internal_error`. Unexpected exceptions return that same JSON shape and log only the exception class name.
 
 `/health` reports `gapgpt.configured`, `base_url`, and `model`. It does not call the model. `POST /gapgpt/smoke` sends one fixed prompt (`Reply with exactly: pong`). A request body is ignored, so the route cannot forward a caller-supplied prompt.
 
@@ -128,16 +128,18 @@ node --test web/recipes.test.js
 
 ## Fridge photo
 
-«عکس یخچال» is on the pantry page. It does not add anything by itself.
+«عکس یخچال» is on the pantry page. It does not add anything by itself. One confirm flow can take up to six photos. This slice does not create a `v0.2.0` tag.
 
-1. Open «عکس یخچال». «گرفتن عکس» calls `getUserMedia` with `facingMode: environment` (the back camera when the phone has one) and shows a preview. «انتخاب عکس» opens a file picker.
+1. Open «عکس یخچال». «گرفتن عکس» calls `getUserMedia` with `facingMode: environment` (the back camera when the phone has one) and shows a preview. «انتخاب عکس» opens a file picker that accepts several photos (`multiple`).
 2. If the camera API is missing, «گرفتن عکس» uses a file input with `capture="environment"`.
-3. If the camera is denied or fails, the sheet says «دسترسی به دوربین داده نشد. می‌توانید یک عکس انتخاب کنید.» and leaves the file picker. It does not keep asking for the camera.
-4. The chosen frame is posted as multipart field `image` to `POST /api/vision/fridge` (nginx) or `POST /vision/fridge` (api port 8000). Same `/api/` proxy as recipes.
-5. While that request runs, the sheet shows the photo and «در حال تشخیص مواد…». «انصراف», the close button, or Escape cancels the request. Cancelling does not change the pantry and does not show an error.
-6. The api service calls `GapGPTClient.chat_with_image` with model `gpt-5.6-luna` unless `GAPGPT_MODEL` is set. The model is asked for Persian food names as JSON. The response to the browser is `{"ok": true, "ingredients": ["شیر", "تخم‌مرغ"]}`. An empty list means no food was recognized. Names are not stored on the server.
-7. The confirm sheet shows those names as chips you can uncheck or edit, and a field to add another name. «انصراف» or closing the sheet leaves the pantry as it was.
-8. «تأیید و افزودن به انبار» merges only the checked names with the same dedupe rules as typing a chip (spacing and Arabic/Persian letter variants count as the same item). After that, the chips are the normal pantry chips: tap one to remove it.
+3. If the camera is denied or fails, the sheet says «دسترسی به دوربین داده نشد. می‌توانید یک عکس انتخاب کنید.» and leaves the file picker. It does not keep asking for the camera. Photos already queued stay in the tray.
+4. Each camera frame is kept, in order, until you press «تشخیص مواد». «ثبت این عکس» does not call the API. «عکس دیگر» adds a gallery photo to the same tray. «حذف» drops one photo. «انصراف» on the tray closes the sheet and does not change the pantry.
+5. «تشخیص مواد» posts every queued photo as a repeated multipart field `image`, in tray order, to `POST /api/vision/fridge` (nginx) or `POST /vision/fridge` (api port 8000). The same route still accepts one `image` or JSON `image_base64`. Several photos can also be a JSON `images` array of base64 or data URLs, in order. A seventh photo is refused with `too_many_images` and is not sent upstream.
+6. While that request runs, the sheet shows the photos and «در حال تشخیص مواد…». «انصراف», the close button, or Escape cancels the request. Cancelling does not change the pantry and does not show an error.
+7. The api service calls `GapGPTClient.chat_with_images` once, with model `gpt-5.6-luna` unless `GAPGPT_MODEL` is set. Image parts stay in upload order. The model is asked for Persian food names and a confidence from 0 to 1. The response to the browser is `{"ok": true, "ingredients": [{"name": "شیر", "confidence": 0.9}]}`. `confidence` is `null` when the model gave no usable number. The same normalized Persian spelling is returned once, keeping the higher confidence. Alias pairs such as گوجه and گوجه‌فرنگی stay as separate rows so the page can merge them. An empty list means no food was recognized. Names are not stored on the server. The body never includes image bytes or the API key.
+8. The page merges near-duplicates before the confirm sheet: Arabic/Persian letters, spacing, and ZWNJ, plus a short alias list (گوجه / گوجه‌فرنگی, فلفل دلمه / فلفل دلمه‌ای, رب گوجه / رب گوجه‌فرنگی). A single short name is not rewritten. When two aliases merge, the chip uses the longer name and the higher confidence. The sheet says «مواد تکراری یا هم‌نام یکی شدند» when that happened.
+9. Each chip shows a confidence: «اطمینان ۹۰٪» at 75% and above, a middle band from 45%, and a low band below that. A missing score says «نامشخص». Editing the name marks the chip «دستی». You can uncheck a chip or type another name. «انصراف» or closing the sheet leaves the pantry as it was.
+10. «تأیید و افزودن به انبار» merges only the checked names with the same dedupe rules as typing a chip. After that, the chips are the normal pantry chips: tap one to remove it.
 
 The page maps failures to short Persian text and «تلاش دوباره». Service failures also hint to check `GAP_CODE_API_KEY` and the compose logs. It does not show the server message, stack traces, or the key value. The photo preview is only on screen while detection is running; an error hides it. The pantry chips stay as they were.
 
@@ -145,13 +147,14 @@ The page maps failures to short Persian text and «تلاش دوباره». Serv
 | --- | --- | --- | --- |
 | Not an image, or not JPEG/PNG/WEBP/GIF | 400 | `invalid_image` | choose a JPEG or PNG |
 | Image larger than 6 MB | 413 | `image_too_large` | choose a smaller photo |
+| More than six photos | 400 | `too_many_images` | at most six photos |
 | Key missing | 503 | `not_configured` | the vision service is not ready, plus the key hint |
 | Upstream rejects the key | 502 | `unauthorized` | friendly retry, plus the key hint |
 | Timeout | 504 | `timeout` | friendly retry, plus the key hint |
 | Unreadable model output | 502 | `bad_response` | friendly retry, plus the key hint |
 | No food in a readable answer | 200 | — | empty confirm sheet; you can type a name |
 
-JPEG, PNG, WEBP, and GIF are detected from magic bytes. The declared file type is not trusted. SVG and HTML are rejected.
+JPEG, PNG, WEBP, and GIF are detected from magic bytes. The declared file type is not trusted. SVG and HTML are rejected. One bad photo fails the whole batch; nothing is written to the pantry. Logs record the exception class only, never the image bytes or the key.
 
 Checks without a browser:
 
@@ -347,7 +350,7 @@ The longer [demo path](#demo-path-qa) below still covers a boot with no key.
 
 6. Optional: set `GAP_CODE_API_KEY` in `.env` (or the shell) and recreate the api service (`docker compose up -d --force-recreate api`). `/health` stays OK. `gapgpt.configured` becomes `true` when the variable is non-empty. The key is not returned by the API.
 
-7. Open http://localhost:8080. Click «عکس یخچال», then «انتخاب عکس», and pick a JPEG. Without a key, the sheet shows «در حال تشخیص مواد…» and then a Persian message that the vision service is not ready, with «تلاش دوباره». The pantry chips do not change. Closing the sheet also leaves the pantry unchanged.
+7. Open http://localhost:8080. Click «عکس یخچال», then «انتخاب عکس», pick a JPEG, and press «تشخیص مواد». Without a key, the sheet shows «در حال تشخیص مواد…» and then a Persian message that the vision service is not ready, with «تلاش دوباره». The pantry chips do not change. Closing the sheet also leaves the pantry unchanged. «انصراف» on the photo tray, before «تشخیص مواد», also leaves the pantry unchanged.
 
    The same check from the shell (a tiny JPEG, not a real photo):
 
@@ -406,9 +409,17 @@ The longer [demo path](#demo-path-qa) below still covers a boot with no key.
    docker compose up -d --build --force-recreate api web
    ```
 
-   Repeat the curl in step 7 with a real fridge photo instead of the tiny JPEG. Expected HTTP 200, `"ok": true`, and an `ingredients` array of strings. The body must not contain the API key or the image.
+   Do not tag `v0.2.0`. Repeat the curl in step 7 with a real fridge photo instead of the tiny JPEG. For two photos, repeat the field in order (the page does the same):
 
-   On http://localhost:8080, use «عکس یخچال» with that photo. After «در حال تشخیص مواد…», edit or uncheck chips, then press «تأیید و افزودن به انبار». Only the names you left checked appear in the pantry, without duplicates. «انصراف» adds nothing. Tap a new chip to remove it, the same as any other pantry chip.
+   ```bash
+   curl -sS -X POST http://localhost:8000/vision/fridge \
+     -F "image=@/tmp/fridge-a.jpg;type=image/jpeg" \
+     -F "image=@/tmp/fridge-b.jpg;type=image/jpeg"
+   ```
+
+   Expected HTTP 200, `"ok": true`, and an `ingredients` array of objects `{"name": "…", "confidence": 0.9}`. `confidence` is a number from 0 to 1, or `null`. The same Persian spelling appears once. The body must not contain the API key or the image bytes.
+
+   On http://localhost:8080, use «عکس یخچال» with two photos, then «تشخیص مواد». Chips show «اطمینان …٪». The same food from both photos, including گوجه and گوجه‌فرنگی, is one chip. After «در حال تشخیص مواد…», edit or uncheck chips, then press «تأیید و افزودن به انبار». Only the names you left checked appear in the pantry, without duplicates. «انصراف» adds nothing. Tap a new chip to remove it, the same as any other pantry chip.
 
 11. Meal plan, print, and download do not need a key. On http://localhost:8080 confirm seven days from شنبه to جمعه, each «خالی». Use «چاپ / خروجی» once, as in [Meal plan](#meal-plan). With recipe cards from step 9, assign a day, swap it with «جایگزین», and click «برنامه ۷ روزه» to fill any day that is still «خالی».
 

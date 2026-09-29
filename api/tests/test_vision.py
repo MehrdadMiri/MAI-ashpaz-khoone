@@ -4,7 +4,14 @@ import base64
 import json
 import unittest
 
-from gapgpt import DEFAULT_MODEL, MAX_IMAGE_BYTES, GapGPTClient, GapGPTConfig, GapGPTError
+from gapgpt import (
+    DEFAULT_MODEL,
+    MAX_FRIDGE_IMAGES,
+    MAX_IMAGE_BYTES,
+    GapGPTClient,
+    GapGPTConfig,
+    GapGPTError,
+)
 from vision import (
     SYSTEM_PROMPT,
     USER_PROMPT,
@@ -13,6 +20,7 @@ from vision import (
     image_from_base64,
     image_from_bytes,
     parse_ingredients,
+    VISION_CLIENT_TIMEOUT,
     recognize_fridge,
 )
 
@@ -115,11 +123,48 @@ class ParseTests(unittest.TestCase):
             },
             ensure_ascii=False,
         )
-        self.assertEqual(parse_ingredients(text), ["شیر", "کرفس"])
+        self.assertEqual(
+            parse_ingredients(text),
+            [
+                {"name": "شیر", "confidence": None},
+                {"name": "کرفس", "confidence": None},
+            ],
+        )
 
     def test_fenced_json_and_object_names(self):
         text = '```json\n{"items":[{"name":"تخم مرغ"},{"name":"  "}]} \n```'
-        self.assertEqual(parse_ingredients(text), ["تخم مرغ"])
+        self.assertEqual(
+            parse_ingredients(text),
+            [{"name": "تخم مرغ", "confidence": None}],
+        )
+
+    def test_confidence_dedupes_exact_names_and_keeps_aliases_apart(self):
+        text = json.dumps(
+            {
+                "ingredients": [
+                    {"name": "شیر", "confidence": 0.42},
+                    {"name": "\u0634\u064a\u0631", "confidence": 0.9},
+                    {"name": "گوجه", "confidence": 0.5},
+                    {"name": "گوجه‌فرنگی", "confidence": 0.4},
+                    {"name": "ماست", "confidence": "۸۰٪"},
+                    {"name": "نمک", "confidence": 0},
+                    {"name": "بد", "confidence": 1.5},
+                    {"name": "بد", "confidence": True},
+                ]
+            },
+            ensure_ascii=False,
+        )
+        self.assertEqual(
+            parse_ingredients(text),
+            [
+                {"name": "شیر", "confidence": 0.9},
+                {"name": "گوجه", "confidence": 0.5},
+                {"name": "گوجه‌فرنگی", "confidence": 0.4},
+                {"name": "ماست", "confidence": 0.8},
+                {"name": "نمک", "confidence": 0.0},
+                {"name": "بد", "confidence": None},
+            ],
+        )
 
     def test_empty_list_is_success(self):
         self.assertEqual(parse_ingredients('{"ingredients":[]}'), [])
@@ -136,6 +181,8 @@ class ParseTests(unittest.TestCase):
         self.assertIn("Persian", SYSTEM_PROMPT)
         self.assertIn("مواد غذایی", SYSTEM_PROMPT)
         self.assertIn("یخچال", USER_PROMPT)
+        self.assertIn("confidence", SYSTEM_PROMPT)
+        self.assertIn("0 to 1", SYSTEM_PROMPT)
         self.assertNotIn("GAP_CODE_API_KEY", SYSTEM_PROMPT)
         self.assertNotIn("sk-", SYSTEM_PROMPT)
 
@@ -154,7 +201,16 @@ class RecognizeTests(unittest.TestCase):
 
         client = GapGPTClient(config(), timeout=12, transport=transport)
         result = recognize_fridge(client, JPEG, "image/jpeg")
-        self.assertEqual(result, {"ok": True, "ingredients": ["پنیر", "ماست"]})
+        self.assertEqual(
+            result,
+            {
+                "ok": True,
+                "ingredients": [
+                    {"name": "پنیر", "confidence": None},
+                    {"name": "ماست", "confidence": None},
+                ],
+            },
+        )
         self.assertEqual(seen["payload"]["model"], DEFAULT_MODEL)
         self.assertEqual(seen["payload"]["messages"][0]["role"], "system")
         parts = seen["payload"]["messages"][1]["content"]
@@ -172,8 +228,62 @@ class RecognizeTests(unittest.TestCase):
 
         client = GapGPTClient(config(), transport=transport)
         result = recognize_fridge(client, JPEG, "image/jpeg")
-        self.assertEqual(result["ingredients"], ["شیر"])
+        self.assertEqual(result["ingredients"], [{"name": "شیر", "confidence": None}])
         self.assertNotIn(KEY, json.dumps(result))
+
+    def test_several_photos_keep_order_and_drop_image_bytes(self):
+        seen = {}
+
+        def transport(request, timeout):
+            seen["payload"] = json.loads(request.data.decode("utf-8"))
+            seen["timeout"] = timeout
+            return chat_response(
+                json.dumps(
+                    {
+                        "ingredients": [
+                            {"name": "شیر", "confidence": 0.4},
+                            {"name": "شیر", "confidence": 0.91},
+                            {"name": "ماست", "confidence": 0.2},
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            )
+
+        client = GapGPTClient(config(), timeout=VISION_CLIENT_TIMEOUT, transport=transport)
+        result = recognize_fridge(
+            client,
+            [(JPEG, "image/jpeg"), (PNG, "image/png")],
+        )
+        self.assertEqual(
+            result["ingredients"],
+            [
+                {"name": "شیر", "confidence": 0.91},
+                {"name": "ماست", "confidence": 0.2},
+            ],
+        )
+        parts = seen["payload"]["messages"][1]["content"]
+        self.assertEqual(len(parts), 3)
+        self.assertEqual(parts[0]["type"], "text")
+        self.assertTrue(parts[1]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
+        self.assertTrue(parts[2]["image_url"]["url"].startswith("data:image/png;base64,"))
+        body = json.dumps(result)
+        self.assertNotIn(base64.b64encode(JPEG).decode("ascii"), body)
+        self.assertNotIn(base64.b64encode(PNG).decode("ascii"), body)
+        self.assertNotIn(KEY, body)
+        self.assertEqual(seen["timeout"], VISION_CLIENT_TIMEOUT)
+
+    def test_too_many_frames_do_not_call_upstream(self):
+        def transport(request, timeout):
+            del request, timeout
+            raise AssertionError("upstream was called")
+
+        client = GapGPTClient(config(), transport=transport)
+        frames = [(JPEG, "image/jpeg")] * (MAX_FRIDGE_IMAGES + 1)
+        with self.assertRaises(VisionRequestError) as caught:
+            recognize_fridge(client, frames)
+        self.assertEqual(caught.exception.code, "too_many_images")
+        self.assertNotIn(KEY, caught.exception.message)
 
 
 def request_body(seen):
