@@ -11,6 +11,7 @@ import store
 
 ROOT = Path(__file__).resolve().parents[2]
 USER = "local-user-demo1"
+OTHER = "local-user-demo2"
 
 
 def recipe(title="عدس‌پلو", ingredients=None, steps=None, cost=180000):
@@ -217,12 +218,17 @@ class SanitizeTests(unittest.TestCase):
         with self.assertRaises(store.StoreError) as missing:
             store.user_id_from_request(FakeRequest(), None)
         self.assertEqual(missing.exception.code, "missing_user")
+        pinned = FakeRequest(header=OTHER, query=OTHER, cookie=USER)
+        self.assertEqual(store.user_id_from_request(pinned), USER)
+        self.assertEqual(store.cookie_user_id(FakeRequest(cookie="nope")), None)
+        self.assertEqual(store.user_id_from_request(FakeRequest(header=OTHER, cookie="nope")), OTHER)
 
 
 class FakeRequest:
-    def __init__(self, header=None, query=None, body=None):
+    def __init__(self, header=None, query=None, body=None, cookie=None):
         self.headers = {"X-Local-User-Id": header} if header is not None else {}
         self.args = {"local_user_id": query} if query is not None else {}
+        self.cookies = {store.COOKIE_NAME: cookie} if cookie is not None else {}
         self._body = body
         self.method = "PUT" if body is not None else "GET"
 
@@ -261,6 +267,9 @@ class SchemaTests(unittest.TestCase):
         self.assertIn("CREATE TABLE IF NOT EXISTS pantry_state", text)
         self.assertIn("CREATE TABLE IF NOT EXISTS week_plan_state", text)
         self.assertIn("CREATE TABLE IF NOT EXISTS shopping_state", text)
+        self.assertIn("local-user-default", text)
+        self.assertIn("legacy-shared", text)
+        self.assertNotIn("DROP TABLE", text)
         self.assertIn("SELECT 1", text)
 
         second = FakeConn()
@@ -303,6 +312,15 @@ class SchemaTests(unittest.TestCase):
             "./api/migrations/003_shopping_state.sql:/docker-entrypoint-initdb.d/003_shopping_state.sql:ro",
             compose,
         )
+        self.assertIn(
+            "./api/migrations/004_session_users.sql:/docker-entrypoint-initdb.d/004_session_users.sql:ro",
+            compose,
+        )
+        migration = (ROOT / "api" / "migrations" / "004_session_users.sql").read_text(encoding="utf-8")
+        self.assertIn(store.DEFAULT_USER_ID, migration)
+        self.assertIn(store.LEGACY_SHARED_USER_ID, migration)
+        self.assertNotIn("DROP TABLE", migration)
+        self.assertNotIn("GAP_CODE_API_KEY", migration)
         self.assertIn("store.py", dockerfile)
         self.assertIn("migrations", dockerfile)
         self.assertIn("CREATE TABLE IF NOT EXISTS pantry_state", sql)

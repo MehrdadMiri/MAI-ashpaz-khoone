@@ -65,15 +65,15 @@ node --test web/pwa.test.js
 
 ## Saved pantry and week plan
 
-Pantry chips, the week budget, diet filters, تعداد نفرات, and the 7-day plan are stored in Postgres. The plan row includes recipe titles, ingredient lines, steps, costs, the servings those amounts were written for, the شنبه–جمعه slots for صبحانه، ناهار، and شام, and «خورده شد» on each meal. An older dinner-only row is read as شام. There is no account and no password. On the first visit the page creates a random id, stores it in `localStorage` (`ashpaz-khoone.local-user.v1`) and a `ashpaz_local_user` cookie (`Path=/`, `SameSite=Lax`, one year), and sends it as `X-Local-User-Id`. The same id may also be a `local_user_id` query or JSON field. It is not a credential. Do not put `GAP_CODE_API_KEY`, or any other secret, in the pantry or the plan.
+Pantry chips, the week budget, diet filters, تعداد نفرات, and the 7-day plan are stored in Postgres, one row per browser session. The plan row includes recipe titles, ingredient lines, steps, costs, the servings those amounts were written for, the شنبه–جمعه slots for صبحانه، ناهار، and شام, and «خورده شد» on each meal. An older dinner-only row is read as شام. Manual shopping rows and plan-line edits live in `shopping_state` for that same session. There is no account and no password. On the first visit the page creates a random id, stores it in `localStorage` (`ashpaz-khoone.local-user.v1`) and a `ashpaz_local_user` cookie (`Path=/`, `SameSite=Lax`, one year), and sends it as `X-Local-User-Id`. When that cookie is present and well formed, the api uses it and ignores a different header or query id. The id is not a credential. Do not put `GAP_CODE_API_KEY`, or any other secret, in the pantry, the plan, or the shopping list.
 
 `GET` and `PUT /pantry` and `GET` and `PUT /plan` are the routes. Nginx forwards `/api/pantry` and `/api/plan` to them. A missing row is `found: false` and does not wipe the browser. A saved row is what a refresh shows for that id.
 
-The page still writes `ashpaz-khoone.pantry.v1` and `ashpaz-khoone.plan.v1` on every change. If the api or Postgres is unavailable, those keys are the copy you see, and the next load tries the api again. An edit that has not reached Postgres yet is sent again before a saved row can replace it.
+The page writes the browser copy under that id: `ashpaz-khoone.pantry.v1.<id>`, `ashpaz-khoone.plan.v1.<id>`, `ashpaz-khoone.shopping.v1.<id>`, and `ashpaz-khoone.okala-prices.v1.<id>`. An older unscoped key (`ashpaz-khoone.pantry.v1` and the same pattern for the plan, shopping list, sync meta, and Okala price cache) is copied once onto the first id that opens this browser, then left there. A later id does not read it, so a demo already on this browser is not wiped and is not handed to the next user. If the api or Postgres is unavailable, that scoped copy is what you see, and the next load tries the api again. An edit that has not reached Postgres yet is sent again before a saved row can replace it.
 
 The tables are `pantry_state` and `week_plan_state`. `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` are the role, password, and database name. The Postgres image applies them only when the `pgdata` volume is created. Changing them later does not alter a volume that already has data. `POSTGRES_HOST` and `POSTGRES_PORT` are set on the api container (`db` and `5432` on the compose network). Port `5432` is published for local tools.
 
-`api/migrations/001_kitchen_state.sql` is mounted into `docker-entrypoint-initdb.d`, so a new volume creates the tables. Those init scripts do not run again on a volume that already exists. The api runs the same file (`CREATE TABLE IF NOT EXISTS`) when it reaches the database, including from `/health`, so an older volume gains the tables without a reset. `/health` is still that check plus `SELECT 1`. It does not return pantry rows or the database password.
+`api/migrations/001_kitchen_state.sql` is mounted into `docker-entrypoint-initdb.d`, so a new volume creates the tables. Those init scripts do not run again on a volume that already exists. The api runs the same files (`CREATE TABLE IF NOT EXISTS`, then `004_session_users.sql`) when it reaches the database, including from `/health`, so an older volume gains the tables without a reset. `004` copies a sentinel row `legacy-shared` onto `local-user-default` only when that default row is still missing. A normal browser id is not moved, and an install that never used the sentinel changes nothing. `/health` is still that check plus `SELECT 1`. It does not return pantry rows or the database password.
 
 Requests that contain the configured `GAP_CODE_API_KEY` are rejected and are not written. Failure logs record the exception class only. They do not include the pantry, the plan, or the key.
 
@@ -89,7 +89,31 @@ curl -sS -X PUT http://localhost:8080/api/plan \
   -d '{"local_user_id":"local-user-demo1","plan":{"recipes":[],"slots":{},"used":{}}}'
 ```
 
-`local-user-demo1` is a placeholder id, not a credential. A refresh of http://localhost:8080 keeps the chips, the budget, and the week for that browser. Checks without a browser:
+`local-user-demo1` is a placeholder id, not a credential. A refresh of http://localhost:8080 keeps the chips, the budget, the week, and the manual shopping rows for that browser. A second browser, or a private window, gets its own id and does not see those rows.
+
+### Multi-user isolation
+
+Each visitor is one `local_user_id`. Pantry, week plan (including servings and صبحانه، ناهار، شام), and shopping list (plan rows rebuilt on the page, plus manual rows and saved مقدار) are filtered by that id on every GET and PUT. Okala unit prices stay one shared catalog in `okala_price`. The last price snapshot in this browser is stored per id, so one user's offline cache is not the next user's. There is still no signup.
+
+To check two users:
+
+- This browser is user A. Add a chip, a meal, and a manual مواد خرید row. Reload. They stay.
+- Click «کاربر جدید» (or open a private window). The pantry, week, and shopping list are empty. User A's rows are still in Postgres under the previous id.
+- In the first browser profile, do not click «کاربر جدید» again. Reload shows user A's data. A private window still shows the empty store.
+- Clearing only the `ashpaz_local_user` cookie is not a new user while `ashpaz-khoone.local-user.v1` remains. «کاربر جدید» replaces both. To return to an old id, put that id back in the cookie and in `ashpaz-khoone.local-user.v1`, then reload.
+- Two curls, with no cookie, also stay apart:
+
+```bash
+curl -sS -X PUT http://localhost:8000/pantry \
+  -H 'Content-Type: application/json' \
+  -H 'X-Local-User-Id: local-user-demo1' \
+  -d '{"pantry":{"items":["پیاز"],"budget":"10"}}'
+curl -sS http://localhost:8000/pantry -H 'X-Local-User-Id: local-user-demo2'
+```
+
+The second body is `found: false` and an empty pantry. `local-user-demo1` still has پیاز.
+
+Checks without a browser:
 
 ```bash
 node --test web/persist.test.js
@@ -271,7 +295,7 @@ node --test web/fridge.test.js
 
 «برنامه ۷ روزه» is on the same page, under the recipe cards. It does not call GapGPT. No API key is required to view the week, print it, or download it.
 
-The week is شنبه through جمعه. Each day has سه وعده: صبحانه، ناهار، شام. An empty slot shows «خالی». Assignments, recipe titles, and «خورده شد» are stored per meal in Postgres for this browser's local id. The browser also keeps them in `localStorage` (`ashpaz-khoone.plan.v1`) and uses that copy when the api or database is unavailable.
+The week is شنبه through جمعه. Each day has سه وعده: صبحانه، ناهار، شام. An empty slot shows «خالی». Assignments, recipe titles, and «خورده شد» are stored per meal in Postgres for this browser's local id. The browser also keeps them in `localStorage` (`ashpaz-khoone.plan.v1.<id>`) and uses that copy when the api or database is unavailable.
 
 Older saves stored one شام per day (`slots.sat` as a recipe id, `used.sat` as a boolean). Those load as the شام slot. صبحانه and ناهار start «خالی». Share links with `v: 1` do the same. New links are `v: 2` and list every filled meal.
 
@@ -412,9 +436,9 @@ localStorage.setItem(
 );
 ```
 
-The slot id is `r:` plus the title with spaces and ZWNJ removed. A legacy string such as `slots.sat = "r:عدسپلو"` still loads as شام. If this browser already has a plan in Postgres, reload shows that row instead of this snippet. The snippet is what you see when the api is unavailable, or when `GET /plan` is `found: false` (the page then saves this cache). After reload:
+The slot id is `r:` plus the title with spaces and ZWNJ removed. A legacy string such as `slots.sat = "r:عدسپلو"` still loads as شام. If this browser already has a plan in Postgres, reload shows that row instead of this snippet. The snippet is what you see when the api is unavailable, or when `GET /plan` is `found: false` (the page then saves this cache). The unscoped key is adopted by this browser's first id when `ashpaz-khoone.plan.v1.<id>` is still empty. If that scoped key is already present, set `ashpaz-khoone.plan.v1.` plus the value of `ashpaz-khoone.local-user.v1` instead. After reload:
 
-1. Click «مواد خرید». برنج، عدس، and پیاز are already chips, so they are absent. گوشت is listed as ۲۰۰ گرم under پروتئین. Type زعفران, an optional مقدار, and «افزودن». It stays after reload (`ashpaz-khoone.shopping.v1`, or Postgres `shopping_state` when the api is up) and گوشت is still there. Changing تعداد نفرات changes گوشت only. A price appears on a row when Okala has one; «جمع» is the sum of those line totals.
+1. Click «مواد خرید». برنج، عدس، and پیاز are already chips, so they are absent. گوشت is listed as ۲۰۰ گرم under پروتئین. Type زعفران, an optional مقدار, and «افزودن». It stays after reload (`ashpaz-khoone.shopping.v1.<id>`, or Postgres `shopping_state` when the api is up) and گوشت is still there. Changing تعداد نفرات changes گوشت only. A price appears on a row when Okala has one; «جمع» is the sum of those line totals. That row is not visible to another id.
 2. «چاپ / خروجی» on the shopping section, then «چاپ». The preview is the list, in Persian, on white. The pantry and the seven day cards are not in it.
 3. «دانلود مارک‌داون» saves `مواد-خرید.md`.
 4. Clear every slot (or remove the plan key and reload). The section says the week is empty.
@@ -479,10 +503,10 @@ The release gate for `v0.2.0` is [docs/QA-SMOKE.md](docs/QA-SMOKE.md). `v0.1.0` 
 8. Edit the pantry and generate again.
 9. «کپی لینک» copies a `#p=` link. «چاپ» is an A4 poster. A soft over-budget line does not block export. «مواد خرید» lists what the dinners need and the pantry does not have.
 10. «به‌روزرسانی قیمت‌ها» stores Okala unit prices (fixture when `OKALA_LIVE=0`). Cards, the week, and shopping rows say اُکالا when that price is used, «بخشی از اُکالا» when only some lines match, and «حدود» for the GapGPT estimate. A failed refresh keeps the last price or that estimate. On مواد خرید, «جمع» sums the line totals, and a stale line says «کهنه». A manual name is included in the refresh and in «سبد اُکالا». «سبد اُکالا» copies at most ten names and opens the store; it does not prefill a basket or take payment. Headcount still scales each plan quantity once; a مقدار you typed stays.
-11. Chips, budget, diet filters, the week, and a manual مواد خرید row survive a reload in Postgres. With api stopped, the same browser still shows the `localStorage` copy (`ashpaz-khoone.pantry.v1`, `ashpaz-khoone.plan.v1`, `ashpaz-khoone.shopping.v1`).
+11. Chips, budget, diet filters, the week, and a manual مواد خرید row survive a reload in Postgres for this browser id. With api stopped, the same browser still shows its `localStorage` copy (`ashpaz-khoone.pantry.v1.<id>`, `ashpaz-khoone.plan.v1.<id>`, `ashpaz-khoone.shopping.v1.<id>`). «کاربر جدید» starts an empty store and leaves the previous id in Postgres.
 12. Break or unset `GAP_CODE_API_KEY`, recreate api, and confirm a Persian error with «تلاش دوباره» and no key value. Nutrition without a usable key stays HTTP 200 with `"available": false`. Restore the key and generate again.
 13. The manifest and `/sw.js` are served for install. The footer says «افزودن به صفحهٔ اصلی». The worker caches the page shell only and does not call GapGPT. Chrome can install from http://localhost:8080; any other host needs HTTPS.
-14. Leave tagging `v0.2.0` for SE after this path is green. Do not tag `v0.3.0` from the Okala check.
+14. Leave tagging `v0.2.0` for SE after this path is green. Do not tag `v0.3.0` from the Okala check or from the multi-user check.
 
 The longer [demo path](#demo-path-qa) below still covers a boot with no key.
 

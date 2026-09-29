@@ -1,7 +1,10 @@
 """Postgres persistence for pantry chips, the 7-day plan, and shopping extras.
 
-Rows are keyed by a browser-local id. There are no accounts. The GapGPT key
-is never written, logged, or returned. SQL values are parameters.
+Each browser session is one local_user_id. Pantry, plan, and shopping rows
+for that id stay apart from every other id. A valid ashpaz_local_user cookie
+is that session when it is present; otherwise the header, query, or JSON id
+is used. There are no accounts. The GapGPT key is never written, logged, or
+returned. SQL values are parameters.
 """
 
 from __future__ import annotations
@@ -44,6 +47,11 @@ MAX_COST = 10**15
 _MIN_SECRET_LEN = 8
 
 USER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+COOKIE_NAME = "ashpaz_local_user"
+# A pre-session dump under LEGACY_SHARED_USER_ID is copied to this id.
+# Browsers do not use it unless that row exists. See migration 004.
+DEFAULT_USER_ID = "local-user-default"
+LEGACY_SHARED_USER_ID = "legacy-shared"
 USER_ID_MESSAGE = (
     "local_user_id must be 8 to 64 letters, digits, underscores, or hyphens"
 )
@@ -599,7 +607,33 @@ def require_user_id(value: Any) -> str:
     return text
 
 
+def cookie_user_id(req: Any) -> str | None:
+    """The browser session, when the cookie is present and well formed.
+
+    A missing or unusable cookie is ignored so a header can still name the
+    session. A valid cookie is the session even if the header names someone else.
+    """
+    cookies = getattr(req, "cookies", None)
+    if not cookies:
+        return None
+    try:
+        raw = cookies.get(COOKIE_NAME)
+    except Exception:
+        return None
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if not text or not USER_ID_RE.fullmatch(text):
+        return None
+    if contains_secret(text):
+        return None
+    return text
+
+
 def user_id_from_request(req: Any, body: dict[str, Any] | None = None) -> str:
+    pinned = cookie_user_id(req)
+    if pinned:
+        return pinned
     header = req.headers.get("X-Local-User-Id")
     query = req.args.get("local_user_id")
     has_body_id = isinstance(body, dict) and "local_user_id" in body

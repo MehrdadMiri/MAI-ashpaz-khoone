@@ -280,10 +280,10 @@ test("a failed save stays dirty and the next flush retries", async () => {
   const { created } = session({ storage: store, fetchBox });
   created.savePantry(model.snapshot());
   await created.flush();
-  const meta = JSON.parse(store.getItem(persist.META_KEY));
+  const meta = JSON.parse(store.getItem(persist.META_KEY + "." + created.userId()));
   assert.ok(meta.pantryRev > meta.pantrySyncedRev);
   await created.flush();
-  const synced = JSON.parse(store.getItem(persist.META_KEY));
+  const synced = JSON.parse(store.getItem(persist.META_KEY + "." + created.userId()));
   assert.equal(synced.pantryRev, synced.pantrySyncedRev);
   assert.equal(attempts, 2);
 });
@@ -325,6 +325,9 @@ test("the page wires persist.js after the plan and does not embed a key", () => 
   assert.match(script, /\/plan/);
   assert.match(script, /\/shopping/);
   assert.match(script, /localStorage/);
+  assert.match(html, /data-testid="new-user"/);
+  assert.match(html, /کاربر جدید/);
+  assert.equal(html.includes("New user"), false);
 });
 
 test("household size is saved with the pantry and uploaded when that is the only change", async () => {
@@ -387,4 +390,112 @@ test("a manual shopping row round-trips on the same local id", async () => {
   await again.hydrate(null, null, remote);
   assert.equal(remote.snapshot().manual[0].name, "روغن");
   assert.equal(remote.snapshot().manual[0].qty, 1);
+});
+
+test("two users keep pantry, plan, and shopping apart", async () => {
+  const store = storage();
+  const jar = cookieJar();
+  const shop = require("./shop.js");
+  const prices = require("./prices.js");
+  const rows = {};
+  let n = 0;
+  const fetchBox = mockFetch((call) => {
+    const id = call.options.headers["X-Local-User-Id"];
+    const kind = call.url.endsWith("/shopping") ? "shopping" : call.url.endsWith("/plan") ? "plan" : "pantry";
+    if (!rows[id]) rows[id] = {};
+    if (call.options.method === "PUT") {
+      rows[id][kind] = call.body[kind];
+      return jsonResponse(200, { ok: true, found: true, [kind]: call.body[kind] });
+    }
+    const saved = rows[id][kind];
+    if (!saved) {
+      const empty =
+        kind === "shopping"
+          ? { manual: [], overrides: {} }
+          : kind === "plan"
+            ? { recipes: [], slots: {}, used: {} }
+            : { items: [], budget: "" };
+      return jsonResponse(200, { ok: true, found: false, [kind]: empty });
+    }
+    return jsonResponse(200, { ok: true, found: true, [kind]: saved });
+  });
+  const first = persist.createPersist({
+    storage: store,
+    cookie: jar.cookie,
+    fetch: fetchBox.fetchImpl,
+    delay: 0,
+    random() {
+      n += 1;
+      return "user-iso-" + String(n).padStart(4, "0");
+    },
+  });
+  const idA = first.userId();
+  const pantryA = pantry.createPantry({ storage: store, userId: idA });
+  pantryA.add("پیاز");
+  pantryA.setBudget("15");
+  const planA = plan.createPlan({ storage: store, userId: idA });
+  planA.assign("sat", { title: "عدس‌پلو", ingredients: ["برنج"], steps: ["بپز"], cost_toman: 10 });
+  const shopA = shop.createShopping({ storage: store, userId: idA });
+  assert.equal(shopA.add({ name: "زعفران", qty: "۲", unit: "گرم" }).ok, true);
+  await first.hydrate(pantryA, planA, shopA);
+
+  const idB = await first.startNewUser({ pantry: pantryA, plan: planA, shop: shopA });
+  assert.notEqual(idA, idB);
+  assert.deepEqual(pantryA.items(), []);
+  assert.equal(pantryA.budget(), "");
+  assert.equal(planA.snapshot().recipes.length, 0);
+  assert.equal(shopA.snapshot().manual.length, 0);
+  await first.hydrate(pantryA, planA, shopA);
+  const leaked = fetchBox.calls.filter(
+    (call) => call.options.method === "PUT" && call.options.headers["X-Local-User-Id"] === idB,
+  );
+  assert.equal(leaked.length, 0);
+  assert.deepEqual(pantryA.items(), []);
+
+  const keptPantry = JSON.parse(store.getItem(pantry.scopedStorageKey(pantry.STORAGE_KEY, idA)));
+  assert.deepEqual(keptPantry.items, ["پیاز"]);
+  assert.equal(keptPantry.budget, "15");
+  const keptShop = JSON.parse(store.getItem(shop.STORAGE_KEY + "." + idA));
+  assert.equal(keptShop.manual[0].name, "زعفران");
+  assert.equal(keptShop.manual[0].qty, 2);
+  assert.equal(store.getItem(shop.STORAGE_KEY + "." + idB), null);
+  const reloaded = pantry.createPantry({ storage: store, userId: idA });
+  assert.deepEqual(reloaded.items(), ["پیاز"]);
+  const reloadedShop = shop.createShopping({ storage: store, userId: idA });
+  assert.equal(reloadedShop.snapshot().manual[0].name, "زعفران");
+  const otherShop = shop.createShopping({ storage: store, userId: idB });
+  assert.equal(otherShop.snapshot().manual.length, 0);
+  assert.equal(prices.loadStored(store, idB), null);
+});
+
+test("a legacy shared pantry and price cache stay with the first user", async () => {
+  const store = storage();
+  store.setItem(pantry.STORAGE_KEY, JSON.stringify({ items: ["برنج"], budget: "5" }));
+  store.setItem(
+    "ashpaz-khoone.okala-prices.v1",
+    JSON.stringify({ items: [], unmatched: ["زعفران"], ttl_seconds: 86400, origin: "fixture" }),
+  );
+  const prices = require("./prices.js");
+  let n = 0;
+  const first = persist.createPersist({
+    storage: store,
+    cookie: cookieJar().cookie,
+    delay: 0,
+    fetch: () => Promise.reject(new Error("down")),
+    random() {
+      n += 1;
+      return "user-legacy-" + String(n).padStart(2, "0");
+    },
+  });
+  const idA = first.userId();
+  assert.deepEqual(JSON.parse(store.getItem(pantry.scopedStorageKey(pantry.STORAGE_KEY, idA))).items, ["برنج"]);
+  assert.equal(store.getItem(persist.LEGACY_OWNER_KEY), idA);
+  assert.equal(prices.loadStored(store, idA).unmatched[0], "زعفران");
+  const idB = await first.startNewUser();
+  assert.notEqual(idA, idB);
+  assert.equal(store.getItem(pantry.scopedStorageKey(pantry.STORAGE_KEY, idB)), null);
+  assert.equal(prices.loadStored(store, idB), null);
+  assert.deepEqual(pantry.createPantry({ storage: store, userId: idB }).items(), []);
+  assert.deepEqual(pantry.createPantry({ storage: store, userId: idA }).items(), ["برنج"]);
+  assert.equal(store.getItem(persist.LEGACY_OWNER_KEY), idA);
 });

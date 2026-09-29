@@ -61,6 +61,7 @@
   };
 
   var STORAGE_KEY = "ashpaz-khoone.shopping.v1";
+  var USER_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
   var MAX_MANUAL = 80;
   var MAX_NAME = 40;
   var UNIT_OPTIONS = ["", "گرم", "کیلو", "کیلوگرم", "عدد", "لیتر", "میلی‌لیتر", "پیمانه", "بسته", "قاشق", "مثقال"];
@@ -785,6 +786,29 @@
     return state;
   }
 
+  function scopedStorageKey(base, userId) {
+    return typeof userId === "string" && USER_ID_RE.test(userId) ? base + "." + userId : base;
+  }
+
+  function readScopedRaw(storage, base, userId) {
+    if (global.AshpazPantry && typeof global.AshpazPantry.readScopedRaw === "function") {
+      return global.AshpazPantry.readScopedRaw(storage, base, userId);
+    }
+    if (!storage || typeof storage.getItem !== "function") return null;
+    var key = scopedStorageKey(base, userId);
+    try {
+      if (key !== base) {
+        var scoped = storage.getItem(key);
+        if (scoped) return scoped;
+        var owner = storage.getItem("ashpaz-khoone.legacy-owner.v1") || "";
+        if (owner && owner !== userId) return null;
+      }
+      return storage.getItem(base);
+    } catch (err) {
+      return null;
+    }
+  }
+
   function createMemoryStorage() {
     var memory = Object.create(null);
     return {
@@ -800,12 +824,15 @@
   function createShopping(options) {
     options = options || {};
     var storage = options.storage || createMemoryStorage();
+    var boundUser =
+      options && typeof options.userId === "string" && USER_ID_RE.test(options.userId) ? options.userId : "";
+    var activeKey = scopedStorageKey(STORAGE_KEY, boundUser);
     var state = emptyShopping();
     var listeners = [];
 
     function readStored() {
       try {
-        var raw = storage.getItem(STORAGE_KEY);
+        var raw = readScopedRaw(storage, STORAGE_KEY, boundUser);
         if (!raw) return emptyShopping();
         return sanitizeExtras(JSON.parse(raw));
       } catch (err) {
@@ -821,7 +848,7 @@
 
     function writeLocal() {
       try {
-        storage.setItem(STORAGE_KEY, JSON.stringify(snapshot()));
+        storage.setItem(activeKey, JSON.stringify(snapshot()));
       } catch (err) {
         /* Quota or privacy mode: keep the in-memory list for this visit. */
       }
@@ -876,6 +903,13 @@
       replace: function (parsed) {
         state = sanitizeExtras(parsed);
         writeLocal();
+        emit();
+        return snapshot();
+      },
+      bindUser: function (userId) {
+        boundUser = typeof userId === "string" && USER_ID_RE.test(userId) ? userId : "";
+        activeKey = scopedStorageKey(STORAGE_KEY, boundUser);
+        state = readStored();
         emit();
         return snapshot();
       },
@@ -2045,7 +2079,12 @@
   }
 
   function boot() {
-    var model = createShopping({ storage: browserStorage() });
+    var browser = browserStorage();
+    var knownUser = "";
+    if (global.AshpazPantry && typeof global.AshpazPantry.storedUserId === "function") {
+      knownUser = global.AshpazPantry.storedUserId(browser);
+    }
+    var model = createShopping({ storage: browser, userId: knownUser });
     api.active = model;
     mount(document, { shopping: model });
   }

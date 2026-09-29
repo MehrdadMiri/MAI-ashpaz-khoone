@@ -13,6 +13,7 @@ Release gate for tag `v0.2.0`. `v0.1.0` is already tagged (pantry chips, one fri
 | Diet filters (گیاهی / بدون پیاز / مناسب دیابت) | 4b |
 | Household size (تعداد نفرات scales amounts and cost) | 4d |
 | Okala prices and assisted cart (ticket #20) | 7d |
+| Multi-user pantry, plan, and shopping (ticket #23) | 7e |
 | PWA install (manifest, service worker shell-only, install note) | 9 |
 
 Do **not** create the `v0.2.0` tag or a GitHub Release from this checklist. SE tags after this path is green. Short notes for that tag are [RELEASE.md](RELEASE.md).
@@ -288,7 +289,7 @@ With `db` and `api` healthy. No API key is required. This step is part of the v0
 
 - Add a chip and a week budget. Turn on one diet chip (step 4b). Set تعداد نفرات to something other than ۴ (step 4d). Reload http://localhost:8080. The chip, the budget, the diet chip, and the headcount are still there.
 - Assign a شام and a صبحانه, and mark «خورده شد» on one of them. Reload. Both meals and that mark are still there. The other meal is not marked eaten.
-- In this browser, `localStorage` holds `ashpaz-khoone.pantry.v1` (chips, budget, `filters`, `household`), `ashpaz-khoone.plan.v1` (the week, including «خورده شد» and `servings` on recipes that have it), and `ashpaz-khoone.shopping.v1` after a manual shopping row (name, مقدار, and any plan-row edit). The browser id is `ashpaz-khoone.local-user.v1`. None of those values is `GAP_CODE_API_KEY`.
+- In this browser, `localStorage` holds the live copy under this id: `ashpaz-khoone.pantry.v1.<id>` (chips, budget, `filters`, `household`), `ashpaz-khoone.plan.v1.<id>` (the week, including «خورده شد» and `servings` on recipes that have it), and `ashpaz-khoone.shopping.v1.<id>` after a manual shopping row (name, مقدار, and any plan-row edit). The id is `ashpaz-khoone.local-user.v1` and the `ashpaz_local_user` cookie. An older unscoped key is only the first user's leftover copy. None of those values is `GAP_CODE_API_KEY`.
 - Stop the api container and reload. The same browser still shows that cached pantry and plan. Start api again and reload. The saved Postgres rows are back, including the diet filters.
 
 ```bash
@@ -326,6 +327,35 @@ curl -sS -X POST http://localhost:8000/prices/cart \
 ```
 
 The quote for ۲۰۰ گرم برنج at ۸ نفر is `165000` toman from the fixture. The cart body has `"prefill": false` and `"checkout": false`, and `open_url` is the Okala homepage.
+
+### 7e. Two users do not see each other's kitchen
+
+This check is the v0.3 multi-user slice (ticket #23). Do **not** create a `v0.3.0` tag from it. No API key is required. The page stays Persian and right to left. «کاربر جدید» is the only new control.
+
+With `db` and `api` healthy:
+
+- In this browser, add a chip that is not in the sample (for example پیاز if it is not already there), set بودجه هفته, assign one meal, and add a manual مواد خرید row (زعفران). Reload. The chip, the meal, and زعفران are still there. A matched row can still show an اُکالا price after «به‌روزرسانی قیمت‌ها».
+- Click «کاربر جدید». The page reloads. The pantry is empty, the week is empty, and زعفران is gone. The status line says the new user has a separate store.
+- Open a private window, or the first browser profile without clicking «کاربر جدید» again. The first profile still has the chip, the meal, and زعفران. The private window does not.
+- Curl, no cookie, two ids:
+
+```bash
+curl -sS -X PUT http://localhost:8000/pantry \
+  -H 'Content-Type: application/json' \
+  -H 'X-Local-User-Id: local-user-demo1' \
+  -d '{"pantry":{"items":["پیاز"],"budget":"10"}}'
+curl -sS -X PUT http://localhost:8000/shopping \
+  -H 'Content-Type: application/json' \
+  -H 'X-Local-User-Id: local-user-demo1' \
+  -d '{"shopping":{"manual":[{"id":"m-zaferan","name":"زعفران","qty":2,"unit":"گرم"}]}}'
+curl -sS http://localhost:8000/pantry -H 'X-Local-User-Id: local-user-demo2'
+curl -sS http://localhost:8000/shopping -H 'X-Local-User-Id: local-user-demo2'
+curl -sS http://localhost:8000/pantry -H 'X-Local-User-Id: local-user-demo1'
+```
+
+`local-user-demo2` is `found: false` for both pantry and shopping. `local-user-demo1` still lists پیاز and, on a later shopping GET, زعفران. Neither body contains `GAP_CODE_API_KEY`.
+
+A second browser is the same split as «کاربر جدید»: different cookie, different Postgres rows. Clearing only the cookie does not switch users while `localStorage` still holds `ashpaz-khoone.local-user.v1`. «کاربر جدید» replaces both.
 
 Automated checks, no key and no live Okala:
 

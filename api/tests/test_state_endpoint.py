@@ -83,7 +83,16 @@ class EndpointTests(unittest.TestCase):
         loaded = self.client.get("/api/pantry", headers={"X-Local-User-Id": USER})
         self.assertEqual(loaded.status_code, 200)
         self.assertEqual(loaded.get_json()["pantry"]["items"], ["کرفس"])
+        self.assertIn(store.COOKIE_NAME + "=" + USER, saved.headers.get("Set-Cookie", ""))
 
+        pinned = self.client.get(
+            "/pantry",
+            headers={"X-Local-User-Id": OTHER},
+            query_string={"local_user_id": OTHER},
+        )
+        self.assertEqual(pinned.get_json()["pantry"]["items"], ["کرفس"])
+
+        self.client.delete_cookie(store.COOKIE_NAME)
         other = self.client.get("/pantry", query_string={"local_user_id": OTHER})
         self.assertFalse(other.get_json()["found"])
         self.assertEqual(other.get_json()["pantry"]["items"], [])
@@ -257,6 +266,59 @@ class EndpointTests(unittest.TestCase):
             )
         self.assertEqual(secret.status_code, 400)
         self.assertNotIn(KEY, secret.get_data(as_text=True))
+
+    def test_two_sessions_keep_pantry_plan_and_shopping_apart(self):
+        first = app_module.app.test_client()
+        second = app_module.app.test_client()
+        pantry_a = first.put(
+            "/pantry",
+            headers={"X-Local-User-Id": USER},
+            json=pantry_body(["پیاز"], "10"),
+        )
+        self.assertEqual(pantry_a.status_code, 200)
+        plan_a = first.put("/plan", headers={"X-Local-User-Id": USER}, json=plan_body())
+        self.assertEqual(plan_a.status_code, 200)
+        shop_a = first.put(
+            "/shopping",
+            headers={"X-Local-User-Id": USER},
+            json={
+                "shopping": {
+                    "manual": [{"id": "m-zaferan", "name": "زعفران", "qty": 2, "unit": "گرم"}],
+                    "overrides": {"گوشت": {"qtyOwned": True, "qty": 3, "unit": "عدد"}},
+                }
+            },
+        )
+        self.assertEqual(shop_a.status_code, 200)
+
+        pantry_b = second.put(
+            "/pantry",
+            headers={"X-Local-User-Id": OTHER},
+            json=pantry_body(["برنج"], "80"),
+        )
+        self.assertEqual(pantry_b.status_code, 200)
+        second.put(
+            "/shopping",
+            headers={"X-Local-User-Id": OTHER},
+            json={"shopping": {"manual": [{"id": "m-oil", "name": "روغن", "qty": 1, "unit": "لیتر"}]}},
+        )
+
+        again_a = first.get("/pantry")
+        again_b = second.get("/pantry")
+        self.assertEqual(again_a.get_json()["pantry"]["items"], ["پیاز"])
+        self.assertEqual(again_a.get_json()["pantry"]["budget"], "10")
+        self.assertEqual(again_b.get_json()["pantry"]["items"], ["برنج"])
+        self.assertEqual(again_b.get_json()["pantry"]["budget"], "80")
+        self.assertEqual(first.get("/plan").get_json()["plan"]["slots"]["sat"]["dinner"], "r:عدسپلو")
+        self.assertFalse(second.get("/plan").get_json()["found"])
+
+        shop_again_a = first.get("/shopping").get_json()["shopping"]
+        shop_again_b = second.get("/shopping").get_json()["shopping"]
+        self.assertEqual(shop_again_a["manual"][0]["name"], "زعفران")
+        self.assertEqual(shop_again_a["manual"][0]["qty"], 2)
+        self.assertEqual(shop_again_a["overrides"]["گوشت"]["qty"], 3)
+        self.assertEqual(shop_again_b["manual"][0]["name"], "روغن")
+        self.assertNotIn("زعفران", second.get("/shopping").get_data(as_text=True))
+        self.assertNotIn("پیاز", again_b.get_data(as_text=True))
 
 
 class PostgresEndpointTests(unittest.TestCase):

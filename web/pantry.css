@@ -511,6 +511,27 @@ h2 {
   color: inherit;
 }
 
+.session-button {
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 0.35rem 0.9rem;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.session-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.session-status {
+  flex: 1 0 100%;
+  min-height: 1.2em;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;

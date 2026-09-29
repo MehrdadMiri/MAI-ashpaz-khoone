@@ -9,6 +9,8 @@
   "use strict";
 
   var STORAGE_KEY = "ashpaz-khoone.okala-prices.v1";
+  var activePriceKey = STORAGE_KEY;
+  var priceStorage = null;
   var ENDPOINT = "/api/prices";
   var HOME_URL = "https://www.okala.com/";
   var COPY_LIMIT = 10;
@@ -351,10 +353,11 @@
     catalog.ttl_seconds = next.ttl_seconds > 0 ? next.ttl_seconds : DEFAULT_TTL;
     catalog.origin = next.origin || "";
     var storage = options.storage;
+    var key = options.key || activePriceKey;
     if (storage && typeof storage.setItem === "function") {
       try {
         storage.setItem(
-          STORAGE_KEY,
+          key,
           JSON.stringify({
             items: catalog.items,
             unmatched: catalog.unmatched,
@@ -369,15 +372,31 @@
     return catalog;
   }
 
-  function loadStored(storage) {
+  function loadStored(storage, userId) {
     if (!storage || typeof storage.getItem !== "function") return null;
+    var raw = null;
     try {
-      var parsed = JSON.parse(storage.getItem(STORAGE_KEY) || "");
+      if (global.AshpazPantry && typeof global.AshpazPantry.readScopedRaw === "function") {
+        raw = global.AshpazPantry.readScopedRaw(storage, STORAGE_KEY, userId || "");
+      } else {
+        raw = storage.getItem(userId ? STORAGE_KEY + "." + userId : activePriceKey);
+      }
+      var parsed = JSON.parse(raw || "");
       if (!parsed || !Array.isArray(parsed.items)) return null;
       return parsed;
     } catch (err) {
       return null;
     }
+  }
+
+  function bindUser(userId) {
+    var pantryApi = global.AshpazPantry;
+    var valid = pantryApi && typeof pantryApi.scopedStorageKey === "function";
+    activePriceKey = valid ? pantryApi.scopedStorageKey(STORAGE_KEY, userId) : STORAGE_KEY;
+    if (!priceStorage) return null;
+    var cached = loadStored(priceStorage, userId);
+    if (!cached) return null;
+    return applyCatalog(cached, { storage: priceStorage, key: activePriceKey });
   }
 
   function statusText(body, hasItems) {
@@ -473,14 +492,22 @@
     hooks = hooks || {};
     var button = doc.getElementById("price-refresh");
     var storage = hooks.storage || storageOf();
+    priceStorage = storage;
     var busy = false;
+    var sessionUser = "";
+    if (global.AshpazPantry && typeof global.AshpazPantry.storedUserId === "function") {
+      sessionUser = global.AshpazPantry.storedUserId(storage);
+    }
+    if (sessionUser && global.AshpazPantry && typeof global.AshpazPantry.scopedStorageKey === "function") {
+      activePriceKey = global.AshpazPantry.scopedStorageKey(STORAGE_KEY, sessionUser);
+    }
 
     function remember(body) {
       applyCatalog(body, { storage: storage });
       notify(doc);
     }
 
-    var cached = loadStored(storage);
+    var cached = loadStored(storage, sessionUser);
     if (cached) {
       remember(cached);
       paint(doc, catalog.items.length ? COPY.ready : "");
@@ -552,6 +579,8 @@
     COPY: COPY,
     SEED: SEED,
     STORAGE_KEY: STORAGE_KEY,
+    bindUser: bindUser,
+    loadStored: loadStored,
     quoteRecipe: quoteRecipe,
     priceParts: priceParts,
     cartAssist: cartAssist,
