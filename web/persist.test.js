@@ -323,6 +323,7 @@ test("the page wires persist.js after the plan and does not embed a key", () => 
   assert.equal(script.includes("Bearer "), false);
   assert.match(script, /\/pantry/);
   assert.match(script, /\/plan/);
+  assert.match(script, /\/shopping/);
   assert.match(script, /localStorage/);
 });
 
@@ -344,4 +345,46 @@ test("household size is saved with the pantry and uploaded when that is the only
   assert.deepEqual(puts[0].body.pantry.items, []);
   const again = pantry.createPantry({ storage: store });
   assert.equal(again.household(), 6);
+});
+
+test("a manual shopping row round-trips on the same local id", async () => {
+  const store = storage();
+  const shop = require("./shop.js");
+  const model = shop.createShopping({ storage: store });
+  model.add({ name: "زعفران", qty: "۲", unit: "گرم" });
+  const fetchBox = mockFetch((call) => {
+    if (call.options.method === "GET" && call.url === "/api/shopping") {
+      return jsonResponse(200, { ok: true, found: false, shopping: { manual: [], overrides: {} } });
+    }
+    if (call.options.method === "GET") {
+      return jsonResponse(200, { ok: true, found: false, pantry: { items: [], budget: "" }, plan: { recipes: [], slots: {}, used: {} } });
+    }
+    return jsonResponse(200, { ok: true, found: true, shopping: call.body.shopping });
+  });
+  const { created } = session({ storage: store, fetchBox });
+  await created.hydrate(null, null, model);
+  const put = fetchBox.calls.find((call) => call.options.method === "PUT" && call.url === "/api/shopping");
+  assert.equal(put.body.shopping.manual[0].name, "زعفران");
+  assert.equal(put.body.shopping.manual[0].qty, 2);
+  assert.equal(put.body.shopping.manual[0].unit, "گرم");
+  assert.equal(JSON.stringify(put.options.headers).includes("Bearer"), false);
+
+  const remote = shop.createShopping({ storage: shop.createMemoryStorage() });
+  const saved = mockFetch((call) => {
+    assert.equal(call.url, "/api/shopping");
+    return jsonResponse(200, {
+      ok: true,
+      found: true,
+      shopping: { manual: [{ id: "m-zaferan", name: "روغن", qty: 1, unit: "لیتر", checked: false }], overrides: {} },
+    });
+  });
+  const again = persist.createPersist({
+    storage: shop.createMemoryStorage(),
+    cookie: cookieJar().cookie,
+    fetch: saved.fetchImpl,
+    delay: 0,
+  });
+  await again.hydrate(null, null, remote);
+  assert.equal(remote.snapshot().manual[0].name, "روغن");
+  assert.equal(remote.snapshot().manual[0].qty, 1);
 });

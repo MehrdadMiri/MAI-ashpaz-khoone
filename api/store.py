@@ -1,4 +1,4 @@
-"""Postgres persistence for pantry chips and the 7-day plan.
+"""Postgres persistence for pantry chips, the 7-day plan, and shopping extras.
 
 Rows are keyed by a browser-local id. There are no accounts. The GapGPT key
 is never written, logged, or returned. SQL values are parameters.
@@ -27,6 +27,8 @@ MIGRATION_PATH = MIGRATION_DIR / "001_kitchen_state.sql"
 DAYS = ("sat", "sun", "mon", "tue", "wed", "thu", "fri")
 MEALS = ("breakfast", "lunch", "dinner")
 MAX_PANTRY_ITEMS = 100
+MAX_SHOP_ITEMS = 80
+MAX_SHOP_QTY = 100_000
 MIN_HOUSEHOLD = 1
 MAX_HOUSEHOLD = 12
 DEFAULT_HOUSEHOLD = 4
@@ -93,6 +95,12 @@ class KitchenStore:
         raise NotImplementedError
 
     def save_plan(self, user_id: str, plan: Any) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def load_shopping(self, user_id: str) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def save_shopping(self, user_id: str, shopping: Any) -> dict[str, Any]:
         raise NotImplementedError
 
 
@@ -455,6 +463,132 @@ def prepare_plan(raw: Any) -> dict[str, Any]:
     return clean
 
 
+_SHOP_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
+_SHOP_UNITS = {
+    "": "",
+    "گرم": "گرم",
+    "گرمی": "گرم",
+    "کیلو": "کیلو",
+    "کیلوگرم": "کیلوگرم",
+    "کیلو گرم": "کیلوگرم",
+    "عدد": "عدد",
+    "لیتر": "لیتر",
+    "میلی‌لیتر": "میلی‌لیتر",
+    "میلی لیتر": "میلی‌لیتر",
+    "پیمانه": "پیمانه",
+    "بسته": "بسته",
+    "قاشق": "قاشق",
+    "قاشق غذاخوری": "قاشق غذاخوری",
+    "مثقال": "مثقال",
+}
+
+
+def empty_shopping() -> dict[str, Any]:
+    return {"manual": [], "overrides": {}}
+
+
+def sanitize_shop_qty(raw: Any) -> float | None:
+    """A user-owned amount. Missing or unusable values stay unset."""
+    if isinstance(raw, bool) or raw is None or raw == "":
+        return None
+    if isinstance(raw, (int, float)):
+        number = float(raw)
+    elif isinstance(raw, str):
+        text = raw.translate(_DIGIT_TRANSLATION)
+        text = text.replace("٬", "").replace("،", "").replace(",", "").replace("٫", ".").strip()
+        if text in ("نیم", "نصف"):
+            return 0.5
+        try:
+            number = float(text)
+        except ValueError:
+            return None
+    else:
+        return None
+    if not math.isfinite(number) or number <= 0 or number > MAX_SHOP_QTY:
+        return None
+    return round(number, 2)
+
+
+def sanitize_shop_unit(raw: Any) -> str:
+    if not isinstance(raw, str):
+        return ""
+    return _SHOP_UNITS.get(display_name(raw), "")
+
+
+def _shop_name(raw: Any) -> str:
+    name = display_name(raw)
+    if not name or len(name) > MAX_NAME_LENGTH or not identity_key(name):
+        return ""
+    if not re.search(r"[\u0600-\u06FFA-Za-z]", name):
+        return ""
+    return name
+
+
+def sanitize_shopping(raw: Any) -> dict[str, Any]:
+    """Keep manual rows and plan-line edits. Drop anything else."""
+    state = empty_shopping()
+    if not isinstance(raw, dict):
+        return state
+    seen: set[str] = set()
+    manual = raw.get("manual")
+    if isinstance(manual, list):
+        for index, item in enumerate(manual):
+            if len(state["manual"]) >= MAX_SHOP_ITEMS:
+                break
+            if not isinstance(item, dict):
+                continue
+            name = _shop_name(item.get("name"))
+            key = identity_key(name)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            qty = sanitize_shop_qty(item.get("qty"))
+            row: dict[str, Any] = {
+                "id": item.get("id") if isinstance(item.get("id"), str) else "",
+                "name": name,
+                "qty": qty,
+                "unit": sanitize_shop_unit(item.get("unit")) if qty is not None else "",
+                "checked": item.get("checked") is True,
+            }
+            if not _SHOP_ID_RE.match(row["id"]):
+                row["id"] = "m" + str(index + 1)
+            state["manual"].append(row)
+    overrides = raw.get("overrides")
+    if isinstance(overrides, dict):
+        for raw_key, value in overrides.items():
+            if len(state["overrides"]) >= MAX_SHOP_ITEMS:
+                break
+            key = identity_key(raw_key)
+            if not key or len(key) > 80 or not isinstance(value, dict):
+                continue
+            entry: dict[str, Any] = {}
+            if value.get("removed") is True:
+                entry["removed"] = True
+            if value.get("checked") is True:
+                entry["checked"] = True
+            name = _shop_name(value.get("name"))
+            if name:
+                entry["name"] = name
+            if value.get("qtyOwned") is True:
+                qty = sanitize_shop_qty(value.get("qty"))
+                if qty is not None:
+                    entry["qtyOwned"] = True
+                    entry["qty"] = qty
+                    entry["unit"] = sanitize_shop_unit(value.get("unit"))
+            if entry:
+                state["overrides"][key] = entry
+    return state
+
+
+def prepare_shopping(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise StoreError("invalid_shopping", "Shopping list must be an object", 400)
+    reject_secret(raw)
+    clean = sanitize_shopping(raw)
+    reject_secret(clean)
+    return clean
+
+
 def require_user_id(value: Any) -> str:
     if not isinstance(value, str) or len(value) > 80:
         raise StoreError("invalid_user", USER_ID_MESSAGE, 400)
@@ -595,12 +729,22 @@ def _plan_payload(found: bool, plan: dict[str, Any], updated_at: Any) -> dict[st
     }
 
 
+def _shopping_payload(found: bool, shopping: dict[str, Any], updated_at: Any) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "found": found,
+        "shopping": shopping,
+        "updated_at": _iso(updated_at) if found else None,
+    }
+
+
 class MemoryKitchen(KitchenStore):
     """In-memory stand-in for tests. Not used by the running api."""
 
     def __init__(self) -> None:
         self.pantries: dict[str, tuple[dict[str, Any], str]] = {}
         self.plans: dict[str, tuple[dict[str, Any], str]] = {}
+        self.shopping: dict[str, tuple[dict[str, Any], str]] = {}
 
     def load_pantry(self, user_id: str) -> dict[str, Any]:
         user_id = require_user_id(user_id)
@@ -631,6 +775,21 @@ class MemoryKitchen(KitchenStore):
         updated = datetime.now(timezone.utc).isoformat()
         self.plans[user_id] = (clean, updated)
         return _plan_payload(True, clean, updated)
+
+    def load_shopping(self, user_id: str) -> dict[str, Any]:
+        user_id = require_user_id(user_id)
+        row = self.shopping.get(user_id)
+        if row is None:
+            return _shopping_payload(False, empty_shopping(), None)
+        shopping, updated = row
+        return _shopping_payload(True, sanitize_shopping(shopping), updated)
+
+    def save_shopping(self, user_id: str, shopping: Any) -> dict[str, Any]:
+        user_id = require_user_id(user_id)
+        clean = prepare_shopping(shopping)
+        updated = datetime.now(timezone.utc).isoformat()
+        self.shopping[user_id] = (clean, updated)
+        return _shopping_payload(True, clean, updated)
 
 
 class PostgresKitchen(KitchenStore):
@@ -721,6 +880,50 @@ class PostgresKitchen(KitchenStore):
         if row is None:
             _db_unavailable("plan save failed", RuntimeError("missing row"))
         return _plan_payload(True, clean, row[0])
+
+    def load_shopping(self, user_id: str) -> dict[str, Any]:
+        user_id = require_user_id(user_id)
+        try:
+            with connect() as conn:
+                ensure_schema(conn)
+                row = conn.execute(
+                    "SELECT shopping, updated_at FROM shopping_state WHERE local_user_id = %s",
+                    (user_id,),
+                ).fetchone()
+        except StoreError:
+            raise
+        except Exception as exc:
+            _db_unavailable("shopping load failed", exc)
+        mark_schema_ready()
+        if row is None:
+            return _shopping_payload(False, empty_shopping(), None)
+        return _shopping_payload(True, sanitize_shopping(_as_object(row[0])), row[1])
+
+    def save_shopping(self, user_id: str, shopping: Any) -> dict[str, Any]:
+        user_id = require_user_id(user_id)
+        clean = prepare_shopping(shopping)
+        try:
+            with connect() as conn:
+                ensure_schema(conn)
+                row = conn.execute(
+                    """
+                    INSERT INTO shopping_state (local_user_id, shopping)
+                    VALUES (%s, %s)
+                    ON CONFLICT (local_user_id) DO UPDATE
+                    SET shopping = EXCLUDED.shopping,
+                        updated_at = now()
+                    RETURNING updated_at
+                    """,
+                    (user_id, Jsonb(clean)),
+                ).fetchone()
+        except StoreError:
+            raise
+        except Exception as exc:
+            _db_unavailable("shopping save failed", exc)
+        mark_schema_ready()
+        if row is None:
+            _db_unavailable("shopping save failed", RuntimeError("missing row"))
+        return _shopping_payload(True, clean, row[0])
 
 
 _store: KitchenStore | None = None

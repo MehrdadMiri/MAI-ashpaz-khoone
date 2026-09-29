@@ -12,7 +12,8 @@ POST /vision/fridge sends one or more fridge photos, in order, to that
 client's vision call and returns candidate ingredient names with confidence.
 It does not store them.
 GET and PUT /pantry and /plan store pantry chips and the 7-day plan in
-Postgres for a browser-local id. They do not call GapGPT.
+Postgres for a browser-local id. GET and PUT /shopping store manual
+shopping-list rows the same way. They do not call GapGPT.
 GET /prices and POST /prices/refresh read a cached Okala catalog. The
 refresh is user-triggered. It does not call GapGPT and does not open a cart.
 """
@@ -51,7 +52,7 @@ JSON_MAX_BYTES = 64 * 1024
 STATE_MAX_BYTES = 256 * 1024
 _PER_IMAGE_BODY = ((MAX_IMAGE_BYTES + 2) // 3) * 4 + 2048
 VISION_REQUEST_MAX_BYTES = MAX_FRIDGE_IMAGES * _PER_IMAGE_BODY + 65536
-STATE_PATHS = {"/pantry", "/plan"}
+STATE_PATHS = {"/pantry", "/plan", "/shopping"}
 
 
 class ApiPrefixMiddleware:
@@ -221,6 +222,7 @@ def root():
             "vision_fridge": "/vision/fridge",
             "pantry": "/pantry",
             "plan": "/plan",
+            "shopping": "/shopping",
             "prices": "/prices",
             "prices_refresh": "/prices/refresh",
             "prices_quote": "/prices/quote",
@@ -441,6 +443,32 @@ def plan_put():
 @app.post("/plan")
 def plan_post():
     return _method_not_allowed("Use GET or PUT /plan")
+
+
+@app.get("/shopping")
+def shopping_get():
+    def run():
+        user_id = store.user_id_from_request(request)
+        return store.get_store().load_shopping(user_id)
+
+    return _state_response(run)
+
+
+@app.put("/shopping")
+def shopping_put():
+    def run():
+        body = store.read_json_object(request)
+        user_id = store.user_id_from_request(request, body)
+        if "shopping" not in body:
+            raise store.StoreError("invalid_shopping", "JSON body must include shopping", 400)
+        return store.get_store().save_shopping(user_id, body.get("shopping"))
+
+    return _state_response(run)
+
+
+@app.post("/shopping")
+def shopping_post():
+    return _method_not_allowed("Use GET or PUT /shopping")
 
 
 def _optional_object():

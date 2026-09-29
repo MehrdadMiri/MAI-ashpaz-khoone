@@ -3,12 +3,13 @@
    Every planned meal counts: صبحانه، ناهار، and شام.
    A flat { recipe } day is still accepted so an older dinner-only week
    keeps building the same list.
-   Pure client-side: no fetch, no GapGPT, no API key.
-   Recipe cards already keep ingredients. If a planned meal has an empty
-   ingredient list, that slot is named in the UI and left off the list.
-   A model call (gpt-5.6-luna through the shared GapGPT client) could
-   invent those missing lines later; it is not wired, so a gap stays
-   visible instead of being filled in with guessed items. */
+   Manual rows and edits live beside that diff. Plan quantities still
+   scale with تعداد نفرات. A quantity the user types is kept as written.
+   Pure client-side: no fetch, no GapGPT, no API key. Postgres sync is
+   in persist.js. Recipe cards already keep ingredients. If a planned
+   meal has an empty ingredient list, that slot is named in the UI and
+   left off the list. A model call could invent those missing lines
+   later; it is not wired, so a gap stays visible. */
 (function (global) {
   "use strict";
 
@@ -38,7 +39,31 @@
     okala: "سبد اُکالا",
     okalaCopied: "فهرست برای اُکالا کپی شد.",
     okalaCopyFailed: "کپی انجام نشد. نام‌ها را از فهرست بردارید.",
+    add: "افزودن",
+    save: "ذخیره",
+    edit: "ویرایش",
+    remove: "حذف",
+    bought: "خریدم",
+    clearChecked: "پاک کردن تیک‌خورده‌ها",
+    manualMeta: "دستی",
+    ownedMeta: "مقدار دستی",
+    clearedTitle: "فهرست خرید خالی است",
+    clearedHelp: "مواد برنامه را از فهرست برداشتید. با افزودن ماده، دوباره اینجا می‌آید.",
+    added: "به فهرست خرید اضافه شد.",
+    saved: "تغییر ذخیره شد.",
+    removed: "از فهرست برداشته شد.",
+    cleared: "تیک‌خورده‌ها پاک شدند.",
+    needName: "نام ماده را بنویسید.",
+    nameLong: "نام ماده بلند است.",
+    badQty: "مقدار را درست بنویسید.",
+    duplicate: "این ماده در فهرست هست.",
+    full: "فهرست خرید پر است.",
   };
+
+  var STORAGE_KEY = "ashpaz-khoone.shopping.v1";
+  var MAX_MANUAL = 80;
+  var MAX_NAME = 40;
+  var UNIT_OPTIONS = ["", "گرم", "کیلو", "کیلوگرم", "عدد", "لیتر", "میلی‌لیتر", "پیمانه", "بسته", "قاشق", "مثقال"];
 
   var CATEGORY_DEFS = [
     {
@@ -661,7 +686,389 @@
     return shared.scaleFactor(people, recipe && recipe.servings);
   }
 
-  function buildShoppingList(pantryItems, week, householdSize) {
+  function emptyShopping() {
+    return { manual: [], overrides: {} };
+  }
+
+  function canonicalUnit(raw) {
+    var text = displayName(raw);
+    if (text === "کیلو گرم") return "کیلوگرم";
+    if (text === "میلی لیتر") return "میلی‌لیتر";
+    if (text === "گرمی") return "گرم";
+    if (UNIT_OPTIONS.indexOf(text) === -1) return "";
+    return text;
+  }
+
+  function parseQty(raw) {
+    if (raw == null) return { ok: true, qty: null };
+    var text = toAsciiDigits(String(raw))
+      .replace(/[\s٬،,]/g, "")
+      .replace(/٫/g, ".")
+      .trim();
+    if (!text) return { ok: true, qty: null };
+    if (text === "نیم" || text === "نصف") return { ok: true, qty: 0.5 };
+    if (!/^\d+(?:\.\d+)?$/.test(text)) return { ok: false };
+    var num = Number(text);
+    if (!isFinite(num) || num <= 0 || num > 100000) return { ok: false };
+    return { ok: true, qty: roundQty(num) };
+  }
+
+  function parseFields(fields) {
+    if (typeof fields === "string") fields = { name: fields };
+    var name = displayName(fields && fields.name);
+    if (!name || !identityKey(name) || !/[\u0600-\u06FFA-Za-z]/.test(name)) {
+      return { ok: false, reason: "empty" };
+    }
+    if (name.length > MAX_NAME) return { ok: false, reason: "long" };
+    var qty = parseQty(fields && fields.qty);
+    if (!qty.ok) return { ok: false, reason: "qty" };
+    return {
+      ok: true,
+      name: name,
+      qty: qty.qty,
+      unit: qty.qty == null ? "" : canonicalUnit(fields && fields.unit),
+    };
+  }
+
+  function newManualId() {
+    var cryptoObj = global.crypto;
+    if (cryptoObj && typeof cryptoObj.randomUUID === "function") {
+      return "m" + String(cryptoObj.randomUUID()).replace(/-/g, "").slice(0, 12);
+    }
+    return "m" + Math.random().toString(36).slice(2, 14);
+  }
+
+  function sanitizeExtras(raw) {
+    var state = emptyShopping();
+    if (!raw || typeof raw !== "object") return state;
+    var seen = Object.create(null);
+    var manual = Array.isArray(raw.manual) ? raw.manual : [];
+    manual.forEach(function (item, index) {
+      if (state.manual.length >= MAX_MANUAL) return;
+      var parsed = parseFields(item || {});
+      if (!parsed.ok) return;
+      var key = identityKey(parsed.name);
+      if (!key || seen[key]) return;
+      seen[key] = true;
+      var id = item && typeof item.id === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(item.id) ? item.id : "m" + String(index + 1);
+      state.manual.push({
+        id: id,
+        name: parsed.name,
+        qty: parsed.qty,
+        unit: parsed.unit,
+        checked: !!(item && item.checked),
+      });
+    });
+    var overrides = raw.overrides && typeof raw.overrides === "object" ? raw.overrides : {};
+    Object.keys(overrides).forEach(function (rawKey) {
+      if (Object.keys(state.overrides).length >= MAX_MANUAL) return;
+      var key = identityKey(rawKey);
+      var value = overrides[rawKey];
+      if (!key || key.length > 80 || !value || typeof value !== "object") return;
+      var entry = {};
+      if (value.removed === true) entry.removed = true;
+      if (value.checked === true) entry.checked = true;
+      var name = displayName(value.name || "");
+      if (name && identityKey(name) && name.length <= MAX_NAME && /[\u0600-\u06FFA-Za-z]/.test(name)) {
+        entry.name = name;
+      }
+      if (value.qtyOwned === true) {
+        var qty = parseQty(value.qty);
+        if (qty.ok && qty.qty != null) {
+          entry.qtyOwned = true;
+          entry.qty = qty.qty;
+          entry.unit = canonicalUnit(value.unit);
+        }
+      }
+      if (Object.keys(entry).length) state.overrides[key] = entry;
+    });
+    return state;
+  }
+
+  function createMemoryStorage() {
+    var memory = Object.create(null);
+    return {
+      getItem: function (key) {
+        return Object.prototype.hasOwnProperty.call(memory, key) ? memory[key] : null;
+      },
+      setItem: function (key, value) {
+        memory[key] = String(value);
+      },
+    };
+  }
+
+  function createShopping(options) {
+    options = options || {};
+    var storage = options.storage || createMemoryStorage();
+    var state = emptyShopping();
+    var listeners = [];
+
+    function readStored() {
+      try {
+        var raw = storage.getItem(STORAGE_KEY);
+        if (!raw) return emptyShopping();
+        return sanitizeExtras(JSON.parse(raw));
+      } catch (err) {
+        return emptyShopping();
+      }
+    }
+
+    state = readStored();
+
+    function snapshot() {
+      return sanitizeExtras(state);
+    }
+
+    function writeLocal() {
+      try {
+        storage.setItem(STORAGE_KEY, JSON.stringify(snapshot()));
+      } catch (err) {
+        /* Quota or privacy mode: keep the in-memory list for this visit. */
+      }
+    }
+
+    function emit() {
+      listeners.forEach(function (fn) {
+        fn();
+      });
+    }
+
+    function notifyRemote() {
+      var remote = global.AshpazPersist;
+      if (!remote || typeof remote.onShopping !== "function") return;
+      try {
+        remote.onShopping(snapshot());
+      } catch (err) {
+        /* The local list is already saved. A later load can try the api again. */
+      }
+    }
+
+    function touch() {
+      writeLocal();
+      emit();
+      notifyRemote();
+    }
+
+    function findManual(ref) {
+      var id = ref && ref.id;
+      var key = ref && ref.key ? identityKey(ref.key) : "";
+      for (var i = 0; i < state.manual.length; i += 1) {
+        if (id && state.manual[i].id === id) return i;
+        if (!id && key && identityKey(state.manual[i].name) === key) return i;
+      }
+      return -1;
+    }
+
+    function dropManualKey(key) {
+      var next = [];
+      state.manual.forEach(function (item) {
+        if (identityKey(item.name) === key) return;
+        next.push(item);
+      });
+      state.manual = next;
+    }
+
+    return {
+      snapshot: snapshot,
+      subscribe: function (fn) {
+        if (typeof fn === "function") listeners.push(fn);
+      },
+      replace: function (parsed) {
+        state = sanitizeExtras(parsed);
+        writeLocal();
+        emit();
+        return snapshot();
+      },
+      add: function (fields) {
+        var parsed = parseFields(fields);
+        if (!parsed.ok) return parsed;
+        var key = identityKey(parsed.name);
+        for (var i = 0; i < state.manual.length; i += 1) {
+          if (identityKey(state.manual[i].name) === key) return { ok: false, reason: "duplicate" };
+        }
+        if (state.manual.length >= MAX_MANUAL) return { ok: false, reason: "full" };
+        state.manual.push({
+          id: newManualId(),
+          name: parsed.name,
+          qty: parsed.qty,
+          unit: parsed.unit,
+          checked: false,
+        });
+        touch();
+        return { ok: true, name: parsed.name };
+      },
+      update: function (ref, fields) {
+        var parsed = parseFields(fields);
+        if (!parsed.ok) return parsed;
+        if (!ref || ref.origin === "manual") {
+          var index = findManual(ref || {});
+          if (index === -1) return { ok: false, reason: "missing" };
+          var nextKey = identityKey(parsed.name);
+          for (var i = 0; i < state.manual.length; i += 1) {
+            if (i !== index && identityKey(state.manual[i].name) === nextKey) {
+              return { ok: false, reason: "duplicate" };
+            }
+          }
+          state.manual[index].name = parsed.name;
+          state.manual[index].qty = parsed.qty;
+          state.manual[index].unit = parsed.unit;
+          touch();
+          return { ok: true, name: parsed.name };
+        }
+        var key = identityKey(ref.key);
+        if (!key) return { ok: false, reason: "missing" };
+        var prev = state.overrides[key] || {};
+        var entry = {};
+        if (prev.removed === true) entry.removed = true;
+        if (prev.checked === true) entry.checked = true;
+        entry.name = parsed.name;
+        if (parsed.qty != null) {
+          entry.qtyOwned = true;
+          entry.qty = parsed.qty;
+          entry.unit = parsed.unit;
+        }
+        state.overrides[key] = entry;
+        var manualIndex = findManual({ key: key });
+        if (manualIndex !== -1) {
+          state.manual[manualIndex].qty = parsed.qty;
+          state.manual[manualIndex].unit = parsed.unit;
+        }
+        touch();
+        return { ok: true, name: parsed.name };
+      },
+      setChecked: function (ref, on) {
+        if (!ref) return false;
+        var checked = !!on;
+        if (ref.origin === "manual") {
+          var index = findManual(ref);
+          if (index === -1) return false;
+          state.manual[index].checked = checked;
+          touch();
+          return true;
+        }
+        var key = identityKey(ref.key);
+        if (!key) return false;
+        var prev = state.overrides[key] || {};
+        prev.checked = checked;
+        state.overrides[key] = prev;
+        var manualIndex = findManual({ key: key });
+        if (manualIndex !== -1) state.manual[manualIndex].checked = checked;
+        touch();
+        return true;
+      },
+      remove: function (ref) {
+        if (!ref) return false;
+        if (ref.origin === "manual") {
+          var index = findManual(ref);
+          if (index === -1) return false;
+          state.manual.splice(index, 1);
+          touch();
+          return true;
+        }
+        var key = identityKey(ref.key);
+        if (!key) return false;
+        var prev = state.overrides[key] || {};
+        prev.removed = true;
+        prev.checked = false;
+        state.overrides[key] = prev;
+        dropManualKey(key);
+        touch();
+        return true;
+      },
+      clearChecked: function (refs) {
+        var list = Array.isArray(refs) ? refs : [];
+        if (!list.length) return false;
+        list.forEach(function (ref) {
+          if (!ref) return;
+          if (ref.origin === "manual") {
+            var index = findManual(ref);
+            if (index !== -1) state.manual.splice(index, 1);
+            return;
+          }
+          var key = identityKey(ref.key);
+          if (!key) return;
+          var prev = state.overrides[key] || {};
+          prev.removed = true;
+          prev.checked = false;
+          state.overrides[key] = prev;
+          dropManualKey(key);
+        });
+        touch();
+        return true;
+      },
+    };
+  }
+
+  function quoteLine(name, parts) {
+    var pricesApi = global.AshpazPrices;
+    if (!pricesApi || typeof pricesApi.priceParts !== "function") {
+      return { priceLabel: "", priceSource: "", priceToman: 0, priceUnitOnly: false, productUrl: "" };
+    }
+    var priced = pricesApi.priceParts(name, parts);
+    if (!priced) return { priceLabel: "", priceSource: "", priceToman: 0, priceUnitOnly: false, productUrl: "" };
+    var unitOnly = !!priced.unitOnly;
+    return {
+      priceLabel: priced.label || "",
+      priceSource: priced.source || "",
+      priceToman: !unitOnly && priced.toman > 0 ? priced.toman : 0,
+      priceUnitOnly: unitOnly,
+      productUrl: priced.productUrl || "",
+    };
+  }
+
+  function listTotal(items) {
+    var sum = 0;
+    var count = 0;
+    var sawStale = false;
+    items.forEach(function (item) {
+      if (!item || item.priceUnitOnly || !(item.priceToman > 0)) return;
+      sum += item.priceToman;
+      count += 1;
+      if (item.priceSource === "stale" || item.priceSource === "estimate") sawStale = true;
+    });
+    if (!count) return { toman: 0, label: "" };
+    var rounded = Math.round(sum);
+    var pricesApi = global.AshpazPrices;
+    var core = "";
+    if (pricesApi && typeof pricesApi.labelFor === "function") {
+      core = pricesApi.labelFor(sawStale ? "estimate" : "okala", rounded);
+    }
+    if (!core) return { toman: rounded, label: "" };
+    var label = "جمع " + core;
+    if (sawStale && label.indexOf("کهنه") === -1) label += " · کهنه";
+    return { toman: rounded, label: label };
+  }
+
+  function editFields(parts) {
+    if (parts.length === 1 && parts[0].qty != null) {
+      return { editQty: roundQty(parts[0].qty), editUnit: parts[0].unit || "" };
+    }
+    return { editQty: null, editUnit: "" };
+  }
+
+  function pushShopItem(cat, row) {
+    var priced = quoteLine(row.name, row.parts);
+    var edit = editFields(row.parts);
+    cat.items.push({
+      key: row.key,
+      id: row.id || "",
+      origin: row.origin,
+      name: row.name,
+      userOwned: !!row.userOwned,
+      checked: !!row.checked,
+      quantityLabel: quantityLabel(row.parts, row.bare),
+      meta: row.meta,
+      editQty: edit.editQty,
+      editUnit: edit.editUnit,
+      priceLabel: priced.priceLabel,
+      priceSource: priced.priceSource,
+      priceToman: priced.priceToman,
+      priceUnitOnly: priced.priceUnitOnly,
+      productUrl: priced.productUrl,
+    });
+  }
+
+  function buildShoppingList(pantryItems, week, householdSize, extras) {
     var people = listHousehold(householdSize);
     var pantryNames = [];
     var pantryKeys = [];
@@ -737,6 +1144,39 @@
       });
     });
 
+    var extra = sanitizeExtras(extras);
+    var manualByKey = Object.create(null);
+    extra.manual.forEach(function (row) {
+      manualByKey[identityKey(row.name)] = row;
+    });
+    var removedCount = 0;
+    Object.keys(extra.overrides).forEach(function (key) {
+      var bucket = buckets[key];
+      var over = extra.overrides[key];
+      if (!bucket || !over) return;
+      if (over.removed) {
+        bucket.removed = true;
+        removedCount += 1;
+        return;
+      }
+      if (over.checked) bucket.checked = true;
+      if (over.name) bucket.name = over.name;
+      if (over.qtyOwned && over.qty != null) {
+        bucket.userOwned = true;
+        bucket.parts = [{ qty: over.qty, unit: over.unit || "" }];
+        bucket.bare = 0;
+      }
+    });
+    Object.keys(manualByKey).forEach(function (key) {
+      var bucket = buckets[key];
+      var manual = manualByKey[key];
+      if (!bucket || bucket.removed || bucket.userOwned || manual.qty == null) return;
+      bucket.userOwned = true;
+      bucket.parts = [{ qty: manual.qty, unit: manual.unit || "" }];
+      bucket.bare = 0;
+      bucket.fromManual = true;
+    });
+
     var grouped = CATEGORIES.map(function (cat) {
       return { id: cat.id, label: cat.label, items: [] };
     });
@@ -744,42 +1184,67 @@
     grouped.forEach(function (cat) {
       byId[cat.id] = cat;
     });
+    var visible = Object.create(null);
     order.forEach(function (key) {
       var bucket = buckets[key];
+      if (!bucket || bucket.removed) return;
+      visible[key] = true;
+      var manual = manualByKey[key];
+      if (manual && manual.checked) bucket.checked = true;
+      var meta = metaLine(bucket.days, bucket.titles);
+      if (bucket.userOwned) meta = meta ? meta + " · " + COPY.ownedMeta : COPY.ownedMeta;
       var cat = byId[categorize(bucket.name)] || byId.other;
-      var priced = null;
-      var pricesApi = global.AshpazPrices;
-      if (pricesApi && typeof pricesApi.priceParts === "function") {
-        priced = pricesApi.priceParts(bucket.name, bucket.parts);
-      }
-      cat.items.push({
+      pushShopItem(cat, {
+        key: key,
+        id: manual ? manual.id : "",
+        origin: "plan",
         name: bucket.name,
-        quantityLabel: quantityLabel(bucket.parts, bucket.bare),
-        meta: metaLine(bucket.days, bucket.titles),
-        priceLabel: priced && priced.label ? priced.label : "",
-        priceSource: priced && priced.source ? priced.source : "",
-        productUrl: priced && priced.productUrl ? priced.productUrl : "",
+        parts: bucket.parts,
+        bare: bucket.bare,
+        meta: meta,
+        userOwned: bucket.userOwned,
+        checked: bucket.checked,
       });
     });
+    extra.manual.forEach(function (row) {
+      var key = identityKey(row.name);
+      if (!key || visible[key]) return;
+      var parts = row.qty != null ? [{ qty: row.qty, unit: row.unit || "" }] : [];
+      var cat = byId[categorize(row.name)] || byId.other;
+      pushShopItem(cat, {
+        key: key,
+        id: row.id,
+        origin: "manual",
+        name: row.name,
+        parts: parts,
+        bare: row.qty == null ? 1 : 0,
+        meta: COPY.manualMeta,
+        userOwned: true,
+        checked: row.checked,
+      });
+    });
+    var flat = [];
     grouped.forEach(function (cat) {
       cat.items.sort(function (a, b) {
         return a.name.localeCompare(b.name, "fa");
+      });
+      cat.items.forEach(function (item) {
+        flat.push(item);
       });
     });
     var categories = grouped.filter(function (cat) {
       return cat.items.length > 0;
     });
-    var itemCount = 0;
-    categories.forEach(function (cat) {
-      itemCount += cat.items.length;
-    });
+    var itemCount = flat.length;
+    var total = listTotal(flat);
 
     var pantryEmpty = pantryNames.length === 0;
     var state = "covered";
-    if (planEmpty && pantryEmpty) state = "empty-both";
-    else if (planEmpty) state = "empty-plan";
-    else if (itemCount > 0 && pantryEmpty) state = "list-pantry-empty";
+    if (itemCount > 0 && pantryEmpty && !planEmpty) state = "list-pantry-empty";
     else if (itemCount > 0) state = "list";
+    else if (planEmpty && pantryEmpty) state = "empty-both";
+    else if (planEmpty) state = "empty-plan";
+    else if (removedCount > 0) state = "cleared";
     else if (!hadIngredients) state = "missing";
 
     return {
@@ -790,6 +1255,8 @@
       itemCount: itemCount,
       categories: categories,
       skipped: skipped,
+      totalLabel: total.label,
+      totalToman: total.toman,
     };
   }
 
@@ -826,6 +1293,11 @@
       lines.push("");
       lines.push(COPY.missingHelp);
       lines.push("");
+    } else if (result.state === "cleared") {
+      lines.push(COPY.clearedTitle + ".");
+      lines.push("");
+      lines.push(COPY.clearedHelp);
+      lines.push("");
     } else if (result.state === "covered") {
       lines.push(COPY.coveredTitle + ".");
       lines.push("");
@@ -844,6 +1316,10 @@
       });
       lines.push("");
     });
+    if (result.totalLabel) {
+      lines.push(result.totalLabel);
+      lines.push("");
+    }
     if (result.skipped.length) {
       lines.push(COPY.skipped);
       lines.push("");
@@ -879,15 +1355,16 @@
     return plan.week();
   }
 
-  function currentList(hooks) {
+  function currentList(hooks, extras) {
     var people = hooks && typeof hooks.household === "function" ? hooks.household() : undefined;
-    return buildShoppingList(readPantry(hooks), readWeek(hooks), people);
+    return buildShoppingList(readPantry(hooks), readWeek(hooks), people, extras);
   }
 
   function emptyCopy(result) {
     if (result.state === "empty-both") return { title: COPY.emptyBothTitle, help: COPY.emptyBothHelp };
     if (result.state === "empty-plan") return { title: COPY.emptyPlanTitle, help: COPY.emptyPlanHelp };
     if (result.state === "missing") return { title: COPY.missingTitle, help: COPY.missingHelp };
+    if (result.state === "cleared") return { title: COPY.clearedTitle, help: COPY.clearedHelp };
     if (result.state === "covered") return { title: COPY.coveredTitle, help: COPY.coveredHelp };
     return null;
   }
@@ -908,15 +1385,31 @@
       ul.className = "shop-items";
       cat.items.forEach(function (item) {
         var li = doc.createElement("li");
-        li.className = "shop-item";
+        li.className = item.checked ? "shop-item is-checked" : "shop-item";
         li.dataset.testid = "shop-item";
+        li.dataset.key = item.key;
+        li.dataset.origin = item.origin || "plan";
+
+        var checkLabel = doc.createElement("label");
+        checkLabel.className = "shop-check";
+        var box = doc.createElement("input");
+        box.type = "checkbox";
+        box.checked = !!item.checked;
+        box.dataset.testid = "shop-item-check";
+        box.dataset.key = item.key;
+        box.dataset.origin = item.origin || "plan";
+        box.dataset.itemId = item.id || "";
+        var checkText = doc.createElement("span");
+        checkText.className = "sr-only";
+        checkText.textContent = COPY.bought;
+        checkLabel.append(box, checkText);
 
         var name = doc.createElement("span");
         name.className = "shop-item-name";
         name.dataset.testid = "shop-item-name";
         name.textContent = item.name;
 
-        li.append(name);
+        li.append(checkLabel, name);
         if (item.quantityLabel) {
           var qty = doc.createElement("span");
           qty.className = "shop-item-qty";
@@ -936,9 +1429,30 @@
           price.className = "shop-item-price";
           price.dataset.testid = "shop-item-price";
           price.dataset.source = item.priceSource || "";
+          price.setAttribute("data-source", item.priceSource || "");
           price.textContent = item.priceLabel;
           li.append(price);
         }
+        var actions = doc.createElement("span");
+        actions.className = "shop-item-actions";
+        var editBtn = doc.createElement("button");
+        editBtn.type = "button";
+        editBtn.className = "shop-mini";
+        editBtn.dataset.testid = "shop-item-edit";
+        editBtn.dataset.key = item.key;
+        editBtn.dataset.origin = item.origin || "plan";
+        editBtn.dataset.itemId = item.id || "";
+        editBtn.textContent = COPY.edit;
+        var removeBtn = doc.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.className = "shop-mini";
+        removeBtn.dataset.testid = "shop-item-remove";
+        removeBtn.dataset.key = item.key;
+        removeBtn.dataset.origin = item.origin || "plan";
+        removeBtn.dataset.itemId = item.id || "";
+        removeBtn.textContent = COPY.remove;
+        actions.append(editBtn, removeBtn);
+        li.append(actions);
         ul.append(li);
       });
       section.append(heading, ul);
@@ -990,6 +1504,19 @@
     }
     if (els.status) {
       els.status.textContent = result.itemCount ? toPersianDigits(result.itemCount) + " " + COPY.countSuffix : "";
+    }
+    if (els.total) {
+      els.total.hidden = !result.totalLabel;
+      els.total.textContent = result.totalLabel || "";
+    }
+    if (els.clearChecked) {
+      var checked = false;
+      (result.categories || []).forEach(function (cat) {
+        (cat.items || []).forEach(function (item) {
+          if (item.checked) checked = true;
+        });
+      });
+      els.clearChecked.hidden = !checked;
     }
   }
 
@@ -1086,6 +1613,12 @@
     var choiceList = doc.getElementById("shop-sheet-list");
     if (!section || !listEl || !emptyEl) return;
 
+    var model = hooks.shopping;
+    if (!model || typeof model.snapshot !== "function") model = createShopping({ storage: hooks.storage });
+    api.active = model;
+    var lastResult = null;
+    var editing = null;
+
     var els = {
       section: section,
       list: listEl,
@@ -1098,25 +1631,72 @@
       skippedList: doc.getElementById("shop-skipped-list"),
       count: doc.getElementById("shop-count"),
       status: doc.getElementById("shop-status"),
+      total: doc.getElementById("shop-total"),
+      clearChecked: doc.getElementById("shop-clear-checked"),
     };
     var openBtn = doc.getElementById("shop-open");
     var exportBtn = doc.getElementById("shop-export");
     var okalaBtn = doc.getElementById("shop-okala");
     var closeBtn = doc.getElementById("shop-sheet-close");
     var cancelBtn = doc.getElementById("shop-sheet-cancel");
+    var addForm = doc.getElementById("shop-add");
+    var nameInput = doc.getElementById("shop-add-name");
+    var qtyInput = doc.getElementById("shop-add-qty");
+    var unitInput = doc.getElementById("shop-add-unit");
+    var submitBtn = doc.getElementById("shop-add-submit");
+    var addCancel = doc.getElementById("shop-add-cancel");
     var onChoice = null;
 
+    function listed() {
+      return currentList(hooks, model.snapshot());
+    }
+
+    function say(reason) {
+      if (!els.status || !reason) return;
+      var text = {
+        empty: COPY.needName,
+        long: COPY.nameLong,
+        qty: COPY.badQty,
+        duplicate: COPY.duplicate,
+        full: COPY.full,
+        missing: COPY.needName,
+        added: COPY.added,
+        saved: COPY.saved,
+        removed: COPY.removed,
+        cleared: COPY.cleared,
+      }[reason];
+      if (text) els.status.textContent = text;
+    }
+
+    function qtyField(value) {
+      if (value == null || !isFinite(value)) return "";
+      var rounded = roundQty(value);
+      if (Math.abs(rounded - Math.round(rounded)) < 0.001) return toPersianDigits(String(Math.round(rounded)));
+      var bits = String(rounded).split(".");
+      return toPersianDigits(bits[0]) + "٫" + toPersianDigits(bits[1]);
+    }
+
+    function stopEdit() {
+      editing = null;
+      if (nameInput) nameInput.value = "";
+      if (qtyInput) qtyInput.value = "";
+      if (unitInput) unitInput.value = "";
+      if (submitBtn) submitBtn.textContent = COPY.add;
+      if (addCancel) addCancel.hidden = true;
+    }
+
     function render() {
-      var result = currentList(hooks);
+      var result = listed();
+      lastResult = result;
       applyResult(doc, els, result);
       var scaleEl = doc.getElementById("shop-scale");
       if (scaleEl) {
         var shared = global.AshpazHousehold;
         var people = listHousehold(hooks && typeof hooks.household === "function" ? hooks.household() : undefined);
-        scaleEl.textContent =
-          shared && typeof shared.peoplePhrase === "function"
-            ? "مقدارها " + shared.peoplePhrase(people) + " حساب شده."
-            : "";
+        var phrase = shared && typeof shared.peoplePhrase === "function" ? shared.peoplePhrase(people) : "";
+        scaleEl.textContent = phrase
+          ? "مقدار وعده‌ها " + phrase + " حساب شده. مقداری که خودتان می‌نویسید با تعداد نفرات عوض نمی‌شود."
+          : "مقدار وعده‌ها با تعداد نفرات حساب شده. مقداری که خودتان می‌نویسید با تعداد نفرات عوض نمی‌شود.";
       }
     }
 
@@ -1171,7 +1751,7 @@
     }
 
     function doDownload() {
-      var text = markdownDocument(currentList(hooks));
+      var text = markdownDocument(listed());
       if (typeof hooks.download === "function") {
         hooks.download(text, COPY.filename);
         return;
@@ -1190,7 +1770,7 @@
     }
 
     function openOkala() {
-      var result = currentList(hooks);
+      var result = listed();
       var rows = flatItems(result);
       var pricesApi = global.AshpazPrices;
       var assist =
@@ -1334,26 +1914,154 @@
       if (handler && id) handler(id);
     });
 
+    function formFields() {
+      return {
+        name: nameInput ? nameInput.value : "",
+        qty: qtyInput ? qtyInput.value : "",
+        unit: unitInput ? unitInput.value : "",
+      };
+    }
+
+    function clashes(name, except) {
+      var key = identityKey(displayName(name));
+      if (!key) return false;
+      var rows = flatItems(listed());
+      for (var i = 0; i < rows.length; i += 1) {
+        if (rows[i].key !== key) continue;
+        if (!except) return true;
+        if (except.origin === "manual" && rows[i].origin === "manual" && rows[i].id === except.id) continue;
+        if (except.origin !== "manual" && rows[i].origin !== "manual" && rows[i].key === except.key) continue;
+        return true;
+      }
+      return false;
+    }
+
+    function findShown(ref) {
+      var rows = flatItems(lastResult || { categories: [] });
+      for (var i = 0; i < rows.length; i += 1) {
+        var row = rows[i];
+        if (ref.origin === "manual") {
+          if ((ref.id && row.id === ref.id) || (row.origin === "manual" && row.key === ref.key)) return row;
+        } else if (row.origin !== "manual" && row.key === ref.key) return row;
+      }
+      return null;
+    }
+
+    function startEdit(ref) {
+      var row = findShown(ref);
+      if (!row) return;
+      editing = { origin: row.origin, key: row.key, id: row.id || "" };
+      if (nameInput) nameInput.value = row.name;
+      if (qtyInput) qtyInput.value = qtyField(row.editQty);
+      if (unitInput) unitInput.value = row.editUnit || "";
+      if (submitBtn) submitBtn.textContent = COPY.save;
+      if (addCancel) addCancel.hidden = false;
+      if (nameInput && typeof nameInput.focus === "function") nameInput.focus();
+    }
+
+    if (addForm) {
+      addForm.addEventListener("submit", function (event) {
+        if (event && event.preventDefault) event.preventDefault();
+        var fields = formFields();
+        if (clashes(fields.name, editing)) {
+          say("duplicate");
+          return;
+        }
+        var outcome = editing ? model.update(editing, fields) : model.add(fields);
+        if (!outcome || !outcome.ok) {
+          say(outcome && outcome.reason);
+          return;
+        }
+        var reason = editing ? "saved" : "added";
+        stopEdit();
+        say(reason);
+      });
+    }
+    if (addCancel) {
+      addCancel.addEventListener("click", function () {
+        stopEdit();
+      });
+    }
+    if (els.clearChecked) {
+      els.clearChecked.addEventListener("click", function () {
+        var refs = flatItems(lastResult || { categories: [] })
+          .filter(function (item) {
+            return item.checked;
+          })
+          .map(function (item) {
+            return { origin: item.origin, key: item.key, id: item.id };
+          });
+        if (!refs.length) return;
+        model.clearChecked(refs);
+        stopEdit();
+        say("cleared");
+      });
+    }
+
+    doc.addEventListener("change", function (event) {
+      var box = matchTestId(event && event.target, "shop-item-check");
+      if (!box) return;
+      model.setChecked(rowRef(box), !!box.checked);
+    });
+
+    doc.addEventListener("click", function (event) {
+      var edit = matchTestId(event && event.target, "shop-item-edit");
+      if (edit) {
+        startEdit(rowRef(edit));
+        return;
+      }
+      var remove = matchTestId(event && event.target, "shop-item-remove");
+      if (!remove) return;
+      if (model.remove(rowRef(remove))) {
+        stopEdit();
+        say("removed");
+      }
+    });
+
+    function rowRef(node) {
+      return {
+        key: nodeValue(node, "key", "data-key"),
+        origin: nodeValue(node, "origin", "data-origin") || "plan",
+        id: nodeValue(node, "itemId", "data-item-id"),
+      };
+    }
+
     doc.addEventListener("ashpaz-pantry-changed", render);
     doc.addEventListener("ashpaz-plan-changed", render);
     doc.addEventListener("ashpaz-prices-changed", render);
+    doc.addEventListener("ashpaz-shopping-changed", render);
+    if (typeof model.subscribe === "function") model.subscribe(render);
     watchPrintEnd(doc);
     render();
   }
 
+  function browserStorage() {
+    try {
+      if (global.localStorage) return global.localStorage;
+    } catch (err) {
+      return createMemoryStorage();
+    }
+    return createMemoryStorage();
+  }
+
   function boot() {
-    api.active = true;
-    mount(document);
+    var model = createShopping({ storage: browserStorage() });
+    api.active = model;
+    mount(document, { shopping: model });
   }
 
   var api = {
     COPY: COPY,
     CATEGORIES: CATEGORIES,
+    STORAGE_KEY: STORAGE_KEY,
     buildShoppingList: buildShoppingList,
     lineUsesChip: lineUsesChip,
     markdownDocument: markdownDocument,
     parseIngredient: parseIngredient,
     expandLine: expandLine,
+    createShopping: createShopping,
+    createMemoryStorage: createMemoryStorage,
+    sanitizeExtras: sanitizeExtras,
     mount: mount,
     setPrintMode: setPrintMode,
   };

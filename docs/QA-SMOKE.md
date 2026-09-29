@@ -274,6 +274,7 @@ After the week has at least one meal (step 5) and the pantry has chips (step 2).
 - «مواد خرید» on the plan scrolls to the shopping list.
 - Rows are ingredients on every planned meal (صبحانه، ناهار، شام) that are not already chips. A chip covers the usual spelling variants (spacing, ZWNJ, Arabic/Persian letters). Filling all ۲۱ slots still drops chips you already have and adds quantities across those slots.
 - If a stored line has a quantity, the row shows it, scaled for تعداد نفرات (step 4d). Rows are grouped (سبزی و صیفی، پروتئین، …). The section says the amounts were counted for that headcount.
+- Type a Persian name, an optional مقدار and واحد, and «افزودن». The row appears without «برنامه ۷ روزه» or «پیشنهاد دستور». «ویرایش» changes the name or مقدار. «حذف» removes it. «خریدم» then «پاک کردن تیک‌خورده‌ها» clears the checked rows. Reload keeps the manual row (Postgres when api is up; otherwise `ashpaz-khoone.shopping.v1`). The plan rows are still there. A مقدار you saved does not change when تعداد نفرات changes. A plan row you did not edit still does.
 - «چاپ / خروجی» on that section → «چاپ» is a white RTL page of the list only. The week grid and the pantry are hidden.
 - «دانلود مارک‌داون» saves `مواد-خرید.md` with Persian headings.
 - With no meal left on the week, the section says «برنامه هفته خالی است».
@@ -287,7 +288,7 @@ With `db` and `api` healthy. No API key is required. This step is part of the v0
 
 - Add a chip and a week budget. Turn on one diet chip (step 4b). Set تعداد نفرات to something other than ۴ (step 4d). Reload http://localhost:8080. The chip, the budget, the diet chip, and the headcount are still there.
 - Assign a شام and a صبحانه, and mark «خورده شد» on one of them. Reload. Both meals and that mark are still there. The other meal is not marked eaten.
-- In this browser, `localStorage` holds `ashpaz-khoone.pantry.v1` (chips, budget, `filters`, `household`) and `ashpaz-khoone.plan.v1` (the week, including «خورده شد» and `servings` on recipes that have it). The browser id is `ashpaz-khoone.local-user.v1`. None of those values is `GAP_CODE_API_KEY`.
+- In this browser, `localStorage` holds `ashpaz-khoone.pantry.v1` (chips, budget, `filters`, `household`), `ashpaz-khoone.plan.v1` (the week, including «خورده شد» and `servings` on recipes that have it), and `ashpaz-khoone.shopping.v1` after a manual shopping row (name, مقدار, and any plan-row edit). The browser id is `ashpaz-khoone.local-user.v1`. None of those values is `GAP_CODE_API_KEY`.
 - Stop the api container and reload. The same browser still shows that cached pantry and plan. Start api again and reload. The saved Postgres rows are back, including the diet filters.
 
 ```bash
@@ -307,8 +308,8 @@ With `OKALA_LIVE=0` (or when the live catalog fails and the price book is empty)
 - After refresh, a matched staple such as برنج shows an اُکالا badge on the recipe card, the week budget, and the shopping row. A recipe that mixes matched and unmatched lines says «بخشی از اُکالا». A line with no Okala price still says «حدود».
 - Unmatched names appear under the button in Persian («در اُکالا پیدا نشد»).
 - «تعداد نفرات» scales the quantity once. Okala unit price times that quantity is the line cost. Doubling headcount doubles that line; it is not scaled again.
-- On «مواد خرید», each matched row shows the Okala line total. A stale row keeps the last unit price and says «کهنه».
-- «سبد اُکالا» copies up to ten names for Okala’s list search, and can open the store homepage or a product page. The basket is not prefilled here. Payment is not completed here. The status line stays Persian.
+- On «مواد خرید», each matched row shows the Okala line total. A stale row that still converts shows «حدود … تومان · کهنه»; otherwise it keeps the last unit price and says «کهنه». «جمع» adds those line totals. A row with no price is left blank. A manual name that matches the catalog picks up the same label after «به‌روزرسانی قیمت‌ها».
+- «سبد اُکالا» copies up to ten names for Okala’s list search, including a manual name, and can open the store homepage or a product page. The basket is not prefilled here. Payment is not completed here. The status line stays Persian.
 
 Shell, no live network when `OKALA_LIVE=0`:
 

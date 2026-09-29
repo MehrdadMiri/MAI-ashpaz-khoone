@@ -295,6 +295,7 @@
             </div>
             <div class="shop-toolbar">
               <button type="button" id="shop-okala" data-testid="shop-okala">سبد اُکالا</button>
+              <button type="button" id="shop-clear-checked" data-testid="shop-clear-checked" hidden>پاک کردن تیک‌خورده‌ها</button>
               <button
                 type="button"
                 id="shop-export"
@@ -306,6 +307,44 @@
               </button>
             </div>
           </div>
+          <form id="shop-add" class="add-form shop-add" autocomplete="off" data-testid="shop-add">
+            <label class="sr-only" for="shop-add-name">نام ماده</label>
+            <input
+              id="shop-add-name"
+              type="text"
+              maxlength="40"
+              placeholder="نام ماده"
+              autocomplete="off"
+              data-testid="shop-add-name"
+            />
+            <label class="sr-only" for="shop-add-qty">مقدار</label>
+            <input
+              id="shop-add-qty"
+              type="text"
+              inputmode="decimal"
+              maxlength="12"
+              placeholder="مقدار"
+              autocomplete="off"
+              data-testid="shop-add-qty"
+            />
+            <label class="sr-only" for="shop-add-unit">واحد</label>
+            <select id="shop-add-unit" data-testid="shop-add-unit">
+              <option value="">بدون واحد</option>
+              <option value="گرم">گرم</option>
+              <option value="کیلو">کیلو</option>
+              <option value="کیلوگرم">کیلوگرم</option>
+              <option value="عدد">عدد</option>
+              <option value="لیتر">لیتر</option>
+              <option value="میلی‌لیتر">میلی‌لیتر</option>
+              <option value="پیمانه">پیمانه</option>
+              <option value="بسته">بسته</option>
+              <option value="قاشق">قاشق</option>
+              <option value="مثقال">مثقال</option>
+            </select>
+            <button type="submit" id="shop-add-submit" data-testid="shop-add-submit">افزودن</button>
+            <button type="button" id="shop-add-cancel" data-testid="shop-add-cancel" hidden>انصراف</button>
+          </form>
+          <p id="shop-total" class="shop-total" data-testid="shop-total" hidden></p>
           <p id="shop-status" class="status" role="status" aria-live="polite" data-testid="shop-status"></p>
           <div id="shop-empty" class="empty shop-empty" data-testid="shop-empty">
             <div class="empty-art" aria-hidden="true">
@@ -333,7 +372,7 @@
       </main>
 
       <footer class="footer">
-        <span>مواد، بودجه، تعداد نفرات و برنامه در همین مرورگر می‌ماند. مواد خرید از روی آن‌ها ساخته می‌شود.</span>
+        <span>مواد، بودجه، تعداد نفرات و برنامه در همین مرورگر می‌ماند. مواد خرید از روی برنامه ساخته می‌شود و ماده‌های دستی جدا ذخیره می‌شوند.</span>
         <a href="/health">سلامت سرویس</a>
         <p class="install-note" id="install-note" data-testid="install-note">
           برای نصب برنامه، در منوی مرورگر «افزودن به صفحهٔ اصلی» را بزنید.

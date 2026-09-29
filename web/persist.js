@@ -1,8 +1,8 @@
-/* Server persistence for pantry chips and the 7-day plan.
+/* Server persistence for pantry chips, the 7-day plan, and shopping extras.
    The browser keeps a random local user id in localStorage and a cookie.
-   That id is not an account. Saves go to PUT /api/pantry and PUT /api/plan.
-   localStorage remains the copy used when the api or database is down.
-   This file does not call GapGPT and never sees an API key. */
+   That id is not an account. Saves go to PUT /api/pantry, PUT /api/plan,
+   and PUT /api/shopping. localStorage remains the copy used when the api
+   or database is down. This file does not call GapGPT and never sees an API key. */
 (function (global) {
   "use strict";
 
@@ -163,6 +163,58 @@
     return copyHousehold(snapshot) !== 4;
   }
 
+  function copyShopping(snapshot) {
+    var manual = [];
+    var source = snapshot && Array.isArray(snapshot.manual) ? snapshot.manual : [];
+    source.forEach(function (item) {
+      if (!item || typeof item !== "object" || typeof item.name !== "string") return;
+      var row = {
+        id: typeof item.id === "string" ? item.id : "",
+        name: item.name,
+        qty: typeof item.qty === "number" && isFinite(item.qty) ? item.qty : null,
+        unit: typeof item.unit === "string" ? item.unit : "",
+        checked: item.checked === true,
+      };
+      manual.push(row);
+    });
+    var overrides = {};
+    var raw = snapshot && snapshot.overrides;
+    if (raw && typeof raw === "object") {
+      Object.keys(raw).forEach(function (key) {
+        var value = raw[key];
+        if (!value || typeof value !== "object") return;
+        overrides[key] = {
+          name: typeof value.name === "string" ? value.name : "",
+          qty: typeof value.qty === "number" && isFinite(value.qty) ? value.qty : null,
+          unit: typeof value.unit === "string" ? value.unit : "",
+          qtyOwned: value.qtyOwned === true,
+          removed: value.removed === true,
+          checked: value.checked === true,
+        };
+      });
+    }
+    return { manual: manual, overrides: overrides };
+  }
+
+  function hasShopping(snapshot) {
+    if (!snapshot) return false;
+    if (Array.isArray(snapshot.manual) && snapshot.manual.length) return true;
+    var overrides = snapshot.overrides;
+    if (!overrides || typeof overrides !== "object") return false;
+    return Object.keys(overrides).length > 0;
+  }
+
+  function emptyMeta() {
+    return {
+      pantryRev: 0,
+      pantrySyncedRev: 0,
+      planRev: 0,
+      planSyncedRev: 0,
+      shoppingRev: 0,
+      shoppingSyncedRev: 0,
+    };
+  }
+
   function hasPlan(snapshot) {
     if (!snapshot) return false;
     if (Array.isArray(snapshot.recipes) && snapshot.recipes.length) return true;
@@ -221,21 +273,22 @@
     var userId = resolveUserId();
     var pantryEdits = 0;
     var planEdits = 0;
+    var shoppingEdits = 0;
 
     function loadMeta() {
-      var empty = { pantryRev: 0, pantrySyncedRev: 0, planRev: 0, planSyncedRev: 0 };
+      var empty = emptyMeta();
       try {
         var raw = storage.getItem(META_KEY);
         if (!raw) return empty;
         var parsed = JSON.parse(raw);
         if (!parsed || typeof parsed !== "object") return empty;
-        ["pantryRev", "pantrySyncedRev", "planRev", "planSyncedRev"].forEach(function (key) {
+        Object.keys(empty).forEach(function (key) {
           var value = parsed[key];
           empty[key] = typeof value === "number" && isFinite(value) && value >= 0 ? Math.floor(value) : 0;
         });
         return empty;
       } catch (err) {
-        return { pantryRev: 0, pantrySyncedRev: 0, planRev: 0, planSyncedRev: 0 };
+        return emptyMeta();
       }
     }
 
@@ -449,6 +502,15 @@
       });
     });
 
+    var shoppingQueue = createQueue(function (job) {
+      return putJson("/shopping", { shopping: job.snapshot }).then(function () {
+        var rev = meta.shoppingRev || 0;
+        if (rev <= job.rev) meta.shoppingSyncedRev = rev;
+        else if ((meta.shoppingSyncedRev || 0) < job.rev) meta.shoppingSyncedRev = job.rev;
+        writeMeta();
+      });
+    });
+
     function savePantry(snapshot) {
       pantryEdits += 1;
       meta.pantryRev = (meta.pantryRev || 0) + 1;
@@ -463,12 +525,23 @@
       planQueue.push({ snapshot: copyPlan(snapshot), rev: meta.planRev });
     }
 
+    function saveShopping(snapshot) {
+      shoppingEdits += 1;
+      meta.shoppingRev = (meta.shoppingRev || 0) + 1;
+      writeMeta();
+      shoppingQueue.push({ snapshot: copyShopping(snapshot), rev: meta.shoppingRev });
+    }
+
     function queuePantry(snapshot) {
       pantryQueue.push({ snapshot: copyPantry(snapshot), rev: meta.pantryRev || 0 });
     }
 
     function queuePlan(snapshot) {
       planQueue.push({ snapshot: copyPlan(snapshot), rev: meta.planRev || 0 });
+    }
+
+    function queueShopping(snapshot) {
+      shoppingQueue.push({ snapshot: copyShopping(snapshot), rev: meta.shoppingRev || 0 });
     }
 
     function alignPantry() {
@@ -482,6 +555,13 @@
       var rev = (meta.planRev || 0) + 1;
       meta.planRev = rev;
       meta.planSyncedRev = rev;
+      writeMeta();
+    }
+
+    function alignShopping() {
+      var rev = (meta.shoppingRev || 0) + 1;
+      meta.shoppingRev = rev;
+      meta.shoppingSyncedRev = rev;
       writeMeta();
     }
 
@@ -537,8 +617,34 @@
         });
     }
 
+    function hydrateShopping(model) {
+      if (!model || typeof model.snapshot !== "function" || typeof model.replace !== "function") {
+        return Promise.resolve();
+      }
+      var mark = shoppingEdits;
+      var local = model.snapshot();
+      if ((meta.shoppingRev || 0) > (meta.shoppingSyncedRev || 0)) {
+        queueShopping(local);
+        return Promise.resolve();
+      }
+      return getJson("/shopping")
+        .then(function (body) {
+          if (shoppingEdits !== mark || (meta.shoppingRev || 0) > (meta.shoppingSyncedRev || 0)) return;
+          if (body.found) {
+            model.replace(body.shopping || {});
+            alignShopping();
+            notify("ashpaz-shopping-changed", { source: "remote" });
+            return;
+          }
+          if (hasShopping(local)) queueShopping(local);
+        })
+        .catch(function () {
+          /* Offline or a bad response: the localStorage shopping list stays. */
+        });
+    }
+
     function flush() {
-      return Promise.all([pantryQueue.flush(), planQueue.flush()]);
+      return Promise.all([pantryQueue.flush(), planQueue.flush(), shoppingQueue.flush()]);
     }
 
     return {
@@ -547,8 +653,13 @@
       },
       savePantry: savePantry,
       savePlan: savePlan,
-      hydrate: function (pantryModel, planModel) {
-        return Promise.all([hydratePantry(pantryModel), hydratePlan(planModel)]).then(flush);
+      saveShopping: saveShopping,
+      hydrate: function (pantryModel, planModel, shoppingModel) {
+        return Promise.all([
+          hydratePantry(pantryModel),
+          hydratePlan(planModel),
+          hydrateShopping(shoppingModel),
+        ]).then(flush);
       },
       flush: flush,
     };
@@ -612,9 +723,13 @@
     api.onPlan = function (snapshot) {
       session.savePlan(snapshot);
     };
+    api.onShopping = function (snapshot) {
+      session.saveShopping(snapshot);
+    };
     var pantryApi = global.AshpazPantry;
     var planApi = global.AshpazPlan;
-    session.hydrate(pantryApi && pantryApi.active, planApi && planApi.active);
+    var shopApi = global.AshpazShop;
+    session.hydrate(pantryApi && pantryApi.active, planApi && planApi.active, shopApi && shopApi.active);
     watchUnload(session);
   }
 
@@ -625,6 +740,7 @@
     createPersist: createPersist,
     onPantry: null,
     onPlan: null,
+    onShopping: null,
     active: null,
   };
 

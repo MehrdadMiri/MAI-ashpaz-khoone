@@ -292,6 +292,15 @@ function fakeDocument() {
     "shop-sheet-close",
     "shop-sheet-cancel",
     "shop-title",
+    "shop-scale",
+    "shop-add",
+    "shop-add-name",
+    "shop-add-qty",
+    "shop-add-unit",
+    "shop-add-submit",
+    "shop-add-cancel",
+    "shop-clear-checked",
+    "shop-total",
     "week-grid",
     "plan-sheet",
     "plan-sheet-title",
@@ -312,6 +321,9 @@ function fakeDocument() {
   nodes["shop-skipped"].hidden = true;
   nodes["shop-count"].hidden = true;
   nodes["shop-sheet"].hidden = true;
+  nodes["shop-add-cancel"].hidden = true;
+  nodes["shop-clear-checked"].hidden = true;
+  nodes["shop-total"].hidden = true;
   nodes["plan-sheet"].hidden = true;
   const doc = {
     nodes,
@@ -356,11 +368,13 @@ function mountShop(options) {
   const doc = options.doc || fakeDocument();
   const downloads = [];
   const prints = [];
+  const shopping = options.shopping || shop.createShopping({ storage: shop.createMemoryStorage() });
   let pantryItems = typeof options.pantry === "function" ? null : options.pantry || [];
   let days = typeof options.week === "function" ? null : options.week || [];
   const readPantry = typeof options.pantry === "function" ? options.pantry : () => pantryItems;
   const readWeek = typeof options.week === "function" ? options.week : () => days;
   shop.mount(doc, {
+    shopping,
     pantry() {
       return readPantry();
     },
@@ -376,6 +390,7 @@ function mountShop(options) {
   });
   return {
     doc,
+    shopping,
     downloads,
     prints,
     setPantry(items) {
@@ -647,4 +662,110 @@ test("shopping quantities scale with household size and each recipe's servings",
     8,
   );
   assert.equal(covered.itemCount, 0);
+});
+
+test("a manual row stays beside the plan and its quantity does not scale", () => {
+  const extras = {
+    manual: [{ id: "mzafaran01", name: "زعفران", qty: 2, unit: "گرم", checked: false }],
+    overrides: {},
+  };
+  const days = week([
+    {
+      id: "sat",
+      label: "شنبه",
+      recipe: { title: "خوراک", ingredients: ["۲۰۰ گرم گوشت"], steps: ["بپز"], servings: 4 },
+    },
+  ]);
+  const four = shop.buildShoppingList([], days, 4, extras);
+  const eight = shop.buildShoppingList([], days, 8, extras);
+  assert.deepEqual(names(four), ["گوشت", "زعفران"]);
+  assert.equal(item(four, "گوشت").quantityLabel, "۲۰۰ گرم");
+  assert.equal(item(eight, "گوشت").quantityLabel, "۴۰۰ گرم");
+  assert.equal(item(four, "زعفران").quantityLabel, "۲ گرم");
+  assert.equal(item(eight, "زعفران").quantityLabel, "۲ گرم");
+  assert.equal(item(four, "زعفران").origin, "manual");
+  assert.equal(item(four, "گوشت").origin, "plan");
+  assert.match(item(four, "زعفران").meta, /دستی/);
+
+  const owned = shop.buildShoppingList([], days, 8, {
+    manual: [],
+    overrides: { گوشت: { qtyOwned: true, qty: 3, unit: "عدد" } },
+  });
+  assert.equal(item(owned, "گوشت").quantityLabel, "۳ عدد");
+  assert.match(item(owned, "گوشت").meta, /مقدار دستی/);
+  assert.equal(names(owned).includes("زعفران"), false);
+
+  const hidden = shop.buildShoppingList([], days, 4, {
+    manual: extras.manual,
+    overrides: { گوشت: { removed: true } },
+  });
+  assert.deepEqual(names(hidden), ["زعفران"]);
+  assert.equal(shop.buildShoppingList([], days, 4, { manual: [], overrides: { گوشت: { removed: true } } }).state, "cleared");
+});
+
+test("the user can add, edit, remove, and clear مواد خرید without a new week", () => {
+  const storage = shop.createMemoryStorage();
+  const shopping = shop.createShopping({ storage });
+  const view = mountShop({
+    shopping,
+    pantry: ["برنج"],
+    week: week([{ id: "sat", label: "شنبه", recipe: dish("عدس پلو", ["برنج", "۲۰۰ گرم گوشت"]) }]),
+  });
+  assert.match(view.doc.nodes["shop-scale"].textContent, /تعداد نفرات عوض نمی‌شود/);
+  assert.deepEqual(byTestId(view.doc.nodes["shop-list"], "shop-item-name").map((node) => node.textContent), ["گوشت"]);
+
+  view.doc.nodes["shop-add-name"].value = "زعفران";
+  view.doc.nodes["shop-add-qty"].value = "۲";
+  view.doc.nodes["shop-add-unit"].value = "گرم";
+  view.doc.nodes["shop-add"].listeners.submit({ preventDefault() {} });
+  assert.deepEqual(byTestId(view.doc.nodes["shop-list"], "shop-item-name").map((node) => node.textContent), ["گوشت", "زعفران"]);
+  assert.equal(view.doc.nodes["shop-status"].textContent, "به فهرست خرید اضافه شد.");
+
+  const added = shop.buildShoppingList(
+    ["برنج"],
+    week([{ id: "sat", label: "شنبه", recipe: dish("عدس پلو", ["برنج", "۲۰۰ گرم گوشت"]) }]),
+    4,
+    shopping.snapshot(),
+  );
+  assert.equal(item(added, "زعفران").quantityLabel, "۲ گرم");
+  assert.equal(item(added, "گوشت").quantityLabel, "۲۰۰ گرم");
+
+  view.doc.nodes["shop-add-name"].value = "زعفران";
+  view.doc.nodes["shop-add"].listeners.submit({ preventDefault() {} });
+  assert.equal(view.doc.nodes["shop-status"].textContent, "این ماده در فهرست هست.");
+
+  const edit = byTestId(view.doc.nodes["shop-list"], "shop-item-edit").find((node) => node.dataset.key === "زعفران");
+  fire(view.doc, "click", { target: edit });
+  assert.equal(view.doc.nodes["shop-add-submit"].textContent, "ذخیره");
+  view.doc.nodes["shop-add-name"].value = "زعفران";
+  view.doc.nodes["shop-add-qty"].value = "۳";
+  view.doc.nodes["shop-add-unit"].value = "گرم";
+  view.doc.nodes["shop-add"].listeners.submit({ preventDefault() {} });
+  assert.equal(view.doc.nodes["shop-status"].textContent, "تغییر ذخیره شد.");
+  const edited = shop.buildShoppingList([], week([{ id: "sat", label: "شنبه", recipe: dish("خوراک", ["۲۰۰ گرم گوشت"]) }]), 8, shopping.snapshot());
+  assert.equal(item(edited, "زعفران").quantityLabel, "۳ گرم");
+  assert.equal(item(edited, "گوشت").quantityLabel, "۴۰۰ گرم");
+
+  const remove = byTestId(view.doc.nodes["shop-list"], "shop-item-remove").find((node) => node.dataset.origin === "plan");
+  fire(view.doc, "click", { target: remove });
+  assert.deepEqual(byTestId(view.doc.nodes["shop-list"], "shop-item-name").map((node) => node.textContent), ["زعفران"]);
+
+  const box = byTestId(view.doc.nodes["shop-list"], "shop-item-check")[0];
+  box.checked = true;
+  fire(view.doc, "change", { target: box });
+  assert.equal(view.doc.nodes["shop-clear-checked"].hidden, false);
+  view.doc.nodes["shop-clear-checked"].listeners.click();
+  assert.equal(view.doc.nodes["shop-list"].hidden, true);
+  assert.equal(view.doc.nodes["shop-status"].textContent, "تیک‌خورده‌ها پاک شدند.");
+
+  const reloaded = shop.createShopping({ storage });
+  const kept = shop.buildShoppingList(
+    ["برنج"],
+    week([{ id: "sat", label: "شنبه", recipe: dish("عدس پلو", ["برنج", "۲۰۰ گرم گوشت"]) }]),
+    4,
+    reloaded.snapshot(),
+  );
+  assert.equal(kept.itemCount, 0);
+  assert.equal(reloaded.snapshot().manual.length, 0);
+  assert.equal(reloaded.snapshot().overrides["گوشت"].removed, true);
 });

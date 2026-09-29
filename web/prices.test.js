@@ -145,6 +145,87 @@ test("shopping lines show an Okala total, and a piece count keeps the unit price
   assert.equal(pieces.productUrl, ONION.product_url);
 });
 
+test("manual names take an Okala price, a stale line stays labeled, and the cart copies them", () => {
+  prices.applyCatalog(catalog());
+  const now = Date.parse("2026-09-29T18:00:00+00:00");
+  const later = Date.parse("2026-10-02T12:00:00+00:00");
+  const fresh = prices.priceParts("برنج", [{ qty: 200, unit: "گرم" }], now);
+  assert.equal(fresh.source, "okala");
+  assert.equal(fresh.toman, 82500);
+  const stale = prices.priceParts("برنج", [{ qty: 200, unit: "گرم" }], later);
+  assert.equal(stale.source, "stale");
+  assert.equal(stale.toman, 82500);
+  assert.equal(stale.label, "حدود ۸۲٬۵۰۰ تومان · کهنه");
+  const pieces = prices.priceParts("پیاز", [{ qty: 2, unit: "عدد" }], later);
+  assert.equal(pieces.unitOnly, true);
+  assert.equal(pieces.toman, 0);
+  assert.match(pieces.label, /کهنه/);
+
+  const list = shop.buildShoppingList(
+    [],
+    [
+      {
+        label: "شنبه",
+        meals: [
+          {
+            label: "شام",
+            recipe: { title: "پلو", ingredients: ["۲۰۰ گرم برنج"], steps: ["بپز"], cost_toman: 10000, servings: 4 },
+          },
+        ],
+      },
+    ],
+    4,
+    { manual: [{ id: "mzaferan01", name: "زعفران", qty: 1, unit: "گرم" }], overrides: {} },
+  );
+  const rice = list.categories.flatMap((cat) => cat.items).find((item) => item.name === "برنج");
+  const saffron = list.categories.flatMap((cat) => cat.items).find((item) => item.name === "زعفران");
+  assert.equal(rice.priceSource, "okala");
+  assert.equal(rice.priceToman, 82500);
+  assert.equal(saffron.origin, "manual");
+  assert.equal(saffron.priceLabel, "");
+  assert.match(list.totalLabel, /جمع/);
+  assert.match(list.totalLabel, /اُکالا/);
+  assert.equal(list.totalToman, 82500);
+
+  const staleList = shop.buildShoppingList([], [], 4, {
+    manual: [{ id: "mrice01", name: "برنج", qty: 200, unit: "گرم" }],
+    overrides: {},
+  });
+  const originalNow = Date.now;
+  Date.now = () => later;
+  try {
+    const aged = shop.buildShoppingList([], [], 4, {
+      manual: [{ id: "mrice01", name: "برنج", qty: 200, unit: "گرم" }],
+      overrides: {},
+    });
+    assert.match(aged.categories[0].items[0].priceLabel, /حدود/);
+    assert.match(aged.categories[0].items[0].priceLabel, /کهنه/);
+    assert.match(aged.totalLabel, /حدود/);
+    assert.match(aged.totalLabel, /کهنه/);
+  } finally {
+    Date.now = originalNow;
+  }
+  assert.equal(staleList.categories[0].items[0].origin, "manual");
+
+  const assist = prices.cartAssist(list.categories.flatMap((cat) => cat.items));
+  assert.match(assist.copy_text, /برنج/);
+  assert.match(assist.copy_text, /زعفران/);
+  assert.equal(assist.prefill, false);
+
+  const model = shop.createShopping({ storage: shop.createMemoryStorage() });
+  model.add({ name: "زعفران", qty: "۱", unit: "گرم" });
+  const previousPlan = global.AshpazPlan;
+  const previousShop = shop.active;
+  global.AshpazPlan = { active: { week() { return []; } } };
+  shop.active = model;
+  try {
+    assert.ok(prices.collectNames().includes("زعفران"));
+  } finally {
+    global.AshpazPlan = previousPlan;
+    shop.active = previousShop;
+  }
+});
+
 test("cart assist copies names and refuses cart, search, and checkout links", () => {
   prices.applyCatalog(catalog());
   const names = [];
