@@ -35,6 +35,9 @@
     missingHelp: "فهرست خرید از مواد ذخیره‌شده روی هر دستور ساخته می‌شود و برای این وعده‌ها چیزی ساخته نشد.",
     skipped: "مواد این غذاها در برنامه ذخیره نشده و به فهرست اضافه نشدند.",
     countSuffix: "ماده برای خرید",
+    okala: "سبد اُکالا",
+    okalaCopied: "فهرست برای اُکالا کپی شد.",
+    okalaCopyFailed: "کپی انجام نشد. نام‌ها را از فهرست بردارید.",
   };
 
   var CATEGORY_DEFS = [
@@ -744,10 +747,18 @@
     order.forEach(function (key) {
       var bucket = buckets[key];
       var cat = byId[categorize(bucket.name)] || byId.other;
+      var priced = null;
+      var pricesApi = global.AshpazPrices;
+      if (pricesApi && typeof pricesApi.priceParts === "function") {
+        priced = pricesApi.priceParts(bucket.name, bucket.parts);
+      }
       cat.items.push({
         name: bucket.name,
         quantityLabel: quantityLabel(bucket.parts, bucket.bare),
         meta: metaLine(bucket.days, bucket.titles),
+        priceLabel: priced && priced.label ? priced.label : "",
+        priceSource: priced && priced.source ? priced.source : "",
+        productUrl: priced && priced.productUrl ? priced.productUrl : "",
       });
     });
     grouped.forEach(function (cat) {
@@ -827,6 +838,7 @@
       cat.items.forEach(function (item) {
         var line = "- **" + mdInline(item.name) + "**";
         if (item.quantityLabel) line += " — " + item.quantityLabel;
+        if (item.priceLabel) line += " — " + item.priceLabel;
         lines.push(line);
         if (item.meta) lines.push("  - " + mdInline(item.meta));
       });
@@ -918,6 +930,14 @@
           meta.dataset.testid = "shop-item-meta";
           meta.textContent = item.meta;
           li.append(meta);
+        }
+        if (item.priceLabel) {
+          var price = doc.createElement("span");
+          price.className = "shop-item-price";
+          price.dataset.testid = "shop-item-price";
+          price.dataset.source = item.priceSource || "";
+          price.textContent = item.priceLabel;
+          li.append(price);
         }
         ul.append(li);
       });
@@ -1081,6 +1101,7 @@
     };
     var openBtn = doc.getElementById("shop-open");
     var exportBtn = doc.getElementById("shop-export");
+    var okalaBtn = doc.getElementById("shop-okala");
     var closeBtn = doc.getElementById("shop-sheet-close");
     var cancelBtn = doc.getElementById("shop-sheet-cancel");
     var onChoice = null;
@@ -1158,6 +1179,111 @@
       saveMarkdown(doc, COPY.filename, text);
     }
 
+    function flatItems(result) {
+      var rows = [];
+      (result.categories || []).forEach(function (cat) {
+        (cat.items || []).forEach(function (item) {
+          rows.push(item);
+        });
+      });
+      return rows;
+    }
+
+    function openOkala() {
+      var result = currentList(hooks);
+      var rows = flatItems(result);
+      var pricesApi = global.AshpazPrices;
+      var assist =
+        pricesApi && typeof pricesApi.cartAssist === "function"
+          ? pricesApi.cartAssist(rows)
+          : {
+              message: "سبد اُکالا از اینجا پر نمی‌شود. پرداخت اینجا انجام نمی‌شود.",
+              copy_text: rows
+                .map(function (item) {
+                  return item.name;
+                })
+                .slice(0, 10)
+                .join("\n"),
+              homepage: "https://www.okala.com/",
+              items: [],
+              prefill: false,
+            };
+      if (!rows.length) {
+        openSheet({
+          mode: "okala",
+          title: COPY.okala,
+          hint: "فهرست خرید خالی است.",
+          choices: [{ id: "open", label: "باز کردن اُکالا", detail: "صفحه اصلی فروشگاه", action: "باز کردن" }],
+          onChoice: function (choice) {
+            if (choice === "open") openHome(assist.homepage);
+          },
+        });
+        return;
+      }
+      var choices = [
+        { id: "copy", label: "کپی فهرست برای اُکالا", detail: "برای جست‌وجوی لیستی", action: "کپی" },
+        { id: "open", label: "باز کردن اُکالا", detail: "صفحه اصلی فروشگاه", action: "باز کردن" },
+      ];
+      (assist.items || []).forEach(function (item, index) {
+        if (!item.product_url) return;
+        choices.push({
+          id: "product:" + index,
+          label: item.name,
+          detail: item.priceLabel || "در اُکالا",
+          action: "مشاهده",
+        });
+      });
+      openSheet({
+        mode: "okala",
+        title: COPY.okala,
+        hint: assist.message,
+        choices: choices,
+        onChoice: function (choice) {
+          if (choice === "copy") copyList(assist.copy_text);
+          if (choice === "open") openHome(assist.homepage);
+          if (choice && choice.indexOf("product:") === 0) {
+            var index = Number(choice.slice("product:".length));
+            var item = assist.items && assist.items[index];
+            if (item) openHome(item.product_url);
+          }
+        },
+      });
+    }
+
+    function copyList(text) {
+      if (typeof hooks.copy === "function") {
+        hooks.copy(text);
+        if (els.status) els.status.textContent = COPY.okalaCopied;
+        return;
+      }
+      var clipboard = global.navigator && global.navigator.clipboard;
+      if (clipboard && typeof clipboard.writeText === "function") {
+        Promise.resolve(clipboard.writeText(text))
+          .then(function () {
+            if (els.status) els.status.textContent = COPY.okalaCopied;
+          })
+          .catch(function () {
+            if (els.status) els.status.textContent = COPY.okalaCopyFailed;
+          });
+        return;
+      }
+      if (els.status) els.status.textContent = COPY.okalaCopyFailed;
+    }
+
+    function openHome(url) {
+      var pricesApi = global.AshpazPrices;
+      var safe = url === "https://www.okala.com/";
+      if (!safe && pricesApi && typeof pricesApi.safeProductUrl === "function") {
+        safe = pricesApi.safeProductUrl(url) === url && !!url;
+      }
+      if (!safe) return;
+      if (typeof hooks.open === "function") {
+        hooks.open(url);
+        return;
+      }
+      if (global.open) global.open(url, "_blank", "noopener");
+    }
+
     function openExport() {
       openSheet({
         mode: "export",
@@ -1181,6 +1307,7 @@
       });
     }
     if (exportBtn) exportBtn.addEventListener("click", openExport);
+    if (okalaBtn) okalaBtn.addEventListener("click", openOkala);
     if (closeBtn) closeBtn.addEventListener("click", closeSheet);
     if (cancelBtn) cancelBtn.addEventListener("click", closeSheet);
     if (sheet) {
@@ -1209,6 +1336,7 @@
 
     doc.addEventListener("ashpaz-pantry-changed", render);
     doc.addEventListener("ashpaz-plan-changed", render);
+    doc.addEventListener("ashpaz-prices-changed", render);
     watchPrintEnd(doc);
     render();
   }

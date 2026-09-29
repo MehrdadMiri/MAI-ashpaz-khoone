@@ -143,11 +143,29 @@
     return 4;
   }
 
-  function shownCost(recipe) {
+  function legacyShown(recipe) {
     if (!recipe || typeof recipe.cost_toman !== "number" || !isFinite(recipe.cost_toman)) return null;
     var shared = global.AshpazHousehold;
     if (!shared || typeof shared.scaleCost !== "function") return recipe.cost_toman;
     return shared.scaleCost(recipe.cost_toman, currentHousehold(), recipe.servings);
+  }
+
+  function mealQuote(recipe) {
+    var prices = global.AshpazPrices;
+    if (prices && typeof prices.quoteRecipe === "function") {
+      var quote = prices.quoteRecipe(recipe, currentHousehold());
+      if (quote && quote.label) return quote;
+    }
+    var amount = legacyShown(recipe);
+    if (typeof amount !== "number" || !isFinite(amount) || amount <= 0) return null;
+    var label = formatApprox(amount);
+    if (!label) return null;
+    return { source: "estimate", toman: amount, label: label, stale: false };
+  }
+
+  function shownCost(recipe) {
+    var quote = mealQuote(recipe);
+    return quote ? quote.toman : null;
   }
 
   function peoplePhrase() {
@@ -339,11 +357,14 @@
     return copy;
   }
 
-  function budgetLine(spent, budget) {
+  function budgetLine(spent, budget, source) {
     if (typeof spent !== "number" || !isFinite(spent) || spent <= 0) return null;
     var hasBudget = typeof budget === "number" && isFinite(budget) && budget >= 0;
     var over = !!(hasBudget && spent > budget);
-    var text = "جمع وعده‌ها " + formatApprox(spent);
+    var amountText = formatApprox(spent);
+    if (source === "okala") amountText = formatToman(spent) + " (اُکالا)";
+    else if (source === "partial") amountText = formatToman(spent) + " (بخشی از اُکالا)";
+    var text = "جمع وعده‌ها " + amountText;
     if (hasBudget) text += " از بودجه " + formatToman(budget);
     if (over) text += " — بیشتر از بودجه هفته. چاپ و خروجی همچنان ممکن است";
     return { text: text, over: over };
@@ -352,11 +373,8 @@
   function mealLine(meal) {
     var text = meal.recipe ? meal.recipe.title : COPY.empty;
     if (meal.recipe && meal.used) text += " — " + COPY.eaten;
-    var scaled = shownCost(meal.recipe);
-    if (typeof scaled === "number" && scaled > 0) {
-      var cost = formatApprox(scaled);
-      if (cost) text += " — " + cost;
-    }
+    var quote = mealQuote(meal.recipe);
+    if (quote && quote.label) text += " — " + quote.label;
     return text;
   }
 
@@ -917,15 +935,25 @@
       });
     }
 
-    function spend() {
+    function spendMeta() {
       var total = 0;
+      var sources = [];
       week().forEach(function (day) {
         day.meals.forEach(function (meal) {
-          var scaled = shownCost(meal.recipe);
-          if (typeof scaled === "number" && scaled > 0) total += scaled;
+          var quote = mealQuote(meal.recipe);
+          if (!quote || !(quote.toman > 0)) return;
+          total += quote.toman;
+          sources.push(quote.source);
         });
       });
-      return total;
+      var source = "estimate";
+      if (sources.length && sources.every(function (item) { return item === "okala"; })) source = "okala";
+      else if (sources.some(function (item) { return item === "okala" || item === "partial"; })) source = "partial";
+      return { total: total, source: source };
+    }
+
+    function spend() {
+      return spendMeta().total;
     }
 
     return {
@@ -934,6 +962,7 @@
       },
       week: week,
       spend: spend,
+      spendMeta: spendMeta,
       remember: function (list) {
         if (!Array.isArray(list)) return [];
         var accepted = [];
@@ -1191,16 +1220,14 @@
 
     slot.append(kicker, title);
 
-    var scaledCost = shownCost(meal.recipe);
-    if (typeof scaledCost === "number" && scaledCost > 0) {
-      var costLabel = formatApprox(scaledCost);
-      if (costLabel) {
-        var cost = doc.createElement("p");
-        cost.className = "day-cost";
-        cost.dataset.testid = "day-cost";
-        cost.textContent = costLabel;
-        slot.append(cost);
-      }
+    var mealPrice = mealQuote(meal.recipe);
+    if (mealPrice && mealPrice.label) {
+      var cost = doc.createElement("p");
+      cost.className = "day-cost";
+      cost.dataset.testid = "day-cost";
+      cost.dataset.source = mealPrice.source;
+      cost.textContent = mealPrice.label;
+      slot.append(cost);
     }
 
     var action = doc.createElement("button");
@@ -1384,7 +1411,8 @@
 
     function renderBudget() {
       if (!budgetEl) return;
-      var note = budgetLine(plan.spend(), readBudget(hooks));
+      var spent = plan.spendMeta ? plan.spendMeta() : { total: plan.spend(), source: "estimate" };
+      var note = budgetLine(spent.total, readBudget(hooks), spent.source);
       if (!note) {
         budgetEl.hidden = true;
         budgetEl.textContent = "";
@@ -1530,8 +1558,8 @@
       var choices = recipes.map(function (recipe) {
         var same = meal.recipe && meal.recipe.id === recipe.id;
         var detail = "";
-        var scaled = shownCost(recipe);
-        if (!same && scaled) detail = formatApprox(scaled);
+        var scaledQuote = mealQuote(recipe);
+        if (!same && scaledQuote && scaledQuote.label) detail = scaledQuote.label;
         return {
           id: recipe.id,
           label: recipe.title,
@@ -1730,6 +1758,9 @@
     if (budgetInput) budgetInput.addEventListener("input", renderBudget);
 
     doc.addEventListener("ashpaz-pantry-changed", function () {
+      render();
+    });
+    doc.addEventListener("ashpaz-prices-changed", function () {
       render();
     });
 

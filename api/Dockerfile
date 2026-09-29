@@ -8,8 +8,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py gapgpt.py recipes.py nutrition.py vision.py store.py ./
+COPY app.py gapgpt.py recipes.py nutrition.py vision.py store.py okala.py ./
 COPY migrations ./migrations
+COPY fixtures ./fixtures
 
 RUN useradd --create-home --uid 10001 appuser \
     && chown appuser:appuser /app

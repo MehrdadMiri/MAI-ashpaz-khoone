@@ -1,7 +1,7 @@
 // Shell cache for installability. Recipe generation and fridge vision stay on
 // the network (/api/ is never intercepted). The GapGPT key is not in this file.
 
-const CACHE = "ashpaz-shell-v2";
+const CACHE = "ashpaz-shell-v3";
 
 const SHELL = [
   "/",
@@ -9,6 +9,7 @@ const SHELL = [
   "/pantry.css",
   "/household.js",
   "/pantry.js",
+  "/prices.js",
   "/fridge.js",
   "/recipes.js",
   "/plan.js",
