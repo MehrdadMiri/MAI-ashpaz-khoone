@@ -1,18 +1,17 @@
-# v0.2.0
+# v0.3.0
 
-Follows the tagged MVP `v0.1.0` (pantry chips, one fridge photo, recipe cards, the 7-day plan, and empty, loading, and error polish).
+Follows the tagged release `v0.2.0` (shopping, leftover regenerate, fridge v2, Postgres persist, nutrition, share/print, diet filters, and a home-screen install).
 
-`v0.2.0` adds:
+`v0.3.0` adds, on top of `v0.2.0`:
 
-- Shopping list (مواد خرید) from the week plan and the pantry
-- Leftover-aware regenerate (remaining chips, skip eaten dinners, «بازتولید کامل»)
-- Fridge vision v2: up to six photos, confidence, and merged names
-- Postgres persist for the pantry and the week plan, with a localStorage fallback
-- Rough nutrition on the recipe cards; a failed estimate leaves the cards up
-- Share and print the week: a `#p=` link and an A4 poster
-- Diet filters: گیاهی، بدون پیاز، مناسب دیابت
-- Home-screen install: web app manifest, a service worker that caches the page shell only, and the install note
+- Breakfast, lunch, and dinner on the week plan (صبحانه، ناهار، شام — ۲۱ slots)
+- تعداد نفرات scales displayed amounts and cost
+- Okala prices from «به‌روزرسانی قیمت‌ها» (or the bundled fixture) and an assisted cart: «سبد اُکالا» copies names and opens the store; it does not check out
+- Manual مواد خرید rows, with a price when a catalog match exists
+- Multi-user isolation: «کاربر جدید» keeps pantry, plan, and shopping separate per browser session
+- The first «پیشنهاد دستور» returns three cards; «پیشنهاد دستورهای بیشتر» appends another batch. A richer pantry asks for five or seven
+- Assigning a recipe fills one slot. «برنامه ۷ روزه» is the explicit full-week fill
 
 GapGPT stays `gpt-5.6-luna`. The repository is public. `.env` is gitignored. `.env.example` has placeholders only, and `GAP_CODE_API_KEY` there is empty.
 
-Do not create tag `v0.2.0` or a GitHub Release from the docs change that added this file. SE tags after [QA-SMOKE.md](QA-SMOKE.md) is green.
+Do not create tag `v0.3.0` or a GitHub Release from the docs change that added this file. SE tags after [QA-SMOKE.md](QA-SMOKE.md) is green.
