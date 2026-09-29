@@ -405,6 +405,46 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(seen, [])
         self.assertNotIn(KEY, res.get_data(as_text=True))
 
+    def test_diet_filters_reach_the_prompt_and_bad_values_stay_hidden(self):
+        seen = {}
+
+        def transport(request, timeout):
+            del timeout
+            seen["payload"] = json.loads(request.data.decode("utf-8"))
+            return chat_response(json.dumps(recipe_json(), ensure_ascii=False))
+
+        gap_client = GapGPTClient(config(), timeout=RECIPE_CLIENT_TIMEOUT, transport=transport)
+        res, _builder = self._post(
+            {
+                "ingredients": ["برنج", "عدس", "ماست"],
+                "budget": 1500000,
+                "filters": {"vegetarian": True, "no_onion": True, "diabetic": False},
+            },
+            gap_client,
+        )
+        self.assertEqual(res.status_code, 200, res.get_data(as_text=True))
+        body = res.get_json()
+        self.assertEqual(
+            body["filters"],
+            {"vegetarian": True, "no_onion": True, "diabetic": False},
+        )
+        self.assertEqual(len(body["recipes"]), 3)
+        user = seen["payload"]["messages"][1]["content"]
+        self.assertIn("محدودیت غذایی:", user)
+        self.assertIn("- گیاهی:", user)
+        self.assertIn("- بدون پیاز:", user)
+        self.assertNotIn("- مناسب دیابت:", user)
+        self.assertNotIn(KEY, res.get_data(as_text=True))
+
+        secret = "filter-secret-value"
+        rejected, _builder = self._post(
+            {"ingredients": ["برنج"], "filters": {"diabetic": secret}},
+            gap_client,
+        )
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(rejected.get_json()["error"], "invalid_request")
+        self.assertNotIn(secret, rejected.get_data(as_text=True))
+
 
 if __name__ == "__main__":
     unittest.main()

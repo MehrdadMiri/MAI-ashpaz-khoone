@@ -143,6 +143,45 @@
               <button type="button" id="build-plan" data-testid="build-plan">برنامه ۷ روزه</button>
             </div>
           </div>
+          <div
+            class="diet-filters"
+            id="diet-filters"
+            role="group"
+            aria-labelledby="diet-filters-label"
+            data-testid="diet-filters"
+          >
+            <span class="diet-filters-label" id="diet-filters-label">محدودیت غذایی</span>
+            <button
+              type="button"
+              class="diet-chip"
+              id="diet-vegetarian"
+              data-testid="diet-vegetarian"
+              data-diet="vegetarian"
+              aria-pressed="false"
+            >
+              گیاهی
+            </button>
+            <button
+              type="button"
+              class="diet-chip"
+              id="diet-no-onion"
+              data-testid="diet-no-onion"
+              data-diet="no_onion"
+              aria-pressed="false"
+            >
+              بدون پیاز
+            </button>
+            <button
+              type="button"
+              class="diet-chip"
+              id="diet-diabetic"
+              data-testid="diet-diabetic"
+              data-diet="diabetic"
+              aria-pressed="false"
+            >
+              مناسب دیابت
+            </button>
+          </div>
           <p id="recipe-status" class="status" role="status" aria-live="polite" data-testid="recipe-status"></p>
           <div id="recipe-empty" class="empty recipe-empty" data-testid="recipe-empty">
             <p class="empty-title">هنوز دستوری پیشنهاد نشده</p>

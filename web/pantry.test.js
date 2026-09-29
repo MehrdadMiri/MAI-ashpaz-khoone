@@ -164,7 +164,11 @@ test("replace loads a saved pantry without notifying a remote hook", () => {
     assert.equal(store.budget(), "20");
     assert.equal(calls, 0);
     const again = createPantry({ storage });
-    assert.deepEqual(again.snapshot(), { items: ["برنج", "کرفس"], budget: "20" });
+    assert.deepEqual(again.snapshot(), {
+      items: ["برنج", "کرفس"],
+      budget: "20",
+      filters: { vegetarian: false, no_onion: false, diabetic: false },
+    });
   } finally {
     delete global.AshpazPersist;
   }
@@ -231,6 +235,41 @@ test("a remote pantry event refreshes the budget field", () => {
   listeners["ashpaz-pantry-changed"].forEach((fn) => fn({ detail: { source: "remote" } }));
   assert.equal(nodes["week-budget"].value, "9");
   assert.deepEqual(model.items(), ["برنج"]);
+});
+
+test("diet filters persist with the pantry and ignore unknown values", () => {
+  const storage = createMemoryStorage();
+  const store = createPantry({ storage });
+  store.add("پیاز");
+  store.setBudget("20");
+  assert.deepEqual(store.setFilter("vegetarian", true), {
+    ok: true,
+    filters: { vegetarian: true, no_onion: false, diabetic: false },
+  });
+  store.setFilter("diabetic", true);
+  store.setFilter("nope", true);
+  store.clear();
+  assert.deepEqual(store.items(), []);
+  assert.equal(store.budget(), "20");
+  const again = createPantry({ storage });
+  assert.deepEqual(again.filters(), {
+    vegetarian: true,
+    no_onion: false,
+    diabetic: true,
+  });
+  again.replace({
+    items: ["برنج"],
+    budget: "9",
+    filters: { vegetarian: "بله", no_onion: true, diabetic: 1, extra: true },
+  });
+  assert.deepEqual(again.filters(), {
+    vegetarian: false,
+    no_onion: true,
+    diabetic: false,
+  });
+  const raw = JSON.parse(storage.getItem(STORAGE_KEY));
+  assert.equal(raw.filters.no_onion, true);
+  assert.equal(raw.filters.vegetarian, false);
 });
 
 test("empty pantry copy offers seed, a chip, and a fridge photo", () => {

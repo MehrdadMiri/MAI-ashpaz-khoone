@@ -46,7 +46,7 @@ Stop the stack with `docker compose down`. Postgres data, including saved pantri
 
 ## Saved pantry and week plan
 
-Pantry chips, the week budget, and the 7-day plan are stored in Postgres. The plan row includes recipe titles, ingredient lines, steps, costs, the شنبه–جمعه slots, and «خورده شد». There is no account and no password. On the first visit the page creates a random id, stores it in `localStorage` (`ashpaz-khoone.local-user.v1`) and a `ashpaz_local_user` cookie (`Path=/`, `SameSite=Lax`, one year), and sends it as `X-Local-User-Id`. The same id may also be a `local_user_id` query or JSON field. It is not a credential. Do not put `GAP_CODE_API_KEY`, or any other secret, in the pantry or the plan.
+Pantry chips, the week budget, diet filters, and the 7-day plan are stored in Postgres. The plan row includes recipe titles, ingredient lines, steps, costs, the شنبه–جمعه slots, and «خورده شد». There is no account and no password. On the first visit the page creates a random id, stores it in `localStorage` (`ashpaz-khoone.local-user.v1`) and a `ashpaz_local_user` cookie (`Path=/`, `SameSite=Lax`, one year), and sends it as `X-Local-User-Id`. The same id may also be a `local_user_id` query or JSON field. It is not a credential. Do not put `GAP_CODE_API_KEY`, or any other secret, in the pantry or the plan.
 
 `GET` and `PUT /pantry` and `GET` and `PUT /plan` are the routes. Nginx forwards `/api/pantry` and `/api/plan` to them. A missing row is `found: false` and does not wipe the browser. A saved row is what a refresh shows for that id.
 
@@ -133,7 +133,25 @@ Web `/health` is unchanged.
 
 The browser calls `http://localhost:8080/api/recipes/generate`. Nginx proxies `/api/` to the api service and forwards that path. The api accepts `/api/...` as an alias of the same routes, so `POST /recipes/generate` on port 8000 and `POST /api/recipes/generate` on port 8080 are the same call. The web `/health` check is still the nginx `ok` response. API health through the proxy is `http://localhost:8080/api/health`.
 
-The request JSON is `{ "ingredients": ["برنج"], "budget": 1500000 }`. `budget` may be `null` when the week field is empty; the model prompt still includes that budget context. Leftover regenerate adds `remaining`, `skip`, and `full` (see [Leftover regenerate](#leftover-regenerate)). The api service calls GapGPT with `GapGPTClient.chat_text` and the configured model (`gpt-5.6-luna` unless `GAPGPT_MODEL` is set). The key stays in the api container. The page never receives it.
+The request JSON is `{ "ingredients": ["برنج"], "budget": 1500000 }`. `budget` may be `null` when the week field is empty; the model prompt still includes that budget context. Leftover regenerate adds `remaining`, `skip`, and `full` (see [Leftover regenerate](#leftover-regenerate)). Active diet chips add `filters` (see [Diet filters](#diet-filters)). The api service calls GapGPT with `GapGPTClient.chat_text` and the configured model (`gpt-5.6-luna` unless `GAPGPT_MODEL` is set). The key stays in the api container. The page never receives it.
+
+### Diet filters
+
+Three chips sit with «پیشنهاد دستور»: «گیاهی», «بدون پیاز», and «مناسب دیابت». Each one toggles on its own, and any combination is allowed. The choice is stored on the pantry snapshot (`filters` in `ashpaz-khoone.pantry.v1` and in the Postgres pantry row), so a reload keeps it. «پاک کردن» empties the chips and leaves the filters as they are.
+
+When at least one chip is on, the generate body includes all three flags:
+
+```json
+"filters": {"vegetarian": true, "no_onion": false, "diabetic": true}
+```
+
+Missing `filters`, or `null`, means all three are off. A value that is not `true` or `false` is HTTP 400 `invalid_request`. The message does not echo that value. The GapGPT prompt lists only the active limits and tells the model they override the pantry, including a pantry item the limit forbids. After the reply, the api drops a recipe that clearly names a forbidden food when three other recipes remain. If fewer than three pass, the three recipes are still returned, so the check cannot fail generation. A timeout, a missing key, or an unreadable reply is unchanged: the page shows the Persian retry, and the chips stay.
+
+```bash
+curl -sS -X POST http://localhost:8000/recipes/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"ingredients":["برنج","عدس","ماست"],"budget":1500000,"filters":{"vegetarian":true,"no_onion":true,"diabetic":false}}'
+```
 
 A successful body is `ok: true` and `recipes` with three objects. Each object has `title`, `ingredients`, `steps`, and `cost_toman` (`null` when the model gives no number). The page shows those as RTL cards: title, ingredient tags, steps, and a rough cost badge when a cost is present. It then asks for a nutrition estimate ([Nutrition estimates](#nutrition-estimates)). «افزودن به برنامه» on each card opens the day sheet for the meal plan.
 

@@ -40,9 +40,33 @@ class SanitizeTests(unittest.TestCase):
         )
         self.assertEqual(pantry["items"], ["برنج"])
         self.assertEqual(pantry["budget"], "")
+        self.assertEqual(
+            pantry["filters"],
+            {"vegetarian": False, "no_onion": False, "diabetic": False},
+        )
         self.assertEqual(store.sanitize_budget(1_000_000_000_001), "")
         self.assertEqual(store.sanitize_budget(0), "0")
         self.assertEqual(store.sanitize_budget("1,500"), "1500")
+
+    def test_diet_filters_keep_only_real_trues(self):
+        pantry = store.sanitize_pantry(
+            {
+                "items": ["برنج"],
+                "budget": "10",
+                "filters": {
+                    "vegetarian": True,
+                    "no_onion": "yes",
+                    "diabetic": 1,
+                    "extra": True,
+                },
+            }
+        )
+        self.assertEqual(
+            pantry["filters"],
+            {"vegetarian": True, "no_onion": False, "diabetic": False},
+        )
+        missing = store.sanitize_pantry({"items": ["ماست"]})
+        self.assertFalse(any(missing["filters"].values()))
 
     def test_plan_keeps_an_eaten_day_and_recomputes_ids(self):
         plan = store.sanitize_plan(

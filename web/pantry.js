@@ -1,4 +1,6 @@
 /* Client-side pantry for آشپزخونه (US-02 chips, US-04 week budget).
+   Diet filters (vegetarian, no onion, diabetic-friendly) live on the same
+   snapshot as the chips and the week budget.
    Every change is written to localStorage. When AshpazPersist is loaded, the
    same snapshot is also sent to Postgres. If that api is down, this cache
    is what the page keeps using.
@@ -11,6 +13,7 @@
   var STORAGE_KEY = "ashpaz-khoone.pantry.v1";
   var MAX_NAME_LENGTH = 40;
   var MAX_BUDGET = 1000000000000;
+  var DIET_KEYS = ["vegetarian", "no_onion", "diabetic"];
 
   var SEED_STAPLES = Object.freeze([
     "برنج",
@@ -72,8 +75,21 @@
     });
   }
 
+  function emptyFilters() {
+    return { vegetarian: false, no_onion: false, diabetic: false };
+  }
+
+  function copyFilters(raw) {
+    var filters = emptyFilters();
+    if (!raw || typeof raw !== "object") return filters;
+    DIET_KEYS.forEach(function (key) {
+      filters[key] = raw[key] === true;
+    });
+    return filters;
+  }
+
   function emptyState() {
-    return { items: [], budget: "" };
+    return { items: [], budget: "", filters: emptyFilters() };
   }
 
   function sanitizeState(parsed) {
@@ -99,6 +115,7 @@
       }
     }
 
+    state.filters = copyFilters(parsed.filters);
     return state;
   }
 
@@ -128,11 +145,19 @@
       }
     }
 
+    function snapshot() {
+      return {
+        items: state.items.slice(),
+        budget: state.budget,
+        filters: copyFilters(state.filters),
+      };
+    }
+
     function notifyRemote() {
       var remote = global.AshpazPersist;
       if (!remote || typeof remote.onPantry !== "function") return;
       try {
-        remote.onPantry({ items: state.items.slice(), budget: state.budget });
+        remote.onPantry(snapshot());
       } catch (err) {
         /* The local list is already saved. A later load can try the api again. */
       }
@@ -158,6 +183,17 @@
       },
       budget: function () {
         return state.budget;
+      },
+      filters: function () {
+        return copyFilters(state.filters);
+      },
+      setFilter: function (key, on) {
+        if (DIET_KEYS.indexOf(key) === -1) {
+          return { ok: false, reason: "unknown", filters: copyFilters(state.filters) };
+        }
+        state.filters[key] = on === true;
+        persist();
+        return { ok: true, filters: copyFilters(state.filters) };
       },
       add: function (raw) {
         var name = displayName(raw);
@@ -211,13 +247,11 @@
         persist();
         return { ok: true, budget: state.budget };
       },
-      snapshot: function () {
-        return { items: state.items.slice(), budget: state.budget };
-      },
+      snapshot: snapshot,
       replace: function (parsed) {
         state = sanitizeState(parsed);
         writeLocal();
-        return { items: state.items.slice(), budget: state.budget };
+        return snapshot();
       },
     };
   }
