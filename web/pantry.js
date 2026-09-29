@@ -1,5 +1,7 @@
 /* Client-side pantry for آشپزخونه (US-02 chips, US-04 week budget).
-   State stays in localStorage. Recipe generation reads the active pantry. */
+   State stays in localStorage. Recipe generation reads the active pantry.
+   Fridge vision asks the user to confirm, then merges with the same add rules.
+   Listeners on this document for "ashpaz-pantry-changed" refresh the chips. */
 (function (global) {
   "use strict";
 
@@ -325,6 +327,12 @@
         var next = result.budget;
         if (budgetInput.value !== next) budgetInput.value = next;
       }
+    });
+
+    doc.addEventListener("ashpaz-pantry-changed", function (event) {
+      var detail = (event && event.detail) || {};
+      if (detail.message) setStatus(detail.message);
+      render(detail.flash || "");
     });
 
     render();
