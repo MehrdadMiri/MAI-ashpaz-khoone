@@ -1130,8 +1130,29 @@ h2 {
   }
 
   .day-card {
-    display: block !important;
-    margin: 0 0 0.45rem !important;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: baseline;
+    gap: 0.75rem;
+    margin: 0 !important;
+    padding: 0.45rem 0 !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border: 0 !important;
+    border-bottom: 1px solid #ccc !important;
+    border-radius: 0 !important;
+    background: #fff !important;
+    box-shadow: none !important;
+  }
+
+  .day-name {
+    flex: none;
+    min-width: 5.5rem;
+  }
+
+  .day-meal {
+    flex: 1;
+    min-width: 0;
   }
 
   .print-only {
@@ -1153,13 +1174,6 @@ h2 {
   .plan-panel {
     border: 0 !important;
     padding: 0 !important;
-  }
-
-  .day-card {
-    break-inside: avoid;
-    page-break-inside: avoid;
-    border: 1px solid #ccc !important;
-    border-radius: 0 !important;
   }
 
   .day-name,
