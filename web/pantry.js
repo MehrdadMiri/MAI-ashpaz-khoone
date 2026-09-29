@@ -223,6 +223,25 @@
       status.textContent = message || "";
     }
 
+    function emitPantry() {
+      if (typeof doc.dispatchEvent !== "function") return;
+      var detail = { source: "pantry" };
+      var event;
+      try {
+        event =
+          typeof CustomEvent === "function"
+            ? new CustomEvent("ashpaz-pantry-changed", { detail: detail })
+            : { type: "ashpaz-pantry-changed", detail: detail };
+      } catch (err) {
+        event = { type: "ashpaz-pantry-changed", detail: detail };
+      }
+      try {
+        doc.dispatchEvent(event);
+      } catch (err) {
+        /* Chips are already saved. The shopping list refreshes when opened. */
+      }
+    }
+
     function render(flashName) {
       var items = pantry.items();
       var fragment = doc.createDocumentFragment();
@@ -253,6 +272,7 @@
           pantry.remove(name);
           setStatus("«" + name + "» حذف شد");
           render();
+          emitPantry();
           if (event.detail === 0) input.focus();
         });
 
@@ -315,6 +335,7 @@
       input.value = "";
       setStatus("«" + result.name + "» اضافه شد");
       render();
+      emitPantry();
       input.focus();
     });
 
@@ -326,6 +347,7 @@
         setStatus("مواد نمونه بارگذاری شد");
       }
       render();
+      if (result.added.length) emitPantry();
     });
 
     clearBtn.addEventListener("click", function () {
@@ -333,6 +355,7 @@
       input.value = "";
       setStatus("آشپزخانه خالی شد");
       render();
+      emitPantry();
     });
 
     budgetInput.addEventListener("input", function () {
@@ -345,6 +368,7 @@
 
     doc.addEventListener("ashpaz-pantry-changed", function (event) {
       var detail = (event && event.detail) || {};
+      if (detail.source === "pantry") return;
       if (detail.message) setStatus(detail.message);
       render(detail.flash || "");
     });
