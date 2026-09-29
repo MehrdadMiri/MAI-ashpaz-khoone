@@ -1,4 +1,4 @@
-"""Recipe generation from pantry items and a week budget (US-05, US-10).
+"""Recipe generation from pantry items and a week budget (US-05, US-10, #24).
 
 Uses the shared GapGPT client. The model is asked for Iranian home-cooking
 recipes in Persian, as JSON. Leftover regenerate prefers remaining pantry
@@ -8,6 +8,17 @@ are added to the prompt and applied as a soft check after parsing. Parsing
 failures become ``GapGPTError`` and do not include the model text or the
 API key. A diet miss does not fail the request when fewer than three
 recipes pass the check.
+
+How many recipes one call returns (ticket #24):
+
+- Count the distinct names the model is asked to cook from. That is the
+  remaining list in leftover mode when it differs from the pantry, and the
+  pantry list otherwise.
+- 1–4 names → 3 recipes. 5–7 names → 5. 8 or more → 7.
+- An omitted ``count`` uses that allowance. An explicit ``count`` must be
+  3, 5, or 7 and is clamped down to the allowance, so a thin pantry cannot
+  be forced to 7. The page sends 3 for the first «پیشنهاد دستور» and the
+  allowance for «پیشنهاد دستورهای بیشتر» and «بازتولید کامل».
 """
 
 from __future__ import annotations
@@ -24,7 +35,12 @@ from gapgpt import GapGPTClient, GapGPTError
 RECIPE_CLIENT_TIMEOUT = 90.0
 
 MIN_RECIPES = 3
-MAX_RECIPES = 3
+# Pantry richness → how many recipes GapGPT is asked to return.
+# 1–4 distinct cooking names → 3, 5–7 names → 5, 8 or more → 7.
+SUGGEST_FIVE_AT = 5
+SUGGEST_SEVEN_AT = 8
+SUGGEST_COUNTS = (3, 5, 7)
+MAX_RECIPES = 7
 MIN_HOUSEHOLD = 1
 MAX_HOUSEHOLD = 12
 DEFAULT_HOUSEHOLD = 4
@@ -37,6 +53,7 @@ MAX_INGREDIENT_LINE = 80
 MAX_STEPS = 8
 MAX_RECIPE_INGREDIENTS = 12
 MAX_SKIP = 7
+MAX_EXCLUDE = 24
 
 # Keys stored with the pantry and accepted on POST /recipes/generate.
 DIET_FILTER_KEYS = ("vegetarian", "no_onion", "diabetic")
@@ -112,7 +129,7 @@ Shape:
 {"recipes":[{"title":"","ingredients":[""],"steps":[""],"cost_toman":0}]}
 
 Rules:
-- Include at least 3 different recipes.
+- Return as many different recipes as the user message asks for. That number is 3, 5, or 7.
 - title, ingredients, and steps are Persian (فارسی).
 - Style is everyday Iranian home food (غذای خانگی ایرانی).
 - Prefer the pantry. Build each dish mostly from those items.
@@ -225,6 +242,41 @@ def diet_filters_active(filters: dict[str, bool] | None) -> bool:
     return any(filters.get(key) is True for key in DIET_FILTER_KEYS)
 
 
+def suggest_count(ingredient_count: int) -> int:
+    """How many recipes the pantry can support.
+
+    ``ingredient_count`` is the number of distinct names the model cooks
+    from (remaining chips in leftover mode, otherwise the pantry).
+    1–4 → 3, 5–7 → 5, 8 or more → 7.
+    """
+    try:
+        count = int(ingredient_count)
+    except (TypeError, ValueError):
+        return MIN_RECIPES
+    if isinstance(ingredient_count, bool):
+        return MIN_RECIPES
+    if count >= SUGGEST_SEVEN_AT:
+        return 7
+    if count >= SUGGEST_FIVE_AT:
+        return 5
+    return MIN_RECIPES
+
+
+def cooking_name_count(
+    ingredients: list[str],
+    remaining: list[str] | None,
+    full: bool,
+) -> int:
+    """Names that decide the suggestion allowance."""
+    if (
+        not full
+        and remaining
+        and not _same_names(list(remaining), list(ingredients))
+    ):
+        return len(remaining)
+    return len(ingredients)
+
+
 class GenerateRequest:
     """Validated generate body.
 
@@ -232,9 +284,22 @@ class GenerateRequest:
     ``remaining`` and ``skip`` are leftover context. ``full`` ignores both.
     ``filters`` is the three diet flags. Missing flags are false.
     ``household`` is تعداد نفرات. Missing means 4. The range is 1 to 12.
+    ``count`` is an optional client hint (3, 5, or 7). ``None`` means the
+    pantry allowance. ``exclude`` lists titles already on the page so a
+    «بیشتر» call can ask for new dishes. Full regenerate ignores it.
     """
 
-    __slots__ = ("ingredients", "budget", "remaining", "skip", "full", "filters", "household")
+    __slots__ = (
+        "ingredients",
+        "budget",
+        "remaining",
+        "skip",
+        "full",
+        "filters",
+        "household",
+        "count",
+        "exclude",
+    )
 
     def __init__(
         self,
@@ -245,6 +310,8 @@ class GenerateRequest:
         full: bool = False,
         filters: dict[str, bool] | None = None,
         household: int = DEFAULT_HOUSEHOLD,
+        count: int | None = None,
+        exclude: list[str] | None = None,
     ) -> None:
         self.ingredients = ingredients
         self.budget = budget
@@ -253,6 +320,8 @@ class GenerateRequest:
         self.full = full
         self.filters = normalize_diet_filters(filters)
         self.household = household
+        self.count = count
+        self.exclude = exclude
 
     def __iter__(self):
         yield self.ingredients
@@ -330,6 +399,49 @@ def _parse_skip(raw: Any) -> list[str]:
     )
 
 
+def _parse_exclude(raw: Any) -> list[str]:
+    """Titles already on the page. The error text never echoes them."""
+    return _parse_name_list(
+        raw,
+        max_items=MAX_EXCLUDE,
+        max_length=MAX_TITLE_LENGTH,
+        not_list="Excluded recipes must be a list of strings",
+        too_many="Too many excluded recipes",
+        not_text="Excluded recipes must be plain text",
+        too_long="An excluded recipe title is too long",
+    )
+
+
+def _reject_count() -> NoReturn:
+    raise RecipeRequestError(
+        "invalid_request",
+        "Recipe count must be 3, 5, or 7",
+    )
+
+
+def _parse_requested_count(value: Any) -> int:
+    """Optional batch size. Only 3, 5, or 7 are accepted. The value is not echoed."""
+    if isinstance(value, bool) or value is None or value == "":
+        _reject_count()
+    if isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            _reject_count()
+        number = int(value)
+    elif isinstance(value, int):
+        number = value
+    elif isinstance(value, str):
+        text = value.strip().translate(_DIGIT_TRANSLATION)
+        text = text.replace(",", "").replace("٬", "").replace("،", "").replace(" ", "")
+        if not text.isdigit():
+            _reject_count()
+        number = int(text)
+    else:
+        _reject_count()
+    if number not in SUGGEST_COUNTS:
+        _reject_count()
+    return number
+
+
 def _same_names(left: list[str], right: list[str]) -> bool:
     return [fold_name(name) for name in left] == [fold_name(name) for name in right]
 
@@ -393,6 +505,8 @@ def parse_generate_body(body: Any) -> GenerateRequest:
     ``remaining`` and ``skip`` are used unless ``full`` is true. An explicit
     empty ``remaining`` list in leftover mode is ``no_remaining``.
     Missing ``filters`` means all three diet flags are off.
+    Missing ``count`` means the pantry allowance is chosen later. A present
+    ``count`` must be 3, 5, or 7. ``exclude`` is optional titles to avoid.
     """
     if not isinstance(body, dict):
         raise RecipeRequestError("invalid_request", "Request must be a JSON object")
@@ -424,6 +538,14 @@ def parse_generate_body(body: Any) -> GenerateRequest:
     if "skip" in body and body["skip"] is not None:
         skip = _parse_skip(body["skip"])
 
+    exclude: list[str] | None = None
+    if "exclude" in body and body["exclude"] is not None:
+        exclude = _parse_exclude(body["exclude"])
+
+    requested_count: int | None = None
+    if "count" in body and body["count"] is not None:
+        requested_count = _parse_requested_count(body["count"])
+
     if not full and remaining is not None and not remaining:
         raise RecipeRequestError(
             "no_remaining",
@@ -441,6 +563,8 @@ def parse_generate_body(body: Any) -> GenerateRequest:
         full,
         _parse_filters(body.get("filters", None)),
         household,
+        requested_count,
+        exclude,
     )
 
 
@@ -484,6 +608,26 @@ def _diet_lines(filters: dict[str, bool] | None) -> list[str]:
     return lines
 
 
+_COUNT_FA = {3: "سه", 5: "پنج", 7: "هفت"}
+
+
+def _count_line(count: int) -> str:
+    if count <= MIN_RECIPES:
+        return "حداقل سه دستور بده و فقط JSON را برگردان."
+    word = _COUNT_FA.get(count, "سه")
+    return f"دقیقاً {word} دستور متفاوت بده و فقط JSON را برگردان."
+
+
+def _exclude_lines(exclude: list[str] | None) -> list[str]:
+    titles = [title for title in (exclude or []) if title]
+    if not titles:
+        return []
+    lines = ["دستورهای روی صفحه:"]
+    lines.extend(f"- {title}" for title in titles)
+    lines.append("این نام‌ها را تکرار نکن و دستور تازه بده.")
+    return lines
+
+
 def build_messages(
     ingredients: list[str],
     budget: int | None,
@@ -493,6 +637,8 @@ def build_messages(
     full: bool = False,
     filters: dict[str, bool] | None = None,
     household: int = DEFAULT_HOUSEHOLD,
+    count: int = MIN_RECIPES,
+    exclude: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """Chat messages. The user turn always includes headcount and the week budget.
 
@@ -500,6 +646,8 @@ def build_messages(
     regenerate tells the model to ignore that leftover context. Active diet
     filters are listed after that context and override the pantry.
     ``household`` is تعداد نفرات. Quantities and cost are for that many people.
+    ``count`` is how many recipes to return (3, 5, or 7). ``exclude`` names
+    dishes already on the page; full regenerate does not send them.
     """
     people = household if isinstance(household, int) and not isinstance(household, bool) else DEFAULT_HOUSEHOLD
     if people < MIN_HOUSEHOLD or people > MAX_HOUSEHOLD:
@@ -528,8 +676,10 @@ def build_messages(
             lines.append("نام مواد باقی‌مانده را در فهرست مواد هر دستور بیاور.")
         else:
             lines.append("نام مواد آشپزخانه را در فهرست مواد هر دستور بیاور.")
+        lines.extend(_exclude_lines(exclude))
+    chosen = count if count in SUGGEST_COUNTS else MIN_RECIPES
     lines.extend(_diet_lines(filters))
-    lines.append("حداقل سه دستور بده و فقط JSON را برگردان.")
+    lines.append(_count_line(chosen))
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": "\n".join(lines)},
@@ -743,13 +893,14 @@ def violates_diet(recipe: dict[str, Any], filters: dict[str, bool] | None) -> bo
 def _prefer_diet(
     ranked: list[dict[str, Any]],
     filters: dict[str, bool],
+    count: int,
 ) -> list[dict[str, Any]]:
     """Drop obvious misses when three other recipes remain. Otherwise keep them."""
     if not diet_filters_active(filters):
-        return ranked[:MAX_RECIPES]
+        return ranked[:count]
     compliant = [recipe for recipe in ranked if not violates_diet(recipe, filters)]
     pool = compliant if len(compliant) >= MIN_RECIPES else ranked
-    return pool[:MAX_RECIPES]
+    return pool[:count]
 
 
 def parse_recipes(
@@ -758,13 +909,17 @@ def parse_recipes(
     skip: list[str] | None = None,
     *,
     filters: dict[str, bool] | None = None,
+    count: int = MIN_RECIPES,
+    exclude: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Return exactly three pantry-preferring recipes, or raise ``GapGPTError``.
+    """Return up to ``count`` pantry-preferring recipes, or raise ``GapGPTError``.
 
-    Titles that match ``skip`` are dropped before the three are chosen. The
-    error text never includes those titles. Active diet filters prefer
-    recipes that pass the cheap check, and fall back to the ranked list when
-    fewer than three pass.
+    ``count`` is 3, 5, or 7. Titles that match ``skip`` or ``exclude`` are
+    dropped before the batch is chosen. The error text never includes those
+    titles. Active diet filters prefer recipes that pass the cheap check, and
+    fall back to the ranked list when fewer than three pass. A short list
+    fails the request only when nothing was dropped and fewer than ``count``
+    recipes remain. Dropped titles still succeed when at least three remain.
     """
     try:
         payload = extract_json(text)
@@ -790,9 +945,13 @@ def parse_recipes(
         if recipe is not None:
             parsed.append(recipe)
 
+    chosen = count if count in SUGGEST_COUNTS else MIN_RECIPES
     skipped = _skip_keys(skip)
+    excluded = _skip_keys(exclude)
     if skipped:
         parsed = [recipe for recipe in parsed if not _is_skipped(recipe["title"], skipped)]
+    if excluded:
+        parsed = [recipe for recipe in parsed if not _is_skipped(recipe["title"], excluded)]
 
     pantry_keys = [fold_name(name) for name in pantry]
     active_filters = normalize_diet_filters(filters)
@@ -805,8 +964,13 @@ def parse_recipes(
         ),
     )
     ranked = [recipe for _index, recipe in ranked_pairs]
-    selected = _prefer_diet(ranked, active_filters)
-    if len(selected) < MIN_RECIPES:
+    diet_dropped = diet_filters_active(active_filters) and any(
+        violates_diet(recipe, active_filters) for recipe in ranked
+    )
+    selected = _prefer_diet(ranked, active_filters, chosen)
+    dropped = bool(skipped) or bool(excluded) or diet_dropped
+    minimum = MIN_RECIPES if dropped else chosen
+    if len(selected) < minimum:
         raise _bad_response()
     return selected
 
@@ -826,6 +990,25 @@ def _response_mode(
     return "pantry"
 
 
+def resolve_count(
+    ingredients: list[str],
+    remaining: list[str] | None,
+    full: bool,
+    requested: int | None,
+) -> int:
+    """Clamp a requested batch to the pantry allowance.
+
+    ``requested`` is ``None`` when the client omitted ``count``. An explicit
+    3, 5, or 7 is never raised above the allowance.
+    """
+    allowed = suggest_count(cooking_name_count(ingredients, remaining, full))
+    if requested is None:
+        return allowed
+    if requested not in SUGGEST_COUNTS:
+        return allowed
+    return requested if requested <= allowed else allowed
+
+
 def generate_recipes(
     client: GapGPTClient,
     ingredients: list[str],
@@ -836,27 +1019,34 @@ def generate_recipes(
     full: bool = False,
     filters: dict[str, bool] | None = None,
     household: int = DEFAULT_HOUSEHOLD,
+    count: int | None = None,
+    exclude: list[str] | None = None,
 ) -> dict[str, Any]:
     """Call GapGPT and return ``{"ok": True, "recipes": [...], "mode": ...}``.
 
     Leftover mode ranks and prompts with remaining chips and drops skipped
     dinner titles. Full regenerate uses the whole pantry and does not drop
-    those titles. Diet filters are included in the prompt and applied as a
-    soft check. ``household`` is تعداد نفرات. Each recipe is stamped with
-    that servings count so the page can scale later. A GapGPT error still
-    raises and does not invent recipes.
+    those titles or the ``exclude`` list. Diet filters are included in the
+    prompt and applied as a soft check. ``household`` is تعداد نفرات. Each
+    recipe is stamped with that servings count so the page can scale later.
+    ``count`` is how many recipes to ask for, clamped by ``suggest_count``.
+    A GapGPT error still raises and does not invent recipes.
     """
     people = household if isinstance(household, int) and not isinstance(household, bool) else DEFAULT_HOUSEHOLD
     if people < MIN_HOUSEHOLD or people > MAX_HOUSEHOLD:
         people = DEFAULT_HOUSEHOLD
     active_filters = normalize_diet_filters(filters)
+    chosen = resolve_count(ingredients, remaining, full, count)
     prefer = ingredients
     active_skip: list[str] | None = None
+    active_exclude: list[str] | None = None
     if not full:
         if remaining:
             prefer = remaining
         if skip:
             active_skip = skip
+        if exclude:
+            active_exclude = exclude
     text = client.chat_text(
         build_messages(
             ingredients,
@@ -866,9 +1056,18 @@ def generate_recipes(
             full=full,
             filters=active_filters,
             household=people,
+            count=chosen,
+            exclude=None if full else exclude,
         )
     )
-    recipes = parse_recipes(text, prefer, active_skip, filters=active_filters)
+    recipes = parse_recipes(
+        text,
+        prefer,
+        active_skip,
+        filters=active_filters,
+        count=chosen,
+        exclude=active_exclude,
+    )
     for recipe in recipes:
         recipe["servings"] = people
     return {
@@ -876,5 +1075,6 @@ def generate_recipes(
         "mode": _response_mode(ingredients, remaining, skip, full),
         "filters": active_filters,
         "household": people,
+        "count": len(recipes),
         "recipes": recipes,
     }

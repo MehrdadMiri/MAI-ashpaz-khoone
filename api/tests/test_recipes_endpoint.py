@@ -445,6 +445,47 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(rejected.get_json()["error"], "invalid_request")
         self.assertNotIn(secret, rejected.get_data(as_text=True))
 
+    def test_rich_pantry_returns_seven_and_an_explicit_three_stays_three(self):
+        rich = ["برنج", "عدس", "پیاز", "لوبیا", "ماست", "روغن", "مرغ", "سبزی"]
+        titles = ["عدس‌پلو", "لوبیا پلو", "ماست و خیار", "کوکو سبزی", "کتلت", "آش رشته", "زرشک‌پلو"]
+        payload = {
+            "recipes": [
+                dish(title, ["برنج", "روغن"], ["مواد را آماده کن", "بپز", "سرو کن"], 80000)
+                for title in titles
+            ]
+        }
+        seen = {}
+
+        def transport(request, timeout):
+            del timeout
+            seen["payload"] = json.loads(request.data.decode("utf-8"))
+            return chat_response(json.dumps(payload, ensure_ascii=False))
+
+        gap_client = GapGPTClient(config(), transport=transport)
+        res, _builder = self._post({"ingredients": rich, "budget": 1500000}, gap_client)
+        self.assertEqual(res.status_code, 200, res.get_data(as_text=True))
+        body = res.get_json()
+        self.assertEqual(body["count"], 7)
+        self.assertEqual(len(body["recipes"]), 7)
+        self.assertIn("دقیقاً هفت دستور متفاوت", seen["payload"]["messages"][1]["content"])
+        self.assertNotIn(KEY, res.get_data(as_text=True))
+
+        limited, _builder = self._post(
+            {"ingredients": rich, "budget": 1500000, "count": 3},
+            gap_client,
+        )
+        self.assertEqual(limited.status_code, 200, limited.get_data(as_text=True))
+        self.assertEqual(len(limited.get_json()["recipes"]), 3)
+        self.assertIn("حداقل سه دستور", seen["payload"]["messages"][1]["content"])
+
+        rejected, _builder = self._post(
+            {"ingredients": ["برنج"], "count": "count-secret"},
+            gap_client,
+        )
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(rejected.get_json()["error"], "invalid_request")
+        self.assertNotIn("count-secret", rejected.get_data(as_text=True))
+
 
 if __name__ == "__main__":
     unittest.main()

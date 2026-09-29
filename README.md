@@ -10,7 +10,7 @@ Persian RTL AI meal and recipe demo (آشپزخونه).
 | api | Python (Flask + Gunicorn) | http://localhost:8000 |
 | db | Postgres 16 | localhost:5432 |
 
-The web page is a Persian RTL pantry. You can add and remove ingredient chips, load a sample set of Iranian staples, set a numeric week budget, and set تعداد نفرات (how many people the amounts and prices are for). «به‌روزرسانی قیمت‌ها» stores Okala unit prices (تومان) and the recipe, week, and shopping costs prefer those prices. «سبد اُکالا» on مواد خرید copies the list and opens Okala; it does not check out. The list and budget are stored in Postgres for a browser-local id, and cached in this browser (`localStorage`) when the api or database is unavailable. «پیشنهاد دستور» asks the shared GapGPT client (`api/gapgpt.py`) for at least three Persian recipes from those chips and the week budget. If a meal is marked «خورده شد», that call prefers the chips still left and asks the model not to repeat those meals. «بازتولید کامل» uses every chip again and does not skip them. «عکس یخچال» sends one photo to the same client and shows candidate chips; nothing is added to the pantry until you confirm. «برنامه ۷ روزه» assigns those recipes to صبحانه، ناهار، and شام from شنبه through جمعه and can print or download the week. The plan does not call GapGPT. «مواد خرید» diffs every planned meal against the pantry chips, lets you add or edit a row by hand, shows a price when one exists, and can print or download the list. That list does not call GapGPT. After the recipe cards appear, the page asks the same client for a rough per-serving calorie estimate (and protein, carbohydrate, and fat when the model returns them). Each card says those numbers are an AI estimate. If that call fails, the cards stay without them. Product UI is Persian RTL. This scaffold’s docs and code comments are English.
+The web page is a Persian RTL pantry. You can add and remove ingredient chips, load a sample set of Iranian staples, set a numeric week budget, and set تعداد نفرات (how many people the amounts and prices are for). «به‌روزرسانی قیمت‌ها» stores Okala unit prices (تومان) and the recipe, week, and shopping costs prefer those prices. «سبد اُکالا» on مواد خرید copies the list and opens Okala; it does not check out. The list and budget are stored in Postgres for a browser-local id, and cached in this browser (`localStorage`) when the api or database is unavailable. «پیشنهاد دستور» asks the shared GapGPT client (`api/gapgpt.py`) for three Persian recipes from those chips and the week budget. After that, the button reads «پیشنهاد دستورهای بیشتر» and appends another batch (5 or 7 when the pantry has enough names). «بازتولید کامل» replaces the cards. If a meal is marked «خورده شد», that call prefers the chips still left and asks the model not to repeat those meals. «عکس یخچال» sends one photo to the same client and shows candidate chips; nothing is added to the pantry until you confirm. Adding a dish fills one day and one meal. «برنامه ۷ روزه» is the separate action that fills صبحانه، ناهار، and شام from شنبه through جمعه. The plan can print or download the week. The plan does not call GapGPT. «مواد خرید» diffs every planned meal against the pantry chips, lets you add or edit a row by hand, shows a price when one exists, and can print or download the list. That list does not call GapGPT. After the recipe cards appear, the page asks the same client for a rough per-serving calorie estimate (and protein, carbohydrate, and fat when the model returns them). Each card says those numbers are an AI estimate. If that call fails, the cards stay without them. Product UI is Persian RTL. This scaffold’s docs and code comments are English.
 
 The GitHub repository is public: https://github.com/MehrdadMiri/MAI-ashpaz-khoone. `.env` is gitignored. `.env.example` has placeholders only, and `GAP_CODE_API_KEY` there is empty. Do not commit a real key.
 
@@ -176,7 +176,11 @@ Web `/health` is unchanged.
 
 The browser calls `http://localhost:8080/api/recipes/generate`. Nginx proxies `/api/` to the api service and forwards that path. The api accepts `/api/...` as an alias of the same routes, so `POST /recipes/generate` on port 8000 and `POST /api/recipes/generate` on port 8080 are the same call. The web `/health` check is still the nginx `ok` response. API health through the proxy is `http://localhost:8080/api/health`.
 
-The request JSON is `{ "ingredients": ["برنج"], "budget": 1500000, "household": 4 }`. `budget` may be `null` when the week field is empty; the model prompt still includes that budget context. `household` is تعداد نفرات (1 to 12). Missing `household` means 4. The prompt asks for ingredient quantities and `cost_toman` for that many people, and each returned recipe is stamped with `servings` set to the same number. Leftover regenerate adds `remaining`, `skip`, and `full` (see [Leftover regenerate](#leftover-regenerate)). Active diet chips add `filters` (see [Diet filters](#diet-filters)).
+The request JSON is `{ "ingredients": ["برنج"], "budget": 1500000, "household": 4, "count": 3 }`. `budget` may be `null` when the week field is empty; the model prompt still includes that budget context. `household` is تعداد نفرات (1 to 12). Missing `household` means 4. The prompt asks for ingredient quantities and `cost_toman` for that many people, and each returned recipe is stamped with `servings` set to the same number. Leftover regenerate adds `remaining`, `skip`, and `full` (see [Leftover regenerate](#leftover-regenerate)). Active diet chips add `filters` (see [Diet filters](#diet-filters)).
+
+`count` is how many recipes that call should return: 3, 5, or 7. The allowance follows the distinct names the model cooks from (remaining chips in leftover mode when that list is shorter, otherwise the pantry): **1–4 names → 3**, **5–7 names → 5**, **8 or more → 7**. A missing `count` uses that allowance. An explicit `count` above the allowance is clamped down. Any other `count` is HTTP 400 `invalid_request` and the message does not echo the value.
+
+The first «پیشنهاد دستور» always sends `count: 3`, even when the pantry would allow 5 or 7. After that success the button reads «پیشنهاد دستورهای بیشتر». That click sends the allowance (and `exclude`, the titles already on the page) and **adds** the new cards. It does not remove the ones already shown. «بازتولید کامل» replaces the cards and sends the allowance for the full pantry. A failed «بیشتر» leaves the cards that are already there.
 
 ### تعداد نفرات
 
@@ -204,7 +208,7 @@ When at least one chip is on, the generate body includes all three flags:
 "filters": {"vegetarian": true, "no_onion": false, "diabetic": true}
 ```
 
-Missing `filters`, or `null`, means all three are off. A value that is not `true` or `false` is HTTP 400 `invalid_request`. The message does not echo that value. The GapGPT prompt lists only the active limits and tells the model they override the pantry, including a pantry item the limit forbids. After the reply, the api drops a recipe that clearly names a forbidden food when three other recipes remain. If fewer than three pass, the three recipes are still returned, so the check cannot fail generation. A timeout, a missing key, or an unreadable reply is unchanged: the page shows the Persian retry, and the chips stay.
+Missing `filters`, or `null`, means all three are off. A value that is not `true` or `false` is HTTP 400 `invalid_request`. The message does not echo that value. The GapGPT prompt lists only the active limits and tells the model they override the pantry, including a pantry item the limit forbids. After the reply, the api drops a recipe that clearly names a forbidden food when at least three other recipes remain. If fewer than three pass, the ranked recipes are still returned, so the check cannot fail generation. A timeout, a missing key, or an unreadable reply is unchanged: the page shows the Persian retry, and the chips stay.
 
 ```bash
 curl -sS -X POST http://localhost:8000/recipes/generate \
@@ -226,7 +230,7 @@ While the request is in flight the status line is «در حال پختن اید�
 | Key missing | 503 | `not_configured` | the suggestion service is not ready, plus the key hint |
 | Upstream rejects the key | 502 | `unauthorized` | friendly retry, plus the key hint |
 | Timeout | 504 | `timeout` | friendly retry, plus the key hint |
-| Unreadable model output, or fewer than three usable recipes | 502 | `bad_response` | friendly retry, plus the key hint |
+| Unreadable model output, or fewer usable recipes than requested | 502 | `bad_response` | friendly retry, plus the key hint |
 
 The model is asked for Iranian home cooking in Persian that prefers the pantry names. QA should spot-check that the cards use those names.
 
@@ -299,8 +303,8 @@ The week is شنبه through جمعه. Each day has سه وعده: صبحانه�
 
 Older saves stored one شام per day (`slots.sat` as a recipe id, `used.sat` as a boolean). Those load as the شام slot. صبحانه and ناهار start «خالی». Share links with `v: 1` do the same. New links are `v: 2` and list every filled meal.
 
-- «افزودن به برنامه» on a recipe card opens a sheet of the ۲۱ وعده (seven days × سه وعده), the same sheet pattern as fridge confirm. Pick a slot to assign that recipe. A slot that already has a dish offers «جایگزین».
-- «برنامه ۷ روزه» fills every empty slot from the recipes already on the page. When more than one recipe exists, a day does not get the same dish for صبحانه، ناهار، and شام. With only one recipe, that dish fills the empty slots. Slots you already filled stay as they are. With no recipes yet, every slot stays «خالی» and the status line asks you to suggest recipes first. «انتخاب» on an empty slot opens the recipe list once recipes exist.
+- «افزودن به برنامه» on a recipe card opens a sheet of the ۲۱ وعده (seven days × سه وعده), the same sheet pattern as fridge confirm. Pick a slot to assign that recipe. That write touches **only** the chosen day and meal. The other days, and the other meals on that day, stay as they are. A slot that already has a dish offers «جایگزین», which also changes only that slot.
+- «برنامه ۷ روزه» is a separate button. It fills every empty slot from the recipes already on the page. Assigning one dish does not press it. When more than one recipe exists, a day does not get the same dish for صبحانه، ناهار، and شام. With only one recipe, that dish fills the empty slots. Slots you already filled stay as they are. With no recipes yet, every slot stays «خالی» and the status line asks you to suggest recipes first. «انتخاب» on an empty slot opens the recipe list once recipes exist.
 - On a filled slot, «جایگزین» opens that list, plus «خالی» to clear that slot only.
 - «خورده شد» on a filled slot marks that meal as eaten. Press it again to undo. Replacing or clearing that slot clears the mark. The mark is stored on the plan (`used.day.meal`), in Postgres and in `ashpaz-khoone.plan.v1`, and is what leftover regenerate skips. Print and Markdown add «خورده شد» on that meal. Empty slots have no toggle.
 - If the week budget is set and a recipe has a تومان cost, a line under the title sums every planned meal at the current تعداد نفرات. The same dish on two slots counts twice. When the sum is over the budget the line says so and adds that چاپ و خروجی are still allowed. You can still assign, swap, print, and download. Changing تعداد نفرات updates that sum and does not clear the slots.
@@ -327,7 +331,7 @@ QA on http://localhost:8080, still with no key:
 
 ## Leftover regenerate
 
-«پیشنهاد دستور» is leftover-aware. «بازتولید کامل» is the explicit full path. Neither button clears the pantry chips or the week budget. Assigned meals stay on the week until you change them. New cards are remembered for «افزودن به برنامه» and «برنامه ۷ روزه».
+«پیشنهاد دستور» is leftover-aware. The first success shows three cards and the button becomes «پیشنهاد دستورهای بیشتر», which appends. «بازتولید کامل» is the explicit full path and replaces the cards. Neither button clears the pantry chips or the week budget. Assigned meals stay on the week until you change them. New cards are remembered for «افزودن به برنامه» and «برنامه ۷ روزه».
 
 On each filled slot, «خورده شد» toggles that meal. While it is on, that slot is marked eaten. Breakfast, lunch, and dinner are independent. An older dinner-only week still marks شام, because that save loads as the dinner slot.
 
@@ -496,10 +500,10 @@ The release gate for `v0.2.0` is [docs/QA-SMOKE.md](docs/QA-SMOKE.md). `v0.1.0` 
 1. Compose up with the key set. The آشپزخونه page loads.
 2. «بارگذاری نمونه» shows at least eight chips.
 3. One fridge photo, then confirm, adds only the checked names. Several photos share one confirm sheet, with confidence and merged names.
-4. Set a week budget and «پیشنهاد دستور» returns at least three cards. «تعداد نفرات» starts at ۴, survives a reload, and scales card amounts, meal costs, the budget line, and «مواد خرید» without clearing the week. Generate and «بازتولید کامل» send that headcount.
+4. Set a week budget and «پیشنهاد دستور» returns three cards, then the button reads «پیشنهاد دستورهای بیشتر» and appends. With eight sample chips that later call asks for seven. «تعداد نفرات» starts at ۴, survives a reload, and scales card amounts, meal costs, the budget line, and «مواد خرید» without clearing the week. Generate and «بازتولید کامل» send that headcount.
 5. Diet chips «گیاهی», «بدون پیاز», and «مناسب دیابت» can be combined, survive a reload, and are named on the status line.
 6. After the cards, a rough calorie line may appear. If that estimate fails, the cards stay and the recipe error is not used.
-7. «برنامه ۷ روزه» fills شنبه through جمعه. «خورده شد» marks a day; «پیشنهاد دستور» then prefers remaining chips and skips that dinner, and «بازتولید کامل» does not.
+7. Adding one dish fills only that day and meal. «برنامه ۷ روزه» is the separate fill for شنبه through جمعه. «خورده شد» marks one meal; «پیشنهاد دستور» then prefers remaining chips and skips that meal, and «بازتولید کامل» does not.
 8. Edit the pantry and generate again.
 9. «کپی لینک» copies a `#p=` link. «چاپ» is an A4 poster. A soft over-budget line does not block export. «مواد خرید» lists what the dinners need and the pantry does not have.
 10. «به‌روزرسانی قیمت‌ها» stores Okala unit prices (fixture when `OKALA_LIVE=0`). Cards, the week, and shopping rows say اُکالا when that price is used, «بخشی از اُکالا» when only some lines match, and «حدود» for the GapGPT estimate. A failed refresh keeps the last price or that estimate. On مواد خرید, «جمع» sums the line totals, and a stale line says «کهنه». A manual name is included in the refresh and in «سبد اُکالا». «سبد اُکالا» copies at most ten names and opens the store; it does not prefill a basket or take payment. Headcount still scales each plan quantity once; a مقدار you typed stays.
@@ -575,7 +579,7 @@ The longer [demo path](#demo-path-qa) below still covers a boot with no key.
      -d '{"ingredients":["برنج","عدس","پیاز"],"budget":1500000}'
    ```
 
-9. With a real key only in the gitignored `.env` or the environment, recreate the api service and repeat step 8. After the loading line, at least three Persian cards appear. Each card has a title, ingredient tags, and steps. A rough تومان badge appears when the model returns a cost. «افزودن به برنامه» on a card opens the seven days. Choosing one puts that title on the week. See [Meal plan](#meal-plan).
+9. With a real key only in the gitignored `.env` or the environment, recreate the api service and repeat step 8. After the loading line, three Persian cards appear. Each card has a title, ingredient tags, and steps. A rough تومان badge appears when the model returns a cost. The button then reads «پیشنهاد دستورهای بیشتر». «افزودن به برنامه» opens one slot. Choosing it puts that title on that day and meal only. The other days stay «خالی» until «برنامه ۷ روزه». See [Meal plan](#meal-plan).
 
    Spot-check the cards against the sample pantry (برنج، پیاز، عدس، لوبیا، سیب‌زمینی، گوجه‌فرنگی، ماست، روغن). Those names should show up as the main ingredients. The request includes the week budget you typed.
 

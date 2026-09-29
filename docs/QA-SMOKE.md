@@ -134,7 +134,10 @@ Repeat the two-photo curl with real fridge JPEGs instead of the tiny file. Expec
 - Set «بودجه هفته» to a number such as `1500000`.
 - Before the first success, the recipe panel asks you to set the budget and press «پیشنهاد دستور».
 - Press «پیشنهاد دستور» once. The status is «در حال پختن ایده‌ها…», skeleton cards show, and the button does not send a second request while the first is in flight.
-- At least three Persian cards appear. Each has a title, ingredient tags, and steps. Spot-check them against the pantry names. A تومان badge appears when the model returned a cost.
+- That first success shows **three** Persian cards, even when the pantry is large. Each has a title, ingredient tags, and steps. Spot-check them against the pantry names. A تومان badge appears when the model returned a cost.
+- The same button now reads «پیشنهاد دستورهای بیشتر». Press it. The first three titles stay, and new cards are added under them. The request does not wipe the list. «بازتولید کامل» is what replaces the cards.
+- How many the later call asks for depends on the distinct pantry names (or the remaining chips, when a meal is marked eaten and that list is shorter): 1–4 names → 3, 5–7 names → 5, 8 or more → 7. «بارگذاری نمونه» is eight chips, so «بیشتر» and «بازتولید کامل» ask for 7. The first «پیشنهاد دستور» still asks for 3.
+- A failed «بیشتر» leaves the cards already on the page.
 - Continue with 4b and 4c before leaving these cards.
 
 ### 4b. Diet filters
@@ -215,7 +218,8 @@ This check is the v0.3 meal-slot slice (ticket #18). Do **not** create a `v0.3.0
 
 - The week is شنبه through جمعه. Each day shows سه وعده: صبحانه، ناهار، شام. An empty slot says «خالی» and offers «انتخاب».
 - «برنامه ۷ روزه» fills every empty slot from the cards. With more than one recipe, one day does not get the same dish for all three meals. A single recipe may fill every empty slot. Slots you already filled stay as they are.
-- «افزودن به برنامه» on a card assigns that recipe to one slot (۲۱ choices). «جایگزین» swaps that slot. «خالی» on that sheet clears that slot only.
+- «افزودن به برنامه» on a card assigns that recipe to one slot (۲۱ choices). After you pick one, the other six days and the other meals on that day stay «خالی». «جایگزین» swaps that slot only. «خالی» on that sheet clears that slot only. This does not fill the week.
+- «برنامه ۷ روزه» is the only control that fills the empty slots across شنبه تا جمعه. Use it on purpose. A single assign does not press it.
 - On a filled slot, «خورده شد» toggles that meal. The other meals on the day stay as they are. Press again to undo. «جایگزین» or «خالی» on that slot clears its mark. The pantry chips do not change.
 - An older dinner-only week (one recipe id on the day) still shows that dish as شام. صبحانه and ناهار start «خالی».
 
@@ -224,7 +228,7 @@ This check is the v0.3 meal-slot slice (ticket #18). Do **not** create a `v0.3.0
 Needs at least one filled day (step 5) and the sample chips (step 2). This step is part of the v0.2.0 gate. The tag itself is step 10.
 
 - Mark one شام «خورده شد». That slot shows the meal is eaten. The other meals, the other days, and the chips stay. Marking صبحانه does not mark ناهار or شام.
-- Press «پیشنهاد دستور». The request uses the chips that eaten meal did not use, and it skips that meal’s title. The week budget is still sent. At least three new cards replace the previous cards. The eaten slot stays. The pantry chips are unchanged.
+- Press «پیشنهاد دستور» (or «پیشنهاد دستورهای بیشتر» if cards are already showing). The request uses the chips that eaten meal did not use, and it skips that meal’s title. The week budget is still sent. The first success shows three cards. A later «بیشتر» adds cards and keeps the earlier titles. The eaten slot stays. The pantry chips are unchanged.
 - Press «بازتولید کامل». This call uses every chip, keeps the same budget, and does not skip the eaten title. The cards refresh. The chips and the eaten mark stay.
 - If the eaten meals have used every chip, «پیشنهاد دستور» does not call the API. It asks you to add a chip or press «بازتولید کامل». «بازتولید کامل» still calls with the full chip list.
 - Diet chips that are still on (step 4b) stay on for both buttons. The status line still names them.
@@ -259,7 +263,8 @@ Repeat the two curls. Leftover: HTTP 200, `"mode": "leftovers"`, three recipes, 
 ### 6. Edit the pantry — generate again
 
 - Remove one chip and add a different ingredient.
-- Press «پیشنهاد دستور» again. A new set of at least three cards replaces the previous set. The pantry chips you just edited are still there. The week keeps the meals already assigned unless you change them.
+- Press «پیشنهاد دستورهای بیشتر». The cards already on the page stay, and new ones are added. The pantry chips you just edited are still there. The week keeps the meals already assigned unless you change them.
+- Press «بازتولید کامل» when you want a new set instead of more cards. That replaces the list. The week slots stay until you change them.
 
 ### 7. Share and print the week
 

@@ -297,6 +297,8 @@ def recipes_generate():
             full=parsed.full,
             filters=parsed.filters,
             household=parsed.household,
+            count=parsed.count,
+            exclude=parsed.exclude,
         ),
         "Recipe generation failed",
     )

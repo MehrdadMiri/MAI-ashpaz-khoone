@@ -32,6 +32,8 @@ const THREE = [
 
 test("loading and plan-button copy is the product text", () => {
   assert.equal(COPY.suggest, "پیشنهاد دستور");
+  assert.equal(COPY.suggestMore, "پیشنهاد دستورهای بیشتر");
+  assert.equal(COPY.moreNote, "دستورهای تازه به همین فهرست اضافه شد.");
   assert.equal(COPY.loading, "در حال پختن ایده‌ها…");
   assert.equal(COPY.retry, "تلاش دوباره");
   assert.equal(COPY.addToPlan, "افزودن به برنامه");
@@ -46,6 +48,7 @@ test("payload includes pantry chips and week budget", () => {
     ingredients: ["برنج", "پیاز"],
     budget: 1500000,
     household: 4,
+    count: 3,
   });
   assert.deepEqual(recipes.buildGeneratePayload(pantry(["روغن"], "")).budget, null);
   assert.equal(recipes.buildGeneratePayload(pantry(["روغن"], "0")).budget, 0);
@@ -273,10 +276,12 @@ test("suggest renders three Persian cards and blocks a second submit", async () 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, ENDPOINT);
   assert.equal(calls[0].options.method, "POST");
+  assert.equal(doc.nodes.suggest.textContent, COPY.suggest);
   assert.deepEqual(JSON.parse(calls[0].options.body), {
     ingredients: ["برنج", "عدس"],
     budget: 250000,
     household: 4,
+    count: 3,
   });
   assert.equal(doc.nodes.suggest.disabled, true);
   assert.equal(doc.nodes["recipe-retry"].disabled, true);
@@ -293,6 +298,7 @@ test("suggest renders three Persian cards and blocks a second submit", async () 
   await flush();
 
   assert.equal(doc.nodes.suggest.disabled, false);
+  assert.equal(doc.nodes.suggest.textContent, COPY.suggestMore);
   assert.equal(doc.nodes["recipe-grid"].hidden, false);
   assert.equal(doc.nodes["recipe-error"].hidden, true);
   assert.equal(doc.nodes["recipe-empty"].hidden, true);
@@ -448,6 +454,7 @@ test("leftover suggest sends remaining chips, skips eaten dinners, and keeps the
       remaining: ["ماست"],
       skip: ["عدس‌پلو"],
       full: false,
+      count: 3,
     });
     assert.equal(doc.nodes["recipe-status"].textContent, COPY.leftoverNote);
     assert.equal(doc.nodes["recipe-grid"].hidden, false);
@@ -487,14 +494,14 @@ test("full regenerate ignores the eaten skip and retry repeats that mode", async
     doc.nodes["regenerate-full"].listeners.click();
     await flush();
     await flush();
-    assert.deepEqual(calls[0], { ingredients: chips, budget: 250000, household: 4, full: true });
+    assert.deepEqual(calls[0], { ingredients: chips, budget: 250000, household: 4, full: true, count: 3 });
     assert.equal(doc.nodes["recipe-error-text"].textContent, ERROR_COPY.unauthorized);
     assert.equal(doc.nodes["recipe-error-text"].textContent.includes("unit-test-key"), false);
     doc.nodes["recipe-retry"].listeners.click();
     await flush();
     await flush();
     assert.equal(calls.length, 3);
-    assert.deepEqual(calls[1], { ingredients: chips, budget: 250000, household: 4, full: true });
+    assert.deepEqual(calls[1], { ingredients: chips, budget: 250000, household: 4, full: true, count: 3 });
     assert.ok(Array.isArray(calls[2].recipes));
     assert.equal(doc.nodes["recipe-status"].textContent, COPY.fullNote);
     assert.equal(doc.nodes["recipe-grid"].hidden, false);
@@ -530,7 +537,7 @@ test("an eaten week with no chips left does not call the API until full regenera
     doc.nodes["regenerate-full"].listeners.click();
     await flush();
     await flush();
-    assert.deepEqual(calls[0], { ingredients: ["برنج"], budget: 10, household: 4, full: true });
+    assert.deepEqual(calls[0], { ingredients: ["برنج"], budget: 10, household: 4, full: true, count: 3 });
     assert.equal(doc.nodes["recipe-grid"].hidden, false);
     assert.equal(calls.length, 2);
     assert.ok(Array.isArray(calls[1].recipes));
@@ -675,7 +682,7 @@ test("a late nutrition response does not relabel newer cards", async () => {
   doc.nodes.suggest.listeners.click();
   await flush();
   await flush();
-  doc.nodes.suggest.listeners.click();
+  doc.nodes["regenerate-full"].listeners.click();
   await flush();
   await flush();
   assert.equal(resolvers.length, 2);
@@ -738,6 +745,7 @@ test("diet chips toggle together and ride on generate", async () => {
     ingredients: ["برنج", "عدس"],
     budget: 250000,
     household: 4,
+    count: 3,
     filters: { vegetarian: true, no_onion: false, diabetic: true },
   });
   assert.equal(doc.nodes["diet-vegetarian"].disabled, true);
@@ -770,6 +778,7 @@ test("a saved pantry filter is sent after a new pantry reads the same storage", 
     ingredients: ["برنج"],
     budget: 10,
     household: 4,
+    count: 3,
     filters: { vegetarian: true, no_onion: true, diabetic: false },
   });
   again.setFilter("vegetarian", false);
@@ -778,6 +787,7 @@ test("a saved pantry filter is sent after a new pantry reads the same storage", 
     ingredients: ["برنج"],
     budget: 10,
     household: 4,
+    count: 3,
   });
   again.setHousehold(6);
   assert.equal(recipes.buildGeneratePayload(again).household, 6);
@@ -825,4 +835,91 @@ test("recipe cards scale amounts and cost for the current household and keep the
   assert.equal(selected[0].servings, 6);
   assert.equal(recipes.messageForFailure(400, { error: "invalid_household", message: "secret" }), ERROR_COPY.invalid_household);
   assert.equal(recipes.hintForFailure({ error: "invalid_household" }), "");
+});
+
+test("suggest count is 3, then 5, then 7 as the pantry grows", () => {
+  assert.equal(recipes.suggestCount(0), 3);
+  assert.equal(recipes.suggestCount(1), 3);
+  assert.equal(recipes.suggestCount(4), 3);
+  assert.equal(recipes.suggestCount(5), 5);
+  assert.equal(recipes.suggestCount(7), 5);
+  assert.equal(recipes.suggestCount(8), 7);
+  assert.equal(recipes.suggestCount(12), 7);
+  assert.equal(recipes.SUGGEST_FIVE_AT, 5);
+  assert.equal(recipes.SUGGEST_SEVEN_AT, 8);
+  const rich = ["برنج", "عدس", "پیاز", "لوبیا", "ماست", "روغن", "مرغ", "سبزی", "تخم‌مرغ"];
+  assert.equal(recipes.buildGeneratePayload(pantry(rich, "10")).count, 3);
+  assert.equal(recipes.buildGeneratePayload(pantry(rich, "10"), { more: true }).count, 7);
+  assert.equal(recipes.buildGeneratePayload(pantry(rich.slice(0, 6), "10"), { full: true }).count, 5);
+  assert.equal(recipes.buildGeneratePayload(pantry(rich.slice(0, 4), "10"), { more: true }).count, 3);
+  const seven = [];
+  for (let i = 0; i < 8; i += 1) {
+    seven.push(dish("غذا " + i, ["برنج"], ["آماده کن", "بپز", "سرو کن"], 1000));
+  }
+  assert.equal(recipes.selectRecipes(seven).length, 7);
+  assert.equal(recipes.selectRecipes(seven.slice(0, 2)), null);
+});
+
+test("پیشنهاد دستورهای بیشتر appends and a failed more keeps the first cards", async () => {
+  const rich = ["برنج", "عدس", "پیاز", "لوبیا", "ماست", "روغن", "مرغ", "سبزی", "تخم‌مرغ"];
+  const extra = ["کوکو سبزی", "کتلت", "آش رشته", "زرشک‌پلو", "عدسی", "کشک بادمجان", "میرزا قاسمی"].map((title) =>
+    dish(title, ["برنج", "روغن"], ["مواد را آماده کن", "بپز", "سرو کن"], 80000),
+  );
+  const doc = fakeDocument();
+  const calls = [];
+  let round = 0;
+  recipes.mount(doc, pantry(rich, "1500000"), (url, options) => {
+    if (url === recipes.NUTRITION_ENDPOINT) {
+      return Promise.resolve(jsonResponse(200, { ok: true, estimates: [] }));
+    }
+    calls.push(JSON.parse(options.body));
+    round += 1;
+    if (round === 1) return Promise.resolve(jsonResponse(200, { ok: true, recipes: THREE }));
+    if (round === 2) return Promise.resolve(jsonResponse(502, { ok: false, error: "upstream_error", message: "secret" }));
+    if (round === 3) return Promise.resolve(jsonResponse(200, { ok: true, recipes: extra }));
+    return Promise.resolve(jsonResponse(200, { ok: true, recipes: extra.slice(0, 3) }));
+  });
+
+  assert.equal(doc.nodes.suggest.textContent, COPY.suggest);
+  doc.nodes.suggest.listeners.click();
+  await flush();
+  await flush();
+  assert.equal(calls[0].count, 3);
+  assert.equal(calls[0].exclude, undefined);
+  assert.equal(doc.nodes.suggest.textContent, COPY.suggestMore);
+  assert.equal(cardsOf(doc.nodes["recipe-grid"]).length, 3);
+  assert.equal(cardsOf(doc.nodes["recipe-grid"])[0].children[0].children[0].textContent, "عدس‌پلو");
+
+  doc.nodes.suggest.listeners.click();
+  await flush();
+  await flush();
+  assert.equal(calls[1].count, 7);
+  assert.deepEqual(calls[1].exclude, ["عدس‌پلو", "لوبیا پلو", "ماست و خیار"]);
+  assert.equal(doc.nodes["recipe-grid"].hidden, false);
+  assert.equal(cardsOf(doc.nodes["recipe-grid"]).length, 3);
+  assert.equal(doc.nodes["recipe-error"].hidden, false);
+  assert.equal(doc.nodes["recipe-error-text"].textContent.includes("secret"), false);
+  assert.equal(cardsOf(doc.nodes["recipe-grid"])[0].children[0].children[0].textContent, "عدس‌پلو");
+
+  doc.nodes["recipe-retry"].listeners.click();
+  await flush();
+  await flush();
+  assert.equal(calls[2].count, 7);
+  assert.equal(cardsOf(doc.nodes["recipe-grid"]).length, 10);
+  assert.equal(cardsOf(doc.nodes["recipe-grid"])[0].children[0].children[0].textContent, "عدس‌پلو");
+  assert.equal(cardsOf(doc.nodes["recipe-grid"])[3].children[0].children[0].textContent, "کوکو سبزی");
+  assert.match(doc.nodes["recipe-status"].textContent, /اضافه شد/);
+  assert.equal(doc.events[doc.events.length - 1].detail.append, true);
+  assert.equal(doc.events[doc.events.length - 1].detail.recipes.length, 10);
+
+  doc.nodes["regenerate-full"].listeners.click();
+  await flush();
+  await flush();
+  assert.equal(calls[3].count, 7);
+  assert.equal(calls[3].full, true);
+  assert.equal(calls[3].exclude, undefined);
+  assert.equal(cardsOf(doc.nodes["recipe-grid"]).length, 3);
+  assert.equal(cardsOf(doc.nodes["recipe-grid"])[0].children[0].children[0].textContent, "کوکو سبزی");
+  assert.match(doc.nodes["recipe-status"].textContent, /بازتولید کامل/);
+  assert.equal(doc.nodes.suggest.textContent, COPY.suggestMore);
 });
