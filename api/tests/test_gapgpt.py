@@ -223,6 +223,41 @@ class ClientTests(unittest.TestCase):
         payload = json.loads(recorder.requests[0].data.decode("utf-8"))
         self.assertEqual(payload["messages"][0]["content"], parts)
 
+    def test_chat_with_image_posts_data_url(self):
+        recorder = Recorder()
+        client = GapGPTClient(make_config(), transport=recorder)
+        image = b"\xff\xd8\xff\xd9"
+        text = client.chat_with_image(
+            "مواد یخچال؟",
+            image,
+            "image/jpeg",
+            system="list foods",
+        )
+        self.assertEqual(text, "pong")
+        payload = json.loads(recorder.requests[0].data.decode("utf-8"))
+        self.assertEqual(payload["model"], DEFAULT_MODEL)
+        self.assertEqual(payload["messages"][0], {"role": "system", "content": "list foods"})
+        parts = payload["messages"][1]["content"]
+        self.assertEqual(parts[0], {"type": "text", "text": "مواد یخچال؟"})
+        url = parts[1]["image_url"]["url"]
+        self.assertTrue(url.startswith("data:image/jpeg;base64,"))
+        self.assertNotIn(KEY, json.dumps(payload))
+        self.assertEqual(recorder.requests[0].get_header("Authorization"), f"Bearer {KEY}")
+
+    def test_chat_with_image_rejects_bad_type_and_size_without_calling(self):
+        recorder = Recorder()
+        client = GapGPTClient(make_config(), transport=recorder)
+        with self.assertRaises(GapGPTError) as caught:
+            client.chat_with_image("مواد؟", b"\xff\xd8\xff\xd9", "image/svg+xml")
+        self.assertEqual(caught.exception.code, "invalid_request")
+        self.assertEqual(caught.exception.http_status, 400)
+        huge = b"\xff\xd8\xff" + b"x" * gapgpt.MAX_IMAGE_BYTES
+        with self.assertRaises(GapGPTError) as caught:
+            client.chat_with_image("مواد؟", huge, "image/jpeg")
+        self.assertEqual(caught.exception.http_status, 413)
+        self.assertNotIn(KEY, str(caught.exception))
+        self.assertEqual(recorder.requests, [])
+
     def test_list_content_response(self):
         recorder = Recorder(
             body={

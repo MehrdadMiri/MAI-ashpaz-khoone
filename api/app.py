@@ -4,6 +4,8 @@ The shared GapGPT client lives in gapgpt.py. /health reports whether a key
 is configured and does not call the model. POST /gapgpt/smoke sends one
 fixed chat completion when GAP_CODE_API_KEY is set. POST /recipes/generate
 asks that client for Persian recipes from pantry items and a week budget.
+POST /vision/fridge sends one fridge photo to that client's vision call and
+returns candidate ingredient names. It does not store them.
 """
 
 import os
@@ -11,13 +13,23 @@ import os
 import psycopg
 from flask import Flask, jsonify, request
 
-from gapgpt import GapGPTClient, GapGPTConfig, GapGPTError
+from gapgpt import MAX_IMAGE_BYTES, GapGPTClient, GapGPTConfig, GapGPTError
 from recipes import (
     RECIPE_CLIENT_TIMEOUT,
     RecipeRequestError,
     generate_recipes,
     parse_generate_body,
 )
+from vision import (
+    VISION_CLIENT_TIMEOUT,
+    VisionRequestError,
+    read_fridge_request,
+    recognize_fridge,
+)
+
+# Recipe JSON stays small. Fridge photos need a higher cap; nginx matches it.
+JSON_MAX_BYTES = 64 * 1024
+VISION_REQUEST_MAX_BYTES = MAX_IMAGE_BYTES + (2 * 1024 * 1024)
 
 class ApiPrefixMiddleware:
     """Treat /api/... as an alias of /... so nginx can forward the path unchanged."""
@@ -39,8 +51,10 @@ app.wsgi_app = ApiPrefixMiddleware(app.wsgi_app)
 # Insertion order, so documented smoke JSON matches the response body.
 app.json.sort_keys = False
 app.json.ensure_ascii = False
-# Pantry names are short. Reject oversized bodies before they reach the model.
-app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
+# Fridge uploads are the largest accepted body. Other routes stay at JSON_MAX_BYTES
+# via before_request. Non-file form fields stay small; the image is a file part.
+app.config["MAX_CONTENT_LENGTH"] = VISION_REQUEST_MAX_BYTES
+app.config["MAX_FORM_MEMORY_SIZE"] = JSON_MAX_BYTES
 
 
 def setting(name, default=""):
@@ -97,6 +111,20 @@ def respond_gapgpt(fn, failure_message):
         )
 
 
+@app.before_request
+def limit_request_body():
+    length = request.content_length
+    if length is None:
+        return None
+    if request.path == "/vision/fridge":
+        limit = VISION_REQUEST_MAX_BYTES
+    else:
+        limit = JSON_MAX_BYTES
+    if length > limit:
+        return request_too_large(None)
+    return None
+
+
 @app.errorhandler(413)
 def request_too_large(_exc):
     return (
@@ -120,6 +148,7 @@ def root():
             "health": "/health",
             "gapgpt_smoke": "/gapgpt/smoke",
             "recipes_generate": "/recipes/generate",
+            "vision_fridge": "/vision/fridge",
         }
     )
 
@@ -187,4 +216,35 @@ def recipes_generate():
             budget,
         ),
         "Recipe generation failed",
+    )
+
+
+@app.get("/vision/fridge")
+def vision_fridge_get():
+    return (
+        jsonify(
+            {
+                "ok": False,
+                "error": "method_not_allowed",
+                "message": "Use POST /vision/fridge",
+            }
+        ),
+        405,
+    )
+
+
+@app.post("/vision/fridge")
+def vision_fridge():
+    # The image is untrusted and is not logged. Errors never echo it or the key.
+    try:
+        image, mime = read_fridge_request(request)
+    except VisionRequestError as exc:
+        return jsonify(exc.to_dict()), exc.http_status
+    return respond_gapgpt(
+        lambda: recognize_fridge(
+            build_gapgpt_client(timeout=VISION_CLIENT_TIMEOUT),
+            image,
+            mime,
+        ),
+        "Fridge vision failed",
     )

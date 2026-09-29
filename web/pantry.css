@@ -611,6 +611,217 @@ h2 {
   font-weight: 600;
 }
 
+.fridge-launch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 0.85rem;
+  margin-top: 0.75rem;
+}
+
+.fridge-launch .hint {
+  flex: 1;
+  min-width: 12rem;
+}
+
+#fridge-open,
+.sheet-actions button,
+#fridge-retry,
+#fridge-extra button {
+  min-height: 2.75rem;
+  padding: 0.7rem 1rem;
+  border-radius: 0.9rem;
+}
+
+#fridge-open,
+#fridge-pick,
+#fridge-cancel,
+#fridge-close {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+#fridge-open,
+#fridge-camera,
+#fridge-shutter,
+#fridge-apply,
+#fridge-retry {
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: #fffdf8;
+  font-weight: 700;
+}
+
+#fridge-open {
+  border: 1px solid #efd0c4;
+  background: #fff;
+  color: var(--accent);
+}
+
+#fridge-open:hover:not(:disabled),
+#fridge-camera:hover:not(:disabled),
+#fridge-shutter:hover:not(:disabled),
+#fridge-apply:hover:not(:disabled),
+#fridge-retry:hover:not(:disabled) {
+  background: var(--accent-dark);
+  border-color: transparent;
+  color: #fffdf8;
+}
+
+#fridge-pick,
+#fridge-cancel {
+  font-weight: 600;
+}
+
+#fridge-pick:hover:not(:disabled),
+#fridge-cancel:hover:not(:disabled),
+#fridge-close:hover:not(:disabled) {
+  background: #faf6f0;
+}
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0.75rem;
+  background: rgba(31, 26, 20, 0.46);
+}
+
+.sheet-card {
+  width: min(36rem, 100%);
+  max-height: min(92vh, 44rem);
+  overflow: auto;
+  padding: 1rem 1rem 1.1rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 1.25rem 1.25rem 1rem 1rem;
+  box-shadow: var(--shadow);
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+#fridge-close {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  border-radius: 999px;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.sheet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+
+#fridge-video {
+  width: 100%;
+  max-height: 18rem;
+  margin-top: 0.35rem;
+  border-radius: 1rem;
+  background: #1f1a14;
+  object-fit: cover;
+}
+
+.fridge-note {
+  margin-top: 0.75rem;
+  padding: 0.75rem 0.9rem;
+  background: #fff8ee;
+  border: 1px solid var(--chip-line);
+  border-radius: 0.9rem;
+  color: var(--accent-dark);
+  font-weight: 600;
+}
+
+#fridge-loading {
+  margin-top: 0.75rem;
+  color: var(--accent-dark);
+  font-weight: 700;
+}
+
+.sheet.is-busy #fridge-loading {
+  animation: cooking 1.2s ease-in-out infinite;
+}
+
+.confirm-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.confirm-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  padding: 0.3rem 0.45rem 0.3rem 0.7rem;
+  border: 1px solid var(--chip-line);
+  border-radius: 999px;
+  background: var(--chip-bg);
+}
+
+.confirm-chip input[type="checkbox"] {
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: var(--accent);
+  flex: none;
+}
+
+.confirm-chip input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.confirm-chip input[type="text"]:focus {
+  background: #fff;
+}
+
+.confirm-chip.is-off {
+  opacity: 0.55;
+}
+
+.confirm-empty {
+  margin-top: 0.75rem;
+  color: var(--muted);
+}
+
+#fridge-confirm-status {
+  min-height: 0;
+  margin-top: 0.55rem;
+}
+
+#fridge-confirm-status:empty {
+  display: none;
+}
+
+#fridge-extra {
+  margin-top: 0.75rem;
+}
+
 @media (max-width: 40rem) {
   .page {
     padding-top: 1.5rem;
@@ -633,7 +844,10 @@ h2 {
   .empty-actions button,
   #suggest,
   #recipe-retry,
-  .plan-button {
+  .plan-button,
+  #fridge-open,
+  .sheet-actions button,
+  #fridge-retry {
     width: 100%;
   }
 
@@ -652,8 +866,19 @@ h2 {
     transform: none;
   }
 
-  .recipes-panel.is-busy #recipe-status {
+  .recipes-panel.is-busy #recipe-status,
+  .sheet.is-busy #fridge-loading {
     animation: none;
+  }
+}
+
+@media (min-width: 40rem) {
+  .sheet {
+    align-items: center;
+  }
+
+  .sheet-card {
+    border-radius: 1.25rem;
   }
 }
 

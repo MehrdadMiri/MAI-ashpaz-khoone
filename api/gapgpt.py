@@ -1,7 +1,8 @@
 """Shared GapGPT client (OpenAI-compatible chat completions).
 
-Later tickets (recipe generation, fridge vision) should call ``GapGPTClient.chat``.
-Configuration comes only from the environment:
+Recipe generation calls ``GapGPTClient.chat``. Fridge vision calls
+``GapGPTClient.chat_with_image``, which sends the same ``/chat/completions``
+request with an image part. Configuration comes only from the environment:
 
   GAP_CODE_API_KEY   required to call the API; never logged or returned
   GAPGPT_BASE_URL    default https://api.gapgpt.app/v1
@@ -14,6 +15,7 @@ logs, error messages, response bodies, or ``repr``.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import urllib.error
@@ -30,6 +32,12 @@ MODEL_ENV = "GAPGPT_MODEL"
 
 DEFAULT_TIMEOUT_SECONDS = 60.0
 MAX_RESPONSE_BYTES = 2_000_000
+# Vision uploads are capped here so a caller cannot turn the chat method
+# into an unbounded encoder. The fridge route applies the same product limit.
+MAX_IMAGE_BYTES = 6 * 1024 * 1024
+ALLOWED_IMAGE_MIME = frozenset(
+    {"image/jpeg", "image/png", "image/webp", "image/gif"}
+)
 # Avoid rewriting ordinary words when a configured value is implausibly short.
 _MIN_REDACT_LEN = 8
 SMOKE_PROMPT = "Reply with exactly: pong"
@@ -288,8 +296,9 @@ class GapGPTClient:
         """POST ``/chat/completions`` and return the JSON object.
 
         ``messages`` uses the OpenAI chat format. ``content`` may be a string
-        or a list of parts (for later vision calls). Extra keyword arguments
-        are copied into the JSON body (for example ``temperature``).
+        or a list of parts. ``chat_with_image`` builds the image part.
+        Extra keyword arguments are copied into the JSON body (for example
+        ``temperature``).
         """
         self._check_ready()
         self._validate_messages(messages)
@@ -328,6 +337,39 @@ class GapGPTClient:
     ) -> str:
         """Return the assistant text from ``chat``."""
         return message_text(self.chat(messages, model=model, **options))
+
+    def chat_with_image(
+        self,
+        text: str,
+        image: bytes,
+        mime: str,
+        *,
+        system: str | None = None,
+        model: str | None = None,
+        **options: Any,
+    ) -> str:
+        """POST one chat completion that includes an image data URL.
+
+        The image is sent only inside the JSON body of ``/chat/completions``.
+        It is not written to logs here. ``mime`` must be an allowed image type;
+        callers should already have checked the file magic.
+        """
+        messages: list[dict[str, Any]] = []
+        if isinstance(system, str) and system.strip():
+            messages.append({"role": "system", "content": system})
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": text},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": _image_data_url(image, mime)},
+                    },
+                ],
+            }
+        )
+        return self.chat_text(messages, model=model, **options)
 
     def smoke(self) -> dict[str, Any]:
         """Send one fixed prompt. Does not accept caller-supplied messages."""
@@ -628,6 +670,37 @@ class _NullContext:
         if callable(close):
             close()
         return False
+
+
+def _image_data_url(image: bytes, mime: str) -> str:
+    """Encode image bytes as a data URL. Raises ``GapGPTError`` without the bytes."""
+    if not isinstance(mime, str):
+        raise GapGPTError(
+            "invalid_request",
+            "image type is not supported",
+            http_status=400,
+        )
+    normalized = mime.split(";", 1)[0].strip().lower()
+    if normalized not in ALLOWED_IMAGE_MIME:
+        raise GapGPTError(
+            "invalid_request",
+            "image type is not supported",
+            http_status=400,
+        )
+    if not isinstance(image, (bytes, bytearray)) or not image:
+        raise GapGPTError(
+            "invalid_request",
+            "image is empty",
+            http_status=400,
+        )
+    if len(image) > MAX_IMAGE_BYTES:
+        raise GapGPTError(
+            "invalid_request",
+            "image is too large",
+            http_status=413,
+        )
+    encoded = base64.b64encode(bytes(image)).decode("ascii")
+    return f"data:{normalized};base64,{encoded}"
 
 
 def _smoke_messages() -> list[dict[str, str]]:

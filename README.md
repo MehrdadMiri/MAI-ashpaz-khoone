@@ -10,7 +10,7 @@ Persian RTL AI meal and recipe demo (آشپزخونه).
 | api | Python (Flask + Gunicorn) | http://localhost:8000 |
 | db | Postgres 16 | localhost:5432 |
 
-The web page is a Persian RTL pantry. You can add and remove ingredient chips, load a sample set of Iranian staples, and set a numeric week budget. The list and budget stay in this browser (`localStorage`); they are not stored in Postgres. «پیشنهاد دستور» asks the shared GapGPT client (`api/gapgpt.py`) for at least three Persian recipes from those chips and the week budget. Later tickets add fridge vision and the meal plan. Product UI is Persian RTL. This scaffold’s docs and code comments are English.
+The web page is a Persian RTL pantry. You can add and remove ingredient chips, load a sample set of Iranian staples, and set a numeric week budget. The list and budget stay in this browser (`localStorage`); they are not stored in Postgres. «پیشنهاد دستور» asks the shared GapGPT client (`api/gapgpt.py`) for at least three Persian recipes from those chips and the week budget. «عکس یخچال» sends one photo to the same client and shows candidate chips; nothing is added to the pantry until you confirm. Later tickets add the meal plan. Product UI is Persian RTL. This scaffold’s docs and code comments are English.
 
 The GitHub repository is public.
 
@@ -62,7 +62,7 @@ text = GapGPTClient().chat_text([
 ])
 ```
 
-`chat` returns the JSON object. `content` may be a string or a list of parts, so a later vision call can pass image parts through the same client. The key is not written to logs, error messages, or return values.
+`chat` returns the JSON object. `content` may be a string or a list of parts. `chat_with_image` builds that list for one image (`image_url` data URL) and posts it to the same `/chat/completions` endpoint. Fridge vision uses it. The key is not written to logs, error messages, or return values. Image bytes are not written to logs or API responses.
 
 `/health` reports `gapgpt.configured`, `base_url`, and `model`. It does not call the model. `POST /gapgpt/smoke` sends one fixed prompt (`Reply with exactly: pong`). A request body is ignored, so the route cannot forward a caller-supplied prompt.
 
@@ -123,6 +123,39 @@ Checks without a browser:
 node --test web/recipes.test.js
 ```
 
+## Fridge photo
+
+«عکس یخچال» is on the pantry page. It does not add anything by itself.
+
+1. Open «عکس یخچال». «گرفتن عکس» calls `getUserMedia` with `facingMode: environment` (the back camera when the phone has one) and shows a preview. «انتخاب عکس» opens a file picker.
+2. If the camera API is missing, «گرفتن عکس» uses a file input with `capture="environment"`.
+3. If the camera is denied or fails, the sheet says «دسترسی به دوربین داده نشد. می‌توانید یک عکس انتخاب کنید.» and leaves the file picker. It does not keep asking for the camera.
+4. The chosen frame is posted as multipart field `image` to `POST /api/vision/fridge` (nginx) or `POST /vision/fridge` (api port 8000). Same `/api/` proxy as recipes.
+5. While that request runs, the sheet says «در حال تشخیص مواد…».
+6. The api service calls `GapGPTClient.chat_with_image` with model `gpt-5.6-luna` unless `GAPGPT_MODEL` is set. The model is asked for Persian food names as JSON. The response to the browser is `{"ok": true, "ingredients": ["شیر", "تخم‌مرغ"]}`. An empty list means no food was recognized. Names are not stored on the server.
+7. The confirm sheet shows those names as chips you can uncheck or edit, and a field to add another name. «انصراف» or closing the sheet leaves the pantry as it was.
+8. «تأیید و افزودن به انبار» merges only the checked names with the same dedupe rules as typing a chip (spacing and Arabic/Persian letter variants count as the same item). After that, the chips are the normal pantry chips: tap one to remove it.
+
+The page maps failures to short Persian text and «تلاش دوباره». It does not show the server message, stack traces, the photo, or the API key.
+
+| Situation | HTTP | `error` | What the page says |
+| --- | --- | --- | --- |
+| Not an image, or not JPEG/PNG/WEBP/GIF | 400 | `invalid_image` | choose a JPEG or PNG |
+| Image larger than 6 MB | 413 | `image_too_large` | choose a smaller photo |
+| Key missing | 503 | `not_configured` | the vision service is not ready |
+| Upstream rejects the key | 502 | `unauthorized` | friendly retry |
+| Timeout | 504 | `timeout` | friendly retry |
+| Unreadable model output | 502 | `bad_response` | friendly retry |
+| No food in a readable answer | 200 | — | empty confirm sheet; you can type a name |
+
+JPEG, PNG, WEBP, and GIF are detected from magic bytes. The declared file type is not trusted. SVG and HTML are rejected.
+
+Checks without a browser:
+
+```bash
+node --test web/fridge.test.js
+```
+
 ## Demo path (QA)
 
 1. From a clean shell (no `GAP_CODE_API_KEY` in the environment, and no real key in `.env`), run `docker compose up --build`.
@@ -146,7 +179,28 @@ node --test web/recipes.test.js
 
 6. Optional: set `GAP_CODE_API_KEY` in `.env` (or the shell) and recreate the api service (`docker compose up -d --force-recreate api`). `/health` stays OK. `gapgpt.configured` becomes `true` when the variable is non-empty. The key is not returned by the API.
 
-7. Open http://localhost:8080. Click «بارگذاری نمونه» and set «بودجه هفته» to a number such as `1500000`. Click «پیشنهاد دستور».
+7. Open http://localhost:8080. Click «عکس یخچال», then «انتخاب عکس», and pick a JPEG. Without a key, the sheet shows «در حال تشخیص مواد…» and then a Persian message that the vision service is not ready, with «تلاش دوباره». The pantry chips do not change. Closing the sheet also leaves the pantry unchanged.
+
+   The same check from the shell (a tiny JPEG, not a real photo):
+
+   ```bash
+   python3 - <<'PY'
+   from pathlib import Path
+   Path("/tmp/fridge.jpg").write_bytes(bytes.fromhex("ffd8ffe000104a46494600010100000100010000ffd9"))
+   PY
+   curl -sS -X POST http://localhost:8000/vision/fridge \
+     -F "image=@/tmp/fridge.jpg;type=image/jpeg" \
+     -w "\nHTTP %{http_code}\n"
+   ```
+
+   Expected HTTP 503 and `"error": "not_configured"`. No stack trace, no API key, and no image bytes in the body. The proxied path is the same call:
+
+   ```bash
+   curl -sS -X POST http://localhost:8080/api/vision/fridge \
+     -F "image=@/tmp/fridge.jpg;type=image/jpeg"
+   ```
+
+8. Open http://localhost:8080. Click «بارگذاری نمونه» and set «بودجه هفته» to a number such as `1500000`. Click «پیشنهاد دستور».
 
    Without a key, the status line shows «در حال پختن ایده‌ها…» and then a Persian message that the suggestion service is not ready, with «تلاش دوباره». The page does not show a stack trace or a key. An empty pantry does not call the API; it asks you to add an ingredient.
 
@@ -167,11 +221,26 @@ node --test web/recipes.test.js
      -d '{"ingredients":["برنج","عدس","پیاز"],"budget":1500000}'
    ```
 
-8. With a real key only in the gitignored `.env` or the environment, recreate the api service and repeat step 7. After the loading line, at least three Persian cards appear. Each card has a title, ingredient tags, and steps. A rough تومان badge appears when the model returns a cost. «افزودن به برنامه» is visible and disabled.
+9. With a real key only in the gitignored `.env` or the environment, recreate the api service and repeat step 8. After the loading line, at least three Persian cards appear. Each card has a title, ingredient tags, and steps. A rough تومان badge appears when the model returns a cost. «افزودن به برنامه» is visible and disabled.
 
    Spot-check the cards against the sample pantry (برنج، پیاز، عدس، لوبیا، سیب‌زمینی، گوجه‌فرنگی، ماست، روغن). Those names should show up as the main ingredients. The request includes the week budget you typed.
 
-   Expected HTTP 200 from the curl in step 7: `"ok": true` and a `recipes` array of three objects. The API key must not appear in the body.
+   Expected HTTP 200 from the recipe curl in step 8: `"ok": true` and a `recipes` array of three objects. The API key must not appear in the body.
+
+10. Live fridge photo, only when a real key is available. Do not print the key, commit it, or paste it into the shell history. QA often keeps it in a host file such as `…/MAI/.env` (gitignored). This repo’s `.env` is gitignored too. Load the variable without echoing it, then recreate api:
+
+   ```bash
+   # Replace the path with the host file that already holds GAP_CODE_API_KEY.
+   set -a
+   . /path/to/MAI/.env
+   set +a
+   test -n "$GAP_CODE_API_KEY" && echo "GAP_CODE_API_KEY is set (value hidden)"
+   docker compose up -d --build --force-recreate api web
+   ```
+
+   Repeat the curl in step 7 with a real fridge photo instead of the tiny JPEG. Expected HTTP 200, `"ok": true`, and an `ingredients` array of strings. The body must not contain the API key or the image.
+
+   On http://localhost:8080, use «عکس یخچال» with that photo. After «در حال تشخیص مواد…», edit or uncheck chips, then press «تأیید و افزودن به انبار». Only the names you left checked appear in the pantry, without duplicates. «انصراف» adds nothing. Tap a new chip to remove it, the same as any other pantry chip.
 
 ## GapGPT checks (SE/QA)
 
@@ -184,7 +253,7 @@ python3 -m venv .venv
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Expected: every test OK, with `LiveSmokeTest` skipped. From the repo root, `node --test web/pantry.test.js web/recipes.test.js` covers the pantry and the recipe page.
+Expected: every test OK, with `LiveSmokeTest` skipped. From the repo root, `node --test web/pantry.test.js web/recipes.test.js web/fridge.test.js` covers the pantry, the recipe page, and the fridge confirm sheet.
 
 Smoke check without a key (controlled error, no stack trace). The stack from the demo path can already be running:
 
