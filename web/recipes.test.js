@@ -34,7 +34,10 @@ test("loading and plan-button copy is the product text", () => {
   assert.equal(COPY.loading, "در حال پختن ایده‌ها…");
   assert.equal(COPY.retry, "تلاش دوباره");
   assert.equal(COPY.addToPlan, "افزودن به برنامه");
+  assert.equal(COPY.nutritionPending, "در حال برآورد کالری…");
+  assert.equal(COPY.nutritionDisclaimer, "این عددها برآورد هوش مصنوعی هستند، نه مقدار دقیق غذا.");
   assert.equal(ENDPOINT, "/api/recipes/generate");
+  assert.equal(recipes.NUTRITION_ENDPOINT, "/api/recipes/nutrition");
 });
 
 test("payload includes pantry chips and week budget", () => {
@@ -84,6 +87,16 @@ test("cost badge uses Persian digits", () => {
   assert.equal(recipes.formatCostToman(12500), "حدود ۱۲٬۵۰۰ تومان");
   assert.equal(recipes.formatCostToman(180000), "حدود ۱۸۰٬۰۰۰ تومان");
   assert.equal(recipes.formatCostToman(null), "");
+  assert.equal(recipes.formatKcal(450), "حدود ۴۵۰ کیلوکالری در هر وعده");
+  assert.equal(recipes.formatKcal(1200), "حدود ۱٬۲۰۰ کیلوکالری در هر وعده");
+  assert.equal(recipes.formatKcal(null), "");
+  assert.equal(recipes.formatKcal(-1), "");
+  assert.equal(
+    recipes.formatMacros({ protein_g: 18, carbs_g: 62, fat_g: 14 }),
+    "پروتئین ۱۸ گرم، کربوهیدرات ۶۲ گرم، چربی ۱۴ گرم",
+  );
+  assert.equal(recipes.formatMacros({ kcal: 90 }), "");
+  assert.equal(recipes.readEstimate({ kcal: 450, note: "skip", protein_g: 18 }).note, undefined);
 });
 
 test("cards need three complete recipes", () => {
@@ -277,8 +290,16 @@ test("suggest renders three Persian cards and blocks a second submit", async () 
   assert.equal(cards.length, 3);
   assert.equal(cards[0].children[0].children[0].textContent, "عدس‌پلو");
   assert.equal(cards[0].children[0].children[1].textContent, "حدود ۱۸۰٬۰۰۰ تومان");
-  assert.equal(cards[0].children[2].children[0].textContent, "برنج");
-  assert.equal(cards[0].children[4].children.length, 3);
+  assert.equal(cards[0].children[1].dataset.testid, "recipe-nutrition");
+  assert.equal(cards[0].children[1].hidden, false);
+  assert.equal(cards[0].children[1].children[0].textContent, COPY.nutritionPending);
+  assert.equal(cards[0].children[1].children[3].hidden, true);
+  assert.equal(cards[0].children[3].children[0].textContent, "برنج");
+  assert.equal(cards[0].children[5].children.length, 3);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].url, recipes.NUTRITION_ENDPOINT);
+  assert.equal(JSON.parse(calls[1].options.body).recipes[0].title, "عدس‌پلو");
+  assert.equal(JSON.parse(calls[1].options.body).recipes[0].cost_toman, undefined);
   cards.forEach((card, index) => {
     const plan = card.children[card.children.length - 1];
     assert.equal(plan.disabled, false);
@@ -362,7 +383,7 @@ test("retry asks again after an error", async () => {
   doc.nodes["recipe-retry"].listeners.click();
   await flush();
   await flush();
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
   assert.equal(doc.nodes["recipe-grid"].hidden, false);
   assert.equal(cardsOf(doc.nodes["recipe-grid"]).length, 3);
 });
@@ -405,7 +426,9 @@ test("leftover suggest sends remaining chips, skips eaten dinners, and keeps the
     doc.nodes.suggest.listeners.click();
     await flush();
     await flush();
-    assert.equal(calls.length, 1);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].url, ENDPOINT);
+    assert.equal(calls[1].url, recipes.NUTRITION_ENDPOINT);
     assert.deepEqual(JSON.parse(calls[0].options.body), {
       ingredients: chips,
       budget: 1500000,
@@ -457,8 +480,9 @@ test("full regenerate ignores the eaten skip and retry repeats that mode", async
     doc.nodes["recipe-retry"].listeners.click();
     await flush();
     await flush();
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 3);
     assert.deepEqual(calls[1], { ingredients: chips, budget: 250000, full: true });
+    assert.ok(Array.isArray(calls[2].recipes));
     assert.equal(doc.nodes["recipe-status"].textContent, COPY.fullNote);
     assert.equal(doc.nodes["recipe-grid"].hidden, false);
     assert.equal(model.week()[0].recipe.title, "عدس‌پلو");
@@ -495,7 +519,171 @@ test("an eaten week with no chips left does not call the API until full regenera
     await flush();
     assert.deepEqual(calls[0], { ingredients: ["برنج"], budget: 10, full: true });
     assert.equal(doc.nodes["recipe-grid"].hidden, false);
+    assert.equal(calls.length, 2);
+    assert.ok(Array.isArray(calls[1].recipes));
   } finally {
     global.AshpazPlan = previous;
   }
+});
+
+function collectText(node, found) {
+  if (!node) return;
+  if (node.textContent) found.push(String(node.textContent));
+  if (node.attrs) {
+    Object.keys(node.attrs).forEach((key) => found.push(String(node.attrs[key])));
+  }
+  const kids = node.children || [];
+  for (let i = 0; i < kids.length; i += 1) collectText(kids[i], found);
+}
+
+test("nutrition failure leaves the recipe cards up and hides the secret", async () => {
+  const doc = fakeDocument();
+  const secret = "unit-test-key";
+  recipes.mount(doc, pantry(["برنج", "عدس"], "250000"), (url) => {
+    if (url === recipes.NUTRITION_ENDPOINT) {
+      return Promise.resolve(
+        jsonResponse(503, {
+          ok: false,
+          error: "not_configured",
+          message: secret,
+          disclaimer: secret,
+        }),
+      );
+    }
+    return Promise.resolve(jsonResponse(200, { ok: true, recipes: THREE }));
+  });
+  doc.nodes.suggest.listeners.click();
+  await flush();
+  await flush();
+  assert.equal(doc.nodes["recipe-grid"].hidden, false);
+  assert.equal(doc.nodes["recipe-error"].hidden, true);
+  assert.equal(cardsOf(doc.nodes["recipe-grid"]).length, 3);
+  const block = cardsOf(doc.nodes["recipe-grid"])[0].children[1];
+  assert.equal(block.hidden, true);
+  assert.equal(block.children[3].textContent, "");
+  const texts = [];
+  collectText(doc.nodes["recipe-grid"], texts);
+  assert.equal(texts.join("\n").includes(secret), false);
+  assert.equal(doc.nodes["recipe-status"].textContent, "");
+});
+
+test("nutrition estimates render in Persian with an AI disclaimer", async () => {
+  const doc = fakeDocument();
+  const secret = "unit-test-key";
+  recipes.mount(doc, pantry(["برنج", "عدس"], "250000"), (url) => {
+    if (url === recipes.NUTRITION_ENDPOINT) {
+      return Promise.resolve(
+        jsonResponse(200, {
+          ok: true,
+          available: true,
+          message: secret,
+          estimates: [
+            { kcal: 450, protein_g: 18, carbs_g: 62, fat_g: 14, disclaimer: secret },
+            { kcal: 510, protein_g: 20, carbs_g: 70, fat_g: 16 },
+            { kcal: 90 },
+          ],
+        }),
+      );
+    }
+    return Promise.resolve(jsonResponse(200, { ok: true, recipes: THREE }));
+  });
+  doc.nodes.suggest.listeners.click();
+  await flush();
+  await flush();
+  const cards = cardsOf(doc.nodes["recipe-grid"]);
+  const first = cards[0].children[1];
+  const third = cards[2].children[1];
+  assert.equal(first.hidden, false);
+  assert.equal(first.children[1].textContent, "حدود ۴۵۰ کیلوکالری در هر وعده");
+  assert.equal(first.children[2].textContent, "پروتئین ۱۸ گرم، کربوهیدرات ۶۲ گرم، چربی ۱۴ گرم");
+  assert.equal(first.children[3].textContent, COPY.nutritionDisclaimer);
+  assert.equal(first.children[3].hidden, false);
+  assert.equal(third.children[1].textContent, "حدود ۹۰ کیلوکالری در هر وعده");
+  assert.equal(third.children[2].hidden, true);
+  assert.equal(third.children[3].textContent, COPY.nutritionDisclaimer);
+  const texts = [];
+  collectText(doc.nodes["recipe-grid"], texts);
+  assert.equal(texts.join("\n").includes(secret), false);
+  assert.equal(doc.nodes["recipe-error"].hidden, true);
+  assert.equal(doc.events[0].detail.recipes[0].kcal, undefined);
+});
+
+test("the same cards reuse the page cache", async () => {
+  const doc = fakeDocument();
+  const resolvers = [];
+  recipes.mount(doc, pantry(["برنج"], "10"), (url) => {
+    if (url === recipes.NUTRITION_ENDPOINT) {
+      return new Promise((resolve) => {
+        resolvers.push(resolve);
+      });
+    }
+    return Promise.resolve(jsonResponse(200, { ok: true, recipes: THREE }));
+  });
+  doc.nodes.suggest.listeners.click();
+  await flush();
+  await flush();
+  resolvers[0](
+    jsonResponse(200, {
+      ok: true,
+      estimates: [
+        { kcal: 450, protein_g: 12, carbs_g: 70, fat_g: 10 },
+        { kcal: 510 },
+        { kcal: 90 },
+      ],
+    }),
+  );
+  await flush();
+  doc.nodes.suggest.listeners.click();
+  await flush();
+  await flush();
+  assert.equal(resolvers.length, 1);
+  const block = cardsOf(doc.nodes["recipe-grid"])[0].children[1];
+  assert.equal(block.children[1].textContent, "حدود ۴۵۰ کیلوکالری در هر وعده");
+  assert.equal(block.children[3].textContent, COPY.nutritionDisclaimer);
+});
+
+test("a late nutrition response does not relabel newer cards", async () => {
+  const doc = fakeDocument();
+  const resolvers = [];
+  let round = 0;
+  recipes.mount(doc, pantry(["برنج"], "10"), (url) => {
+    if (url === recipes.NUTRITION_ENDPOINT) {
+      return new Promise((resolve) => {
+        resolvers.push(resolve);
+      });
+    }
+    round += 1;
+    const title = round === 1 ? "عدس‌پلو" : "آبگوشت";
+    const batch = THREE.map((item, index) =>
+      index === 0 ? dish(title, item.ingredients, item.steps, item.cost_toman) : item,
+    );
+    return Promise.resolve(jsonResponse(200, { ok: true, recipes: batch }));
+  });
+  doc.nodes.suggest.listeners.click();
+  await flush();
+  await flush();
+  doc.nodes.suggest.listeners.click();
+  await flush();
+  await flush();
+  assert.equal(resolvers.length, 2);
+  resolvers[0](
+    jsonResponse(200, {
+      ok: true,
+      estimates: [{ kcal: 111 }, { kcal: 111 }, { kcal: 111 }],
+    }),
+  );
+  await flush();
+  assert.equal(cardsOf(doc.nodes["recipe-grid"])[0].children[0].children[0].textContent, "آبگوشت");
+  assert.equal(cardsOf(doc.nodes["recipe-grid"])[0].children[1].children[0].textContent, COPY.nutritionPending);
+  resolvers[1](
+    jsonResponse(200, {
+      ok: true,
+      estimates: [{ kcal: 640, protein_g: 30, carbs_g: 40, fat_g: 22 }, { kcal: 510 }, { kcal: 90 }],
+    }),
+  );
+  await flush();
+  const kcal = cardsOf(doc.nodes["recipe-grid"])[0].children[1].children[1].textContent;
+  assert.equal(kcal, "حدود ۶۴۰ کیلوکالری در هر وعده");
+  assert.equal(kcal.includes("۱۱۱"), false);
+  assert.equal(cardsOf(doc.nodes["recipe-grid"])[0].children[1].children[3].textContent, COPY.nutritionDisclaimer);
 });

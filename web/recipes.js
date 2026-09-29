@@ -2,6 +2,8 @@
    Reads the active pantry (chips + week budget) and asks POST /api/recipes/generate.
    «پیشنهاد دستور» is leftover-aware: remaining chips and eaten dinners.
    «بازتولید کامل» sends the full pantry and does not skip those dinners.
+   After the cards render, POST /api/recipes/nutrition asks for a rough
+   per-serving estimate. That call can fail without removing the cards.
    The API key stays on the server. This file never sees it. */
 (function (global) {
   "use strict";
@@ -16,6 +18,8 @@
     steps: "مراحل",
     leftoverNote: "از مواد باقی‌مانده، بدون تکرار شام‌های خورده‌شده.",
     fullNote: "بازتولید کامل، با همه مواد و همان بودجه هفته.",
+    nutritionPending: "در حال برآورد کالری…",
+    nutritionDisclaimer: "این عددها برآورد هوش مصنوعی هستند، نه مقدار دقیق غذا.",
   };
 
   var ERROR_COPY = {
@@ -48,7 +52,12 @@
   };
 
   var REQUEST_TIMEOUT_MS = 100000;
+  var NUTRITION_TIMEOUT_MS = 35000;
   var ENDPOINT = "/api/recipes/generate";
+  var NUTRITION_ENDPOINT = "/api/recipes/nutrition";
+  var MAX_KCAL = 5000;
+  var MAX_MACRO = 500;
+  var nutritionCache = Object.create(null);
 
   function toPersianDigits(value) {
     return String(value).replace(/\d/g, function (digit) {
@@ -169,6 +178,182 @@
     return "حدود " + toPersianDigits(grouped) + " تومان";
   }
 
+  function clearNutritionCache() {
+    nutritionCache = Object.create(null);
+  }
+
+  function nutritionCacheKey(card) {
+    return JSON.stringify({
+      title: card.title,
+      ingredients: card.ingredients,
+      steps: card.steps,
+    });
+  }
+
+  function formatGroupedNumber(value) {
+    var grouped = String(Math.round(value)).replace(/\B(?=(\d{3})+(?!\d))/g, "٬");
+    return toPersianDigits(grouped);
+  }
+
+  function formatKcal(value) {
+    if (typeof value !== "number" || !isFinite(value) || value < 0 || value > MAX_KCAL) return "";
+    return "حدود " + formatGroupedNumber(value) + " کیلوکالری در هر وعده";
+  }
+
+  function formatMacroGrams(value) {
+    if (typeof value !== "number" || !isFinite(value) || value < 0 || value > MAX_MACRO) return "";
+    return toPersianDigits(Math.round(value));
+  }
+
+  function formatMacros(estimate) {
+    if (!estimate || typeof estimate !== "object") return "";
+    var parts = [];
+    var protein = formatMacroGrams(estimate.protein_g);
+    var carbs = formatMacroGrams(estimate.carbs_g);
+    var fat = formatMacroGrams(estimate.fat_g);
+    if (protein) parts.push("پروتئین " + protein + " گرم");
+    if (carbs) parts.push("کربوهیدرات " + carbs + " گرم");
+    if (fat) parts.push("چربی " + fat + " گرم");
+    return parts.join("، ");
+  }
+
+  function readEstimate(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    var kcalText = formatKcal(raw.kcal);
+    if (!kcalText) return null;
+    var estimate = { kcal: Math.round(raw.kcal) };
+    ["protein_g", "carbs_g", "fat_g"].forEach(function (key) {
+      if (formatMacroGrams(raw[key])) estimate[key] = Math.round(raw[key]);
+    });
+    return estimate;
+  }
+
+  function childByTestId(node, id) {
+    if (!node || !node.children) return null;
+    for (var i = 0; i < node.children.length; i += 1) {
+      var child = node.children[i];
+      if (child && child.dataset && child.dataset.testid === id) return child;
+    }
+    return null;
+  }
+
+  function createNutritionBlock(doc) {
+    var block = doc.createElement("div");
+    block.className = "recipe-nutrition";
+    block.dataset.testid = "recipe-nutrition";
+    block.hidden = true;
+    block.setAttribute("aria-label", "برآورد تغذیه");
+
+    var pending = doc.createElement("p");
+    pending.className = "nutrition-pending";
+    pending.dataset.testid = "recipe-nutrition-pending";
+    pending.hidden = true;
+
+    var kcal = doc.createElement("p");
+    kcal.className = "nutrition-kcal";
+    kcal.dataset.testid = "recipe-kcal";
+    kcal.hidden = true;
+
+    var macros = doc.createElement("p");
+    macros.className = "nutrition-macros";
+    macros.dataset.testid = "recipe-macros";
+    macros.hidden = true;
+
+    var note = doc.createElement("p");
+    note.className = "nutrition-note";
+    note.dataset.testid = "recipe-nutrition-note";
+    note.hidden = true;
+
+    block.append(pending, kcal, macros, note);
+    return block;
+  }
+
+  function hideNutrition(block) {
+    if (!block) return;
+    block.hidden = true;
+    block.setAttribute("aria-hidden", "true");
+    ["recipe-nutrition-pending", "recipe-kcal", "recipe-macros", "recipe-nutrition-note"].forEach(
+      function (id) {
+        var node = childByTestId(block, id);
+        if (!node) return;
+        node.hidden = true;
+        node.textContent = "";
+      }
+    );
+  }
+
+  function paintNutritionPending(block) {
+    if (!block) return;
+    block.hidden = false;
+    block.setAttribute("aria-hidden", "false");
+    var pending = childByTestId(block, "recipe-nutrition-pending");
+    var kcal = childByTestId(block, "recipe-kcal");
+    var macros = childByTestId(block, "recipe-macros");
+    var note = childByTestId(block, "recipe-nutrition-note");
+    if (pending) {
+      pending.hidden = false;
+      pending.textContent = COPY.nutritionPending;
+    }
+    [kcal, macros, note].forEach(function (node) {
+      if (!node) return;
+      node.hidden = true;
+      node.textContent = "";
+    });
+  }
+
+  function paintNutrition(block, estimate) {
+    if (!block) return;
+    var text = formatKcal(estimate && estimate.kcal);
+    if (!text) {
+      hideNutrition(block);
+      return;
+    }
+    block.hidden = false;
+    block.setAttribute("aria-hidden", "false");
+    var pending = childByTestId(block, "recipe-nutrition-pending");
+    var kcal = childByTestId(block, "recipe-kcal");
+    var macros = childByTestId(block, "recipe-macros");
+    var note = childByTestId(block, "recipe-nutrition-note");
+    if (pending) {
+      pending.hidden = true;
+      pending.textContent = "";
+    }
+    if (kcal) {
+      kcal.hidden = false;
+      kcal.textContent = text;
+    }
+    var macroText = formatMacros(estimate);
+    if (macros) {
+      macros.hidden = !macroText;
+      macros.textContent = macroText;
+    }
+    if (note) {
+      note.hidden = false;
+      note.textContent = COPY.nutritionDisclaimer;
+    }
+  }
+
+  function applyNutrition(grid, estimates) {
+    var cards = grid && grid._recipeCards;
+    if (!cards) return;
+    for (var i = 0; i < cards.length; i += 1) {
+      var block = childByTestId(cards[i], "recipe-nutrition");
+      var estimate = readEstimate(estimates && estimates[i]);
+      if (estimate) paintNutrition(block, estimate);
+      else hideNutrition(block);
+    }
+  }
+
+  function showNutritionProgress(grid, known) {
+    var cards = grid && grid._recipeCards;
+    if (!cards) return;
+    for (var i = 0; i < cards.length; i += 1) {
+      var block = childByTestId(cards[i], "recipe-nutrition");
+      if (known[i]) paintNutrition(block, known[i]);
+      else paintNutritionPending(block);
+    }
+  }
+
   function selectRecipes(recipes) {
     if (!Array.isArray(recipes)) return null;
     var selected = [];
@@ -227,6 +412,7 @@
   function renderRecipeGrid(doc, grid, recipes) {
     api.latestRecipes = recipes;
     var fragment = doc.createDocumentFragment();
+    var rendered = [];
     recipes.forEach(function (card, index) {
       var article = doc.createElement("article");
       article.className = "recipe-card";
@@ -288,9 +474,12 @@
       plan.setAttribute("aria-controls", "plan-sheet");
       plan.textContent = COPY.addToPlan;
 
-      article.append(head, ingredientLabel, tags, stepLabel, steps, plan);
+      var nutrition = createNutritionBlock(doc);
+      article.append(head, nutrition, ingredientLabel, tags, stepLabel, steps, plan);
       fragment.append(article);
+      rendered.push(article);
     });
+    grid._recipeCards = rendered;
     grid.replaceChildren(fragment);
   }
 
@@ -308,9 +497,123 @@
     var panel = doc.getElementById("recipes");
     if (!suggestBtn || !status || !errorBox || !errorText || !grid || !pantry) return;
 
+    clearNutritionCache();
     var gate = createSubmitGate();
     var lastFull = false;
     var request = typeof fetchImpl === "function" ? fetchImpl : null;
+    var nutritionTicket = 0;
+    var nutritionAbort = null;
+
+    function invalidateNutrition() {
+      nutritionTicket += 1;
+      if (nutritionAbort) {
+        try {
+          nutritionAbort.abort();
+        } catch (err) {
+          /* The in-flight estimate is already ignored via nutritionTicket. */
+        }
+        nutritionAbort = null;
+      }
+    }
+
+    function rememberedEstimates(recipes) {
+      return recipes.map(function (card) {
+        return nutritionCache[nutritionCacheKey(card)] || null;
+      });
+    }
+
+    function requestNutrition(recipes) {
+      var ticket = ++nutritionTicket;
+      var known = rememberedEstimates(recipes);
+      var missing = known.some(function (item) {
+        return !item;
+      });
+      if (!missing) {
+        applyNutrition(grid, known);
+        return;
+      }
+      showNutritionProgress(grid, known);
+      if (typeof request !== "function") {
+        applyNutrition(grid, known);
+        return;
+      }
+
+      var controller = null;
+      try {
+        controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+      } catch (err) {
+        controller = null;
+      }
+      nutritionAbort = controller;
+      var timer = setTimeout(function () {
+        if (controller) controller.abort();
+      }, NUTRITION_TIMEOUT_MS);
+      var options = {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          recipes: recipes.map(function (card) {
+            return {
+              title: card.title,
+              ingredients: card.ingredients,
+              steps: card.steps,
+            };
+          }),
+        }),
+      };
+      if (controller) options.signal = controller.signal;
+
+      var pending = null;
+      try {
+        pending = request(NUTRITION_ENDPOINT, options);
+      } catch (err) {
+        clearTimeout(timer);
+        if (nutritionAbort === controller) nutritionAbort = null;
+        if (ticket === nutritionTicket) applyNutrition(grid, known);
+        return;
+      }
+
+      Promise.resolve(pending)
+        .then(function (response) {
+          return response.text().then(function (text) {
+            return { response: response, text: text };
+          });
+        })
+        .then(function (result) {
+          if (ticket !== nutritionTicket) return;
+          var body = null;
+          try {
+            body = result.text ? JSON.parse(result.text) : null;
+          } catch (err) {
+            body = null;
+          }
+          var fresh = null;
+          if (result.response && result.response.ok && body && body.ok !== false && Array.isArray(body.estimates)) {
+            fresh = body.estimates.map(readEstimate);
+          }
+          if (!fresh) {
+            applyNutrition(grid, known);
+            return;
+          }
+          var merged = recipes.map(function (card, index) {
+            var next = fresh[index] || known[index] || null;
+            if (fresh[index]) nutritionCache[nutritionCacheKey(card)] = fresh[index];
+            return next;
+          });
+          applyNutrition(grid, merged);
+        })
+        .catch(function () {
+          if (ticket !== nutritionTicket) return;
+          applyNutrition(grid, known);
+        })
+        .then(function () {
+          clearTimeout(timer);
+          if (nutritionAbort === controller) nutritionAbort = null;
+        });
+    }
 
     function setBusy(busy) {
       suggestBtn.disabled = busy;
@@ -330,6 +633,7 @@
     }
 
     function showError(message, hint) {
+      invalidateNutrition();
       status.textContent = "";
       errorText.textContent = sanitizeDisplay(message);
       errorBox.hidden = false;
@@ -338,15 +642,18 @@
       if (skeleton) skeleton.hidden = true;
       grid.hidden = true;
       grid.replaceChildren();
+      grid._recipeCards = [];
     }
 
     function showLoading() {
+      invalidateNutrition();
       errorBox.hidden = true;
       setHint("");
       if (emptyBox) emptyBox.hidden = true;
       if (skeleton) skeleton.hidden = false;
       grid.hidden = true;
       grid.replaceChildren();
+      grid._recipeCards = [];
       status.textContent = COPY.loading;
     }
 
@@ -362,6 +669,11 @@
       renderRecipeGrid(doc, grid, recipes);
       publishRecipes(doc, recipes, payload);
       grid.hidden = false;
+      try {
+        requestNutrition(recipes);
+      } catch (err) {
+        applyNutrition(grid, []);
+      }
     }
 
     function showIdle() {
@@ -487,6 +799,12 @@
     ERROR_COPY: ERROR_COPY,
     SERVICE_HINT: SERVICE_HINT,
     ENDPOINT: ENDPOINT,
+    NUTRITION_ENDPOINT: NUTRITION_ENDPOINT,
+    clearNutritionCache: clearNutritionCache,
+    formatKcal: formatKcal,
+    formatMacros: formatMacros,
+    readEstimate: readEstimate,
+    applyNutrition: applyNutrition,
     buildGeneratePayload: buildGeneratePayload,
     readLeftovers: readLeftovers,
     sanitizeDisplay: sanitizeDisplay,

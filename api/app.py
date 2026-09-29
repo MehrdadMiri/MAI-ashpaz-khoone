@@ -6,6 +6,8 @@ fixed chat completion when GAP_CODE_API_KEY is set. POST /recipes/generate
 asks that client for Persian recipes from pantry items and a week budget.
 Leftover fields prefer remaining chips and skip eaten dinners. ``full``
 ignores that skip.
+POST /recipes/nutrition asks for a rough per-serving calorie estimate.
+If GapGPT is down, that route still returns 200 and null estimates.
 POST /vision/fridge sends one or more fridge photos, in order, to that
 client's vision call and returns candidate ingredient names with confidence.
 It does not store them.
@@ -20,6 +22,12 @@ from flask import Flask, jsonify, request
 from werkzeug.exceptions import HTTPException
 
 from gapgpt import MAX_FRIDGE_IMAGES, MAX_IMAGE_BYTES, GapGPTClient, GapGPTConfig, GapGPTError
+from nutrition import (
+    NUTRITION_CLIENT_TIMEOUT,
+    NutritionRequestError,
+    estimate_nutrition,
+    parse_nutrition_body,
+)
 from recipes import (
     RECIPE_CLIENT_TIMEOUT,
     RecipeRequestError,
@@ -206,6 +214,7 @@ def root():
             "health": "/health",
             "gapgpt_smoke": "/gapgpt/smoke",
             "recipes_generate": "/recipes/generate",
+            "recipes_nutrition": "/recipes/nutrition",
             "vision_fridge": "/vision/fridge",
             "pantry": "/pantry",
             "plan": "/plan",
@@ -280,6 +289,35 @@ def recipes_generate():
         ),
         "Recipe generation failed",
     )
+
+
+@app.get("/recipes/nutrition")
+def recipes_nutrition_get():
+    return (
+        jsonify(
+            {
+                "ok": False,
+                "error": "method_not_allowed",
+                "message": "Use POST /recipes/nutrition",
+            }
+        ),
+        405,
+    )
+
+
+@app.post("/recipes/nutrition")
+def recipes_nutrition():
+    """Rough per-serving estimates. GapGPT failures still return HTTP 200.
+
+    The body is recipe text the page already shows. Error text stays static.
+    A miss, a timeout, or a missing key does not change recipe generate.
+    """
+    try:
+        recipes = parse_nutrition_body(request.get_json(silent=True))
+    except NutritionRequestError as exc:
+        return jsonify(exc.to_dict()), exc.http_status
+    client = build_gapgpt_client(timeout=NUTRITION_CLIENT_TIMEOUT)
+    return jsonify(estimate_nutrition(client, recipes))
 
 
 @app.get("/vision/fridge")

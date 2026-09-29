@@ -10,7 +10,7 @@ Persian RTL AI meal and recipe demo (آشپزخونه).
 | api | Python (Flask + Gunicorn) | http://localhost:8000 |
 | db | Postgres 16 | localhost:5432 |
 
-The web page is a Persian RTL pantry. You can add and remove ingredient chips, load a sample set of Iranian staples, and set a numeric week budget. The list and budget are stored in Postgres for a browser-local id, and cached in this browser (`localStorage`) when the api or database is unavailable. «پیشنهاد دستور» asks the shared GapGPT client (`api/gapgpt.py`) for at least three Persian recipes from those chips and the week budget. If a شام is marked «خورده شد», that call prefers the chips still left and asks the model not to repeat those dinners. «بازتولید کامل» uses every chip again and does not skip them. «عکس یخچال» sends one photo to the same client and shows candidate chips; nothing is added to the pantry until you confirm. «برنامه ۷ روزه» assigns those recipes to شنبه through جمعه and can print or download the week. The plan does not call GapGPT. «مواد خرید» diffs those planned dinners against the pantry chips and can print or download the missing items. That list does not call GapGPT either. Product UI is Persian RTL. This scaffold’s docs and code comments are English.
+The web page is a Persian RTL pantry. You can add and remove ingredient chips, load a sample set of Iranian staples, and set a numeric week budget. The list and budget are stored in Postgres for a browser-local id, and cached in this browser (`localStorage`) when the api or database is unavailable. «پیشنهاد دستور» asks the shared GapGPT client (`api/gapgpt.py`) for at least three Persian recipes from those chips and the week budget. If a شام is marked «خورده شد», that call prefers the chips still left and asks the model not to repeat those dinners. «بازتولید کامل» uses every chip again and does not skip them. «عکس یخچال» sends one photo to the same client and shows candidate chips; nothing is added to the pantry until you confirm. «برنامه ۷ روزه» assigns those recipes to شنبه through جمعه and can print or download the week. The plan does not call GapGPT. «مواد خرید» diffs those planned dinners against the pantry chips and can print or download the missing items. That list does not call GapGPT either. After the recipe cards appear, the page asks the same client for a rough per-serving calorie estimate (and protein, carbohydrate, and fat when the model returns them). Each card says those numbers are an AI estimate. If that call fails, the cards stay without them. Product UI is Persian RTL. This scaffold’s docs and code comments are English.
 
 The GitHub repository is public.
 
@@ -135,7 +135,7 @@ The browser calls `http://localhost:8080/api/recipes/generate`. Nginx proxies `/
 
 The request JSON is `{ "ingredients": ["برنج"], "budget": 1500000 }`. `budget` may be `null` when the week field is empty; the model prompt still includes that budget context. Leftover regenerate adds `remaining`, `skip`, and `full` (see [Leftover regenerate](#leftover-regenerate)). The api service calls GapGPT with `GapGPTClient.chat_text` and the configured model (`gpt-5.6-luna` unless `GAPGPT_MODEL` is set). The key stays in the api container. The page never receives it.
 
-A successful body is `ok: true` and `recipes` with three objects. Each object has `title`, `ingredients`, `steps`, and `cost_toman` (`null` when the model gives no number). The page shows those as RTL cards: title, ingredient tags, steps, and a rough cost badge when a cost is present. «افزودن به برنامه» on each card opens the day sheet for the meal plan.
+A successful body is `ok: true` and `recipes` with three objects. Each object has `title`, `ingredients`, `steps`, and `cost_toman` (`null` when the model gives no number). The page shows those as RTL cards: title, ingredient tags, steps, and a rough cost badge when a cost is present. It then asks for a nutrition estimate ([Nutrition estimates](#nutrition-estimates)). «افزودن به برنامه» on each card opens the day sheet for the meal plan.
 
 Before the first successful suggestion, the panel says to set the week budget and press «پیشنهاد دستور». That prompt is not an error. An empty budget is still sent as `null`.
 
@@ -157,7 +157,26 @@ Checks without a browser:
 
 ```bash
 node --test web/recipes.test.js
+cd api && python3 -m unittest tests.test_nutrition tests.test_nutrition_endpoint -v
 ```
+
+## Nutrition estimates
+
+After the cards are on the page, the browser calls `POST /api/recipes/nutrition` with the title, ingredients, and steps already shown. It does not send the API key. The api service calls the same GapGPT client and model (`gpt-5.6-luna` unless `GAPGPT_MODEL` is set) and asks for one serving, not the whole pot.
+
+A successful body is `{"ok": true, "available": true, "estimates": [{"kcal": 480, "protein_g": 16, "carbs_g": 70, "fat_g": 14}]}`. One entry lines up with each recipe. `kcal` is required. Protein, carbohydrate, and fat are omitted when the model gave no usable number. The card shows Persian digits, «در هر وعده», and «این عددها برآورد هوش مصنوعی هستند، نه مقدار دقیق غذا.» The disclaimer is fixed copy in the page. The browser does not render `body.message` or any label the model returns.
+
+The api process caches an estimate by a hash of the normalized title, ingredients, and steps. Cost is not part of the key. A repeat of the same recipe does not call GapGPT. The cache stores the numbers only.
+
+If the key is missing, the call times out, or the reply cannot be read, the route still returns HTTP 200 with `"available": false` and `null` for each recipe. Cached numbers are still returned when GapGPT is down. The recipe cards stay, and the recipe error box is not used. `POST /recipes/generate` is unchanged: a nutrition failure does not fail generation.
+
+```bash
+curl -sS -X POST http://localhost:8000/recipes/nutrition \
+  -H 'Content-Type: application/json' \
+  -d '{"recipes":[{"title":"عدس‌پلو","ingredients":["برنج","عدس"],"steps":["عدس را بپز","برنج را دم کن","سرو کن"]}]}'
+```
+
+Without a key this is HTTP 200, `"available": false`, and the body does not contain a key. With a key, `"available": true` and a `kcal` on each estimate the model could read. The same call through the page is `POST http://localhost:8080/api/recipes/nutrition`.
 
 ## Fridge photo
 
