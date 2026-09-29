@@ -153,8 +153,26 @@ def identity_key(value: Any) -> str:
     return text.lower()
 
 
+# Same three flags as recipe generation. Unknown keys are dropped.
+DIET_FILTER_KEYS = ("vegetarian", "no_onion", "diabetic")
+
+
+def empty_diet_filters() -> dict[str, bool]:
+    return {key: False for key in DIET_FILTER_KEYS}
+
+
+def sanitize_filters(raw: Any) -> dict[str, bool]:
+    """Keep only real ``True`` values. A bad flag is stored as off."""
+    filters = empty_diet_filters()
+    if not isinstance(raw, dict):
+        return filters
+    for key in DIET_FILTER_KEYS:
+        filters[key] = raw.get(key) is True
+    return filters
+
+
 def empty_pantry() -> dict[str, Any]:
-    return {"items": [], "budget": ""}
+    return {"items": [], "budget": "", "filters": empty_diet_filters()}
 
 
 def empty_plan() -> dict[str, Any]:
@@ -206,6 +224,7 @@ def sanitize_pantry(raw: Any) -> dict[str, Any]:
             seen.add(key)
             state["items"].append(name)
     state["budget"] = sanitize_budget(raw.get("budget", ""))
+    state["filters"] = sanitize_filters(raw.get("filters"))
     return state
 
 

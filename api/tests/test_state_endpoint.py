@@ -69,7 +69,14 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(saved.status_code, 200)
         body = saved.get_json()
         self.assertTrue(body["found"])
-        self.assertEqual(body["pantry"], {"items": ["کرفس"], "budget": "1500"})
+        self.assertEqual(
+            body["pantry"],
+            {
+                "items": ["کرفس"],
+                "budget": "1500",
+                "filters": {"vegetarian": False, "no_onion": False, "diabetic": False},
+            },
+        )
         self.assertNotIn(KEY, saved.get_data(as_text=True))
 
         loaded = self.client.get("/api/pantry", headers={"X-Local-User-Id": USER})
@@ -82,6 +89,32 @@ class EndpointTests(unittest.TestCase):
 
         empty_plan = self.client.get("/plan", headers={"X-Local-User-Id": USER})
         self.assertFalse(empty_plan.get_json()["found"])
+
+    def test_pantry_roundtrip_keeps_diet_filters(self):
+        saved = self.client.put(
+            "/pantry",
+            headers={"X-Local-User-Id": USER},
+            json={
+                "pantry": {
+                    "items": ["برنج"],
+                    "budget": "10",
+                    "filters": {
+                        "vegetarian": True,
+                        "no_onion": True,
+                        "diabetic": False,
+                        "extra": True,
+                    },
+                }
+            },
+        )
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(
+            saved.get_json()["pantry"]["filters"],
+            {"vegetarian": True, "no_onion": True, "diabetic": False},
+        )
+        loaded = self.client.get("/pantry", headers={"X-Local-User-Id": USER})
+        self.assertEqual(loaded.get_json()["pantry"]["filters"]["no_onion"], True)
+        self.assertNotIn("extra", loaded.get_data(as_text=True))
 
     def test_plan_roundtrip_keeps_the_eaten_flag(self):
         saved = self.client.put(
@@ -214,7 +247,14 @@ class PostgresEndpointTests(unittest.TestCase):
         )
         self.assertEqual(saved.status_code, 200)
         loaded = self.client.get("/pantry", headers={"X-Local-User-Id": self.user})
-        self.assertEqual(loaded.get_json()["pantry"], {"items": ["پیاز"], "budget": "20"})
+        self.assertEqual(
+            loaded.get_json()["pantry"],
+            {
+                "items": ["پیاز"],
+                "budget": "20",
+                "filters": {"vegetarian": False, "no_onion": False, "diabetic": False},
+            },
+        )
         self.assertNotIn("change-me", loaded.get_data(as_text=True))
 
 

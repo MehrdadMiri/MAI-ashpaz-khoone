@@ -132,6 +132,15 @@ test("pantry page wires the suggest button and recipe script", () => {
   assert.match(html, /بودجه هفته را وارد کنید و «پیشنهاد دستور» را بزنید/);
   assert.match(html, /id="recipe-skeleton"/);
   assert.match(html, /id="recipe-error-hint"/);
+  assert.match(html, /id="diet-filters"/);
+  assert.match(html, /id="diet-vegetarian"/);
+  assert.match(html, /id="diet-no-onion"/);
+  assert.match(html, /id="diet-diabetic"/);
+  assert.match(html, /aria-pressed="false"/);
+  assert.match(html, />\s*گیاهی\s*</);
+  assert.match(html, />\s*بدون پیاز\s*</);
+  assert.match(html, />\s*مناسب دیابت\s*</);
+  assert.match(html, /محدودیت غذایی/);
   assert.equal(html.includes("GAP_CODE_API_KEY"), false);
   const script = fs.readFileSync(path.join(__dirname, "recipes.js"), "utf8");
   assert.match(script, /GAP_CODE_API_KEY/);
@@ -686,4 +695,81 @@ test("a late nutrition response does not relabel newer cards", async () => {
   assert.equal(kcal, "حدود ۶۴۰ کیلوکالری در هر وعده");
   assert.equal(kcal.includes("۱۱۱"), false);
   assert.equal(cardsOf(doc.nodes["recipe-grid"])[0].children[1].children[3].textContent, COPY.nutritionDisclaimer);
+});
+
+function addDietButtons(doc) {
+  ["diet-vegetarian", "diet-no-onion", "diet-diabetic"].forEach((id) => {
+    const node = element("button");
+    node.id = id;
+    doc.nodes[id] = node;
+  });
+}
+
+test("diet chips toggle together and ride on generate", async () => {
+  const doc = fakeDocument();
+  addDietButtons(doc);
+  const calls = [];
+  const model = pantry(["برنج", "عدس"], "250000");
+  const flags = { vegetarian: false, no_onion: false, diabetic: false };
+  model.filters = () => ({ ...flags });
+  model.setFilter = (key, on) => {
+    flags[key] = on === true;
+    return { ok: true, filters: { ...flags } };
+  };
+  recipes.mount(doc, model, (url, options) => {
+    calls.push({ url, options });
+    return Promise.resolve(jsonResponse(200, { ok: true, recipes: THREE }));
+  });
+  assert.equal(doc.nodes["diet-vegetarian"].attrs["aria-pressed"], "false");
+  assert.equal(doc.nodes["diet-no-onion"].attrs["aria-pressed"], "false");
+  assert.equal(doc.nodes["diet-diabetic"].attrs["aria-pressed"], "false");
+  doc.nodes["diet-vegetarian"].listeners.click();
+  doc.nodes["diet-diabetic"].listeners.click();
+  assert.equal(doc.nodes["diet-vegetarian"].attrs["aria-pressed"], "true");
+  assert.equal(doc.nodes["diet-vegetarian"].className.includes("is-on"), true);
+  assert.equal(doc.nodes["diet-no-onion"].attrs["aria-pressed"], "false");
+  assert.equal(doc.nodes["diet-diabetic"].className.includes("is-on"), true);
+  doc.nodes.suggest.listeners.click();
+  assert.deepEqual(JSON.parse(calls[0].options.body), {
+    ingredients: ["برنج", "عدس"],
+    budget: 250000,
+    filters: { vegetarian: true, no_onion: false, diabetic: true },
+  });
+  assert.equal(doc.nodes["diet-vegetarian"].disabled, true);
+  await flush();
+  await flush();
+  assert.match(doc.nodes["recipe-status"].textContent, /گیاهی/);
+  assert.match(doc.nodes["recipe-status"].textContent, /مناسب دیابت/);
+  assert.equal(doc.nodes["recipe-status"].textContent.includes("بدون پیاز"), false);
+  assert.equal(doc.nodes["diet-vegetarian"].disabled, false);
+
+  doc.nodes["regenerate-full"].listeners.click();
+  assert.deepEqual(JSON.parse(calls[2].options.body).filters, {
+    vegetarian: true,
+    no_onion: false,
+    diabetic: true,
+  });
+  assert.equal(JSON.parse(calls[2].options.body).full, true);
+});
+
+test("a saved pantry filter is sent after a new pantry reads the same storage", () => {
+  const pantryLib = require("./pantry.js");
+  const storage = pantryLib.createMemoryStorage();
+  const model = pantryLib.createPantry({ storage });
+  model.add("برنج");
+  model.setBudget("10");
+  model.setFilter("no_onion", true);
+  model.setFilter("vegetarian", true);
+  const again = pantryLib.createPantry({ storage });
+  assert.deepEqual(recipes.buildGeneratePayload(again), {
+    ingredients: ["برنج"],
+    budget: 10,
+    filters: { vegetarian: true, no_onion: true, diabetic: false },
+  });
+  again.setFilter("vegetarian", false);
+  again.setFilter("no_onion", false);
+  assert.deepEqual(recipes.buildGeneratePayload(again), {
+    ingredients: ["برنج"],
+    budget: 10,
+  });
 });

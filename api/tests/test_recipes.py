@@ -10,6 +10,7 @@ from recipes import (
     parse_generate_body,
     parse_recipes,
     generate_recipes,
+    violates_diet,
     RecipeRequestError,
 )
 
@@ -551,6 +552,187 @@ class GenerateTests(unittest.TestCase):
         self.assertIn("بودجه هفته: 1500000 تومان", user)
         self.assertNotIn("عدس‌پلو", user)
         self.assertNotIn("شام‌های خورده‌شده:", user)
+
+
+class DietFilterTests(unittest.TestCase):
+    def test_missing_filters_are_off_and_absent_from_the_user_prompt(self):
+        parsed = parse_generate_body({"ingredients": ["برنج"], "budget": 10})
+        self.assertEqual(
+            parsed.filters,
+            {"vegetarian": False, "no_onion": False, "diabetic": False},
+        )
+        user = build_messages(["برنج"], 10)[1]["content"]
+        self.assertNotIn("محدودیت غذایی", user)
+        self.assertIn("محدودیت غذایی", SYSTEM_PROMPT)
+
+    def test_null_filters_are_off(self):
+        parsed = parse_generate_body({"ingredients": ["برنج"], "filters": None})
+        self.assertFalse(any(parsed.filters.values()))
+
+    def test_combination_is_parsed_and_written_into_the_prompt(self):
+        parsed = parse_generate_body(
+            {
+                "ingredients": ["برنج", "ماست"],
+                "budget": 1500000,
+                "full": True,
+                "filters": {
+                    "vegetarian": True,
+                    "no_onion": True,
+                    "diabetic": False,
+                    "vegan": True,
+                },
+            }
+        )
+        self.assertEqual(
+            parsed.filters,
+            {"vegetarian": True, "no_onion": True, "diabetic": False},
+        )
+        user = build_messages(
+            ["برنج", "ماست"],
+            1500000,
+            full=True,
+            filters=parsed.filters,
+        )[1]["content"]
+        self.assertIn("محدودیت غذایی:", user)
+        self.assertIn("- گیاهی:", user)
+        self.assertIn("- بدون پیاز:", user)
+        self.assertNotIn("- مناسب دیابت:", user)
+        self.assertIn("بازتولید کامل:", user)
+        self.assertIn("بر فهرست مواد آشپزخانه مقدم", user)
+        self.assertIn("گیاهی", SYSTEM_PROMPT)
+        self.assertIn("بدون پیاز", SYSTEM_PROMPT)
+        self.assertIn("مناسب دیابت", SYSTEM_PROMPT)
+
+    def test_bad_filter_type_is_static(self):
+        secret = "filter-secret-value"
+        with self.assertRaises(RecipeRequestError) as caught:
+            parse_generate_body(
+                {"ingredients": ["برنج"], "filters": {"vegetarian": secret}}
+            )
+        self.assertEqual(caught.exception.code, "invalid_request")
+        rendered = caught.exception.message + json.dumps(caught.exception.to_dict())
+        self.assertNotIn(secret, rendered)
+        with self.assertRaises(RecipeRequestError) as listed:
+            parse_generate_body({"ingredients": ["برنج"], "filters": [secret]})
+        self.assertNotIn(secret, listed.exception.message)
+
+    def test_obvious_meat_is_dropped_when_three_remain(self):
+        payload = {
+            "recipes": [
+                dish("کباب مرغ", ["مرغ", "برنج"], ["مرغ را بپز", "برنج را دم کن", "سرو کن"]),
+                dish("عدس‌پلو", ["برنج", "عدس"], ["عدس را بپز", "برنج را دم کن", "سرو کن"]),
+                dish("ماست و سبزی", ["ماست", "سبزی"], ["ماست را هم بزن", "سبزی را خرد کن", "سرو کن"]),
+                dish("خوراک لوبیا", ["لوبیا", "روغن"], ["لوبیا را بپز", "روغن اضافه کن", "سرو کن"]),
+            ]
+        }
+        recipes = parse_recipes(
+            json.dumps(payload, ensure_ascii=False),
+            ["برنج", "عدس", "لوبیا", "ماست"],
+            filters={"vegetarian": True},
+        )
+        titles = [item["title"] for item in recipes]
+        self.assertEqual(len(titles), 3)
+        self.assertNotIn("کباب مرغ", titles)
+
+    def test_egg_is_allowed_for_vegetarian(self):
+        payload = {
+            "recipes": [
+                dish(
+                    "کوکو سبزی",
+                    ["تخم‌مرغ", "سبزی"],
+                    ["سبزی را خرد کن", "با تخم‌مرغ مخلوط کن", "سرخ کن"],
+                ),
+                dish("عدس‌پلو", ["برنج", "عدس"], ["عدس را بپز", "برنج را دم کن", "سرو کن"]),
+                dish("ماست و خیار", ["ماست", "خیار"], ["ماست را هم بزن", "خیار را اضافه کن", "سرد سرو کن"]),
+            ]
+        }
+        recipes = parse_recipes(
+            json.dumps(payload, ensure_ascii=False),
+            ["برنج", "عدس", "ماست"],
+            filters={"vegetarian": True},
+        )
+        self.assertIn("کوکو سبزی", [item["title"] for item in recipes])
+
+    def test_onion_in_steps_is_dropped_when_alternatives_exist(self):
+        payload = {
+            "recipes": [
+                dish("عدس‌پلو", ["برنج", "عدس"], ["پیاز را تفت بده", "عدس را بپز", "برنج را دم کن"]),
+                dish("لوبیا پلو", ["برنج", "لوبیا"], ["لوبیا را بپز", "برنج را دم کن", "سرو کن"]),
+                dish("ماست و سبزی", ["ماست", "سبزی"], ["ماست را هم بزن", "سبزی را خرد کن", "سرو کن"]),
+                dish("خوراک کدو", ["کدو", "روغن"], ["کدو را بپز", "روغن اضافه کن", "سرو کن"]),
+            ]
+        }
+        recipes = parse_recipes(
+            json.dumps(payload, ensure_ascii=False),
+            ["برنج", "عدس", "لوبیا", "ماست"],
+            filters={"no_onion": True},
+        )
+        self.assertNotIn("عدس‌پلو", [item["title"] for item in recipes])
+        self.assertEqual(len(recipes), 3)
+
+    def test_too_few_clean_recipes_still_returns_three(self):
+        recipes = parse_recipes(
+            json.dumps(sample_payload(), ensure_ascii=False),
+            PANTRY,
+            filters={"vegetarian": True, "no_onion": True, "diabetic": True},
+        )
+        self.assertEqual(len(recipes), 3)
+
+    def test_diabetic_drops_sugar_and_ignores_blood_sugar_wording(self):
+        payload = {
+            "recipes": [
+                dish("شربت", ["شکر", "آب"], ["شکر را حل کن", "سرد کن", "سرو کن"]),
+                dish("عدس‌پلو", ["برنج", "عدس"], ["عدس را بپز", "برنج را دم کن", "سرو کن"]),
+                dish("ماست و سبزی", ["ماست", "سبزی"], ["ماست را هم بزن", "سبزی را خرد کن", "سرو کن"]),
+                dish("خوراک لوبیا", ["لوبیا"], ["لوبیا را بپز", "نمک بزن", "سرو کن"]),
+            ]
+        }
+        recipes = parse_recipes(
+            json.dumps(payload, ensure_ascii=False),
+            ["برنج", "عدس", "لوبیا", "ماست"],
+            filters={"diabetic": True},
+        )
+        self.assertNotIn("شربت", [item["title"] for item in recipes])
+        blood = dish(
+            "عدس‌پلو",
+            ["برنج", "عدس"],
+            ["عدس را بپز", "برای قند خون مناسب است", "سرو کن"],
+        )
+        self.assertFalse(violates_diet(blood, {"diabetic": True}))
+
+    def test_negation_does_not_count_as_meat(self):
+        recipe = dish(
+            "خوراک سبزی",
+            ["سبزی", "روغن"],
+            ["بدون گوشت بپز", "روغن اضافه کن", "سرو کن"],
+        )
+        self.assertFalse(violates_diet(recipe, {"vegetarian": True}))
+        self.assertTrue(
+            violates_diet(
+                dish("کباب", ["گوشت"], ["گوشت را بپز", "برگردان", "سرو کن"]),
+                {"vegetarian": True},
+            )
+        )
+
+    def test_generate_includes_filters_and_gapgpt_errors_still_raise(self):
+        stub = StubClient(json.dumps(sample_payload(), ensure_ascii=False))
+        filters = {"vegetarian": True, "no_onion": False, "diabetic": True}
+        result = generate_recipes(stub, ["برنج", "عدس", "ماست"], 1000, filters=filters)
+        self.assertEqual(result["filters"], filters)
+        self.assertEqual(len(result["recipes"]), 3)
+        user = stub.messages[1]["content"]
+        self.assertIn("- گیاهی:", user)
+        self.assertIn("- مناسب دیابت:", user)
+        self.assertNotIn("- بدون پیاز:", user)
+
+        class Boom:
+            def chat_text(self, messages, **_options):
+                del messages, _options
+                raise GapGPTError("timeout", "timed out", http_status=504)
+
+        with self.assertRaises(GapGPTError) as caught:
+            generate_recipes(Boom(), ["برنج"], 10, filters=filters)
+        self.assertEqual(caught.exception.code, "timeout")
 
 
 if __name__ == "__main__":

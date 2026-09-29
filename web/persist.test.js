@@ -224,6 +224,33 @@ test("an edit during load is not overwritten by the saved row", async () => {
   assert.deepEqual(puts[0].body.pantry.items, ["نخود"]);
 });
 
+test("diet filters are saved with the pantry and uploaded when that is the only change", async () => {
+  const store = storage();
+  const model = pantry.createPantry({ storage: store });
+  model.setFilter("vegetarian", true);
+  model.setFilter("diabetic", true);
+  const fetchBox = mockFetch((call) => {
+    if (call.options.method === "GET") {
+      return jsonResponse(200, { ok: true, found: false, pantry: { items: [], budget: "" } });
+    }
+    return jsonResponse(200, { ok: true, found: true, pantry: call.body.pantry });
+  });
+  const { created } = session({ storage: store, fetchBox });
+  await created.hydrate(model, null);
+  const puts = fetchBox.calls.filter((call) => call.options && call.options.method === "PUT");
+  assert.equal(puts.length, 1);
+  assert.deepEqual(puts[0].body.pantry.filters, {
+    vegetarian: true,
+    no_onion: false,
+    diabetic: true,
+  });
+  assert.deepEqual(puts[0].body.pantry.items, []);
+  const again = pantry.createPantry({ storage: store });
+  assert.equal(again.filters().vegetarian, true);
+  assert.equal(again.filters().diabetic, true);
+  assert.equal(again.filters().no_onion, false);
+});
+
 test("rapid pantry edits send the latest snapshot", async () => {
   const store = storage();
   const model = pantry.createPantry({ storage: store });

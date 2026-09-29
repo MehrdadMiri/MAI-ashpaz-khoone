@@ -69,6 +69,15 @@
     return handle;
   }
 
+  function copyFilters(snapshot) {
+    var source = snapshot && snapshot.filters;
+    return {
+      vegetarian: !!(source && source.vegetarian === true),
+      no_onion: !!(source && source.no_onion === true),
+      diabetic: !!(source && source.diabetic === true),
+    };
+  }
+
   function copyPantry(snapshot) {
     var items = [];
     if (snapshot && Array.isArray(snapshot.items)) {
@@ -79,6 +88,7 @@
     return {
       items: items,
       budget: snapshot && typeof snapshot.budget === "string" ? snapshot.budget : "",
+      filters: copyFilters(snapshot),
     };
   }
 
@@ -110,7 +120,9 @@
   function hasPantry(snapshot) {
     if (!snapshot) return false;
     if (Array.isArray(snapshot.items) && snapshot.items.length) return true;
-    return typeof snapshot.budget === "string" && snapshot.budget !== "";
+    if (typeof snapshot.budget === "string" && snapshot.budget !== "") return true;
+    var filters = copyFilters(snapshot);
+    return filters.vegetarian || filters.no_onion || filters.diabetic;
   }
 
   function hasPlan(snapshot) {

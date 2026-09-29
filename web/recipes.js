@@ -2,6 +2,8 @@
    Reads the active pantry (chips + week budget) and asks POST /api/recipes/generate.
    «پیشنهاد دستور» is leftover-aware: remaining chips and eaten dinners.
    «بازتولید کامل» sends the full pantry and does not skip those dinners.
+   Diet chips (گیاهی، بدون پیاز، مناسب دیابت) are toggles on the pantry.
+   An active combination is sent as filters and kept with the pantry snapshot.
    After the cards render, POST /api/recipes/nutrition asks for a rough
    per-serving estimate. That call can fail without removing the cards.
    The API key stays on the server. This file never sees it. */
@@ -18,6 +20,7 @@
     steps: "مراحل",
     leftoverNote: "از مواد باقی‌مانده، بدون تکرار شام‌های خورده‌شده.",
     fullNote: "بازتولید کامل، با همه مواد و همان بودجه هفته.",
+    dietLead: "با محدودیت ",
     nutritionPending: "در حال برآورد کالری…",
     nutritionDisclaimer: "این عددها برآورد هوش مصنوعی هستند، نه مقدار دقیق غذا.",
   };
@@ -49,6 +52,18 @@
     no_remaining: true,
     invalid_budget: true,
     invalid_request: true,
+  };
+
+  var DIET_ORDER = ["vegetarian", "no_onion", "diabetic"];
+  var DIET_LABELS = {
+    vegetarian: "گیاهی",
+    no_onion: "بدون پیاز",
+    diabetic: "مناسب دیابت",
+  };
+  var DIET_BUTTONS = {
+    vegetarian: "diet-vegetarian",
+    no_onion: "diet-no-onion",
+    diabetic: "diet-diabetic",
   };
 
   var REQUEST_TIMEOUT_MS = 100000;
@@ -121,6 +136,42 @@
     return { remaining: remaining, skip: skip, used: used };
   }
 
+  function emptyFilters() {
+    return { vegetarian: false, no_onion: false, diabetic: false };
+  }
+
+  function readFilters(pantry) {
+    var filters = emptyFilters();
+    if (!pantry || typeof pantry.filters !== "function") return filters;
+    var raw = pantry.filters();
+    if (!raw || typeof raw !== "object") return filters;
+    DIET_ORDER.forEach(function (key) {
+      filters[key] = raw[key] === true;
+    });
+    return filters;
+  }
+
+  function filtersActive(filters) {
+    return DIET_ORDER.some(function (key) {
+      return !!(filters && filters[key]);
+    });
+  }
+
+  function dietStatus(filters) {
+    if (!filtersActive(filters)) return "";
+    var labels = [];
+    DIET_ORDER.forEach(function (key) {
+      if (filters[key]) labels.push(DIET_LABELS[key]);
+    });
+    return COPY.dietLead + labels.join("، ") + ".";
+  }
+
+  function withFilters(payload, pantry) {
+    var filters = readFilters(pantry);
+    if (filtersActive(filters)) payload.filters = filters;
+    return payload;
+  }
+
   function buildGeneratePayload(pantry, mode) {
     var items = pantry.items().slice();
     var raw = pantry.budget();
@@ -130,16 +181,19 @@
       if (isFinite(number)) budget = number;
     }
     var full = !!(mode && mode.full);
-    if (full) return { ingredients: items, budget: budget, full: true };
+    if (full) return withFilters({ ingredients: items, budget: budget, full: true }, pantry);
     var leftovers = readLeftovers(pantry);
-    if (!leftovers.used) return { ingredients: items, budget: budget };
-    return {
-      ingredients: items,
-      budget: budget,
-      remaining: leftovers.remaining,
-      skip: leftovers.skip,
-      full: false,
-    };
+    if (!leftovers.used) return withFilters({ ingredients: items, budget: budget }, pantry);
+    return withFilters(
+      {
+        ingredients: items,
+        budget: budget,
+        remaining: leftovers.remaining,
+        skip: leftovers.skip,
+        full: false,
+      },
+      pantry
+    );
   }
 
   function sanitizeDisplay(text) {
@@ -615,10 +669,53 @@
         });
     }
 
+    function dietButtons() {
+      var buttons = [];
+      DIET_ORDER.forEach(function (key) {
+        var button = doc.getElementById(DIET_BUTTONS[key]);
+        if (button) buttons.push(button);
+      });
+      return buttons;
+    }
+
+    function paintDietChips() {
+      var filters = readFilters(pantry);
+      DIET_ORDER.forEach(function (key) {
+        var button = doc.getElementById(DIET_BUTTONS[key]);
+        if (!button) return;
+        var on = filters[key] === true;
+        button.setAttribute("aria-pressed", on ? "true" : "false");
+        if (button.classList) button.classList.toggle("is-on", on);
+      });
+    }
+
+    function bindDietChips() {
+      paintDietChips();
+      DIET_ORDER.forEach(function (key) {
+        var button = doc.getElementById(DIET_BUTTONS[key]);
+        if (!button || typeof button.addEventListener !== "function") return;
+        button.addEventListener("click", function () {
+          if (gate.isBusy()) return;
+          if (!pantry || typeof pantry.setFilter !== "function") return;
+          var current = readFilters(pantry);
+          pantry.setFilter(key, !current[key]);
+          paintDietChips();
+        });
+      });
+      if (typeof doc.addEventListener === "function") {
+        doc.addEventListener("ashpaz-pantry-changed", function () {
+          paintDietChips();
+        });
+      }
+    }
+
     function setBusy(busy) {
       suggestBtn.disabled = busy;
       if (fullBtn) fullBtn.disabled = busy;
       if (retryBtn) retryBtn.disabled = busy;
+      dietButtons().forEach(function (button) {
+        button.disabled = busy;
+      });
       suggestBtn.setAttribute("aria-busy", busy ? "true" : "false");
       if (fullBtn) fullBtn.setAttribute("aria-busy", busy ? "true" : "false");
       if (panel) panel.setAttribute("aria-busy", busy ? "true" : "false");
@@ -660,10 +757,12 @@
     function showRecipes(recipes, payload) {
       errorBox.hidden = true;
       setHint("");
-      var note = "";
-      if (payload && payload.full) note = COPY.fullNote;
-      else if (payload && payload.skip && payload.skip.length) note = COPY.leftoverNote;
-      status.textContent = note;
+      var notes = [];
+      if (payload && payload.full) notes.push(COPY.fullNote);
+      else if (payload && payload.skip && payload.skip.length) notes.push(COPY.leftoverNote);
+      var diet = dietStatus(payload && payload.filters);
+      if (diet) notes.push(diet);
+      status.textContent = notes.join(" ");
       if (emptyBox) emptyBox.hidden = true;
       if (skeleton) skeleton.hidden = true;
       renderRecipeGrid(doc, grid, recipes);
@@ -784,6 +883,7 @@
         run(lastFull);
       });
     }
+    bindDietChips();
     showIdle();
   }
 
@@ -805,6 +905,9 @@
     formatMacros: formatMacros,
     readEstimate: readEstimate,
     applyNutrition: applyNutrition,
+    DIET_LABELS: DIET_LABELS,
+    dietStatus: dietStatus,
+    readFilters: readFilters,
     buildGeneratePayload: buildGeneratePayload,
     readLeftovers: readLeftovers,
     sanitizeDisplay: sanitizeDisplay,
