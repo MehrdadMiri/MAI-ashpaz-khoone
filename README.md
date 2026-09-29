@@ -62,7 +62,7 @@ text = GapGPTClient().chat_text([
 ])
 ```
 
-`chat` returns the JSON object. `content` may be a string or a list of parts. `chat_with_image` builds that list for one image (`image_url` data URL) and posts it to the same `/chat/completions` endpoint. Fridge vision uses it. The key is not written to logs, error messages, or return values. Image bytes are not written to logs or API responses.
+`chat` returns the JSON object. `content` may be a string or a list of parts. `chat_with_image` builds that list for one image (`image_url` data URL) and posts it to the same `/chat/completions` endpoint. Fridge vision uses it. The key is not written to logs, error messages, or return values. Image bytes are not written to logs or API responses. JSON responses are scrubbed again before they leave the api process: a configured key of 8 or more characters is replaced, and a body that contains a Python traceback is replaced with a static `internal_error`. Unexpected exceptions return that same JSON shape and log only the exception class name.
 
 `/health` reports `gapgpt.configured`, `base_url`, and `model`. It does not call the model. `POST /gapgpt/smoke` sends one fixed prompt (`Reply with exactly: pong`). A request body is ignored, so the route cannot forward a caller-supplied prompt.
 
@@ -79,7 +79,7 @@ text = GapGPTClient().chat_text([
 
 After `docker compose up --build`, open http://localhost:8080.
 
-The page is Persian, right to left, and set in Vazirmatn. On a new browser the kitchen is empty and shows «هنوز چیزی در آشپزخانه نیست».
+The page is Persian, right to left, and set in Vazirmatn. On a new browser the kitchen is empty: an illustration, «هنوز چیزی در آشپزخانه نیست», and three ways in: «بارگذاری نمونه», «افزودن ماده» (focuses the name field), and «عکس یخچال».
 
 - «بارگذاری نمونه» loads eight staples: برنج، پیاز، عدس، لوبیا، سیب‌زمینی، گوجه‌فرنگی، ماست، روغن. Loading again does not duplicate them.
 - Type a name and press «افزودن». The same name, including extra spaces and Arabic/Persian letter variants, is ignored.
@@ -104,16 +104,18 @@ The request JSON is `{ "ingredients": ["برنج"], "budget": 1500000 }`. `budge
 
 A successful body is `ok: true` and `recipes` with three objects. Each object has `title`, `ingredients`, `steps`, and `cost_toman` (`null` when the model gives no number). The page shows those as RTL cards: title, ingredient tags, steps, and a rough cost badge when a cost is present. «افزودن به برنامه» on each card opens the day sheet for the meal plan.
 
-While the request is in flight the status line is «در حال پختن ایده‌ها…» and both «پیشنهاد دستور» and «تلاش دوباره» are disabled, so a second click does not send another request. Failures stay on the page as short Persian text plus «تلاش دوباره». The page does not show stack traces, upstream bodies, or the API key.
+Before the first successful suggestion, the panel says to set the week budget and press «پیشنهاد دستور». That prompt is not an error. An empty budget is still sent as `null`.
+
+While the request is in flight the status line is «در حال پختن ایده‌ها…», three skeleton cards stand in for the results, and both «پیشنهاد دستور» and «تلاش دوباره» are disabled, so a second click does not send another request. Failures stay on the page as short Persian text plus «تلاش دوباره». Service failures (missing or rejected key, timeout, network, 5xx) also show a hint to check `GAP_CODE_API_KEY` and the compose logs. The page does not show stack traces, upstream bodies, or the key value. The browser never reads `body.message`.
 
 | Situation | HTTP | `error` | What the page says |
 | --- | --- | --- | --- |
 | No pantry items | 400 | `empty_ingredients` | ask for at least one ingredient (the page does this before calling) |
 | Bad budget | 400 | `invalid_budget` | the week budget is not a number |
-| Key missing | 503 | `not_configured` | the suggestion service is not ready |
-| Upstream rejects the key | 502 | `unauthorized` | friendly retry |
-| Timeout | 504 | `timeout` | friendly retry |
-| Unreadable model output, or fewer than three usable recipes | 502 | `bad_response` | friendly retry |
+| Key missing | 503 | `not_configured` | the suggestion service is not ready, plus the key hint |
+| Upstream rejects the key | 502 | `unauthorized` | friendly retry, plus the key hint |
+| Timeout | 504 | `timeout` | friendly retry, plus the key hint |
+| Unreadable model output, or fewer than three usable recipes | 502 | `bad_response` | friendly retry, plus the key hint |
 
 The model is asked for Iranian home cooking in Persian that prefers the pantry names. QA should spot-check that the cards use those names.
 
@@ -131,21 +133,21 @@ node --test web/recipes.test.js
 2. If the camera API is missing, «گرفتن عکس» uses a file input with `capture="environment"`.
 3. If the camera is denied or fails, the sheet says «دسترسی به دوربین داده نشد. می‌توانید یک عکس انتخاب کنید.» and leaves the file picker. It does not keep asking for the camera.
 4. The chosen frame is posted as multipart field `image` to `POST /api/vision/fridge` (nginx) or `POST /vision/fridge` (api port 8000). Same `/api/` proxy as recipes.
-5. While that request runs, the sheet says «در حال تشخیص مواد…».
+5. While that request runs, the sheet shows the photo and «در حال تشخیص مواد…». «انصراف», the close button, or Escape cancels the request. Cancelling does not change the pantry and does not show an error.
 6. The api service calls `GapGPTClient.chat_with_image` with model `gpt-5.6-luna` unless `GAPGPT_MODEL` is set. The model is asked for Persian food names as JSON. The response to the browser is `{"ok": true, "ingredients": ["شیر", "تخم‌مرغ"]}`. An empty list means no food was recognized. Names are not stored on the server.
 7. The confirm sheet shows those names as chips you can uncheck or edit, and a field to add another name. «انصراف» or closing the sheet leaves the pantry as it was.
 8. «تأیید و افزودن به انبار» merges only the checked names with the same dedupe rules as typing a chip (spacing and Arabic/Persian letter variants count as the same item). After that, the chips are the normal pantry chips: tap one to remove it.
 
-The page maps failures to short Persian text and «تلاش دوباره». It does not show the server message, stack traces, the photo, or the API key.
+The page maps failures to short Persian text and «تلاش دوباره». Service failures also hint to check `GAP_CODE_API_KEY` and the compose logs. It does not show the server message, stack traces, or the key value. The photo preview is only on screen while detection is running; an error hides it. The pantry chips stay as they were.
 
 | Situation | HTTP | `error` | What the page says |
 | --- | --- | --- | --- |
 | Not an image, or not JPEG/PNG/WEBP/GIF | 400 | `invalid_image` | choose a JPEG or PNG |
 | Image larger than 6 MB | 413 | `image_too_large` | choose a smaller photo |
-| Key missing | 503 | `not_configured` | the vision service is not ready |
-| Upstream rejects the key | 502 | `unauthorized` | friendly retry |
-| Timeout | 504 | `timeout` | friendly retry |
-| Unreadable model output | 502 | `bad_response` | friendly retry |
+| Key missing | 503 | `not_configured` | the vision service is not ready, plus the key hint |
+| Upstream rejects the key | 502 | `unauthorized` | friendly retry, plus the key hint |
+| Timeout | 504 | `timeout` | friendly retry, plus the key hint |
+| Unreadable model output | 502 | `bad_response` | friendly retry, plus the key hint |
 | No food in a readable answer | 200 | — | empty confirm sheet; you can type a name |
 
 JPEG, PNG, WEBP, and GIF are detected from magic bytes. The declared file type is not trusted. SVG and HTML are rejected.
@@ -165,7 +167,7 @@ The week is شنبه through جمعه, one شام per day. An empty day shows «
 - «افزودن به برنامه» on a recipe card opens a sheet of the seven days, the same sheet pattern as fridge confirm. Pick a day to assign that recipe. A day that already has a شام offers «جایگزین».
 - «برنامه ۷ روزه» fills every empty day from the recipes already on the page, repeating them when there are fewer than seven. Days you already filled stay as they are. With no recipes yet, the seven days stay «خالی» and the status line asks you to suggest recipes first. «انتخاب» on an empty day opens the recipe list once recipes exist.
 - On a filled day, «جایگزین» opens that list, plus «خالی» to clear the day.
-- If the week budget is set and a recipe has a تومان cost, a line under the title sums the شام costs. When the sum is over the budget the line says so. You can still assign, swap, print, and download.
+- If the week budget is set and a recipe has a تومان cost, a line under the title sums the شام costs. When the sum is over the budget the line says so and adds that چاپ و خروجی are still allowed. You can still assign, swap, print, and download.
 - «چاپ / خروجی» opens a sheet with «چاپ» and «دانلود مارک‌داون».
 
 Print uses `@media print` in `web/pantry.css`. To print once: open http://localhost:8080, click «چاپ / خروجی», then «چاپ». The print stylesheet sets a white background, keeps Vazirmatn, and hides the pantry, recipe cards, fridge sheet, footer, and buttons. The page that remains is the seven days and the recipe title on each day, or «خالی».
@@ -184,6 +186,22 @@ QA on http://localhost:8080, still with no key:
 2. Click «چاپ / خروجی», then «چاپ». The preview is white, in Persian, and does not show the pantry or the recipe controls. Close the preview.
 3. Click «چاپ / خروجی», then «دانلود مارک‌داون». The file lists all seven days as خالی.
 4. After «پیشنهاد دستور» (that call needs a key), «افزودن به برنامه» chooses a day, «جایگزین» swaps it, and «برنامه ۷ روزه» fills any day that is still «خالی».
+
+## QA smoke
+
+The release smoke for this slice is [docs/QA-SMOKE.md](docs/QA-SMOKE.md). Run it with a real key only in the gitignored `.env` or the environment. Do not print the key. Do not tag `v0.1.0` from this work; that tag is ticket #8 after this path is green.
+
+1. Compose up with the key set. The آشپزخونه page loads.
+2. «بارگذاری نمونه» shows at least eight chips.
+3. Fridge photo, then confirm, adds only the checked names.
+4. Set a week budget and «پیشنهاد دستور» returns at least three cards.
+5. «برنامه ۷ روزه» fills شنبه through جمعه. Empty days stay «خالی» until filled.
+6. Edit the pantry and generate again.
+7. «چاپ / خروجی» prints and downloads Markdown. A soft over-budget line does not block export.
+8. Break or unset `GAP_CODE_API_KEY`, recreate api, and confirm a Persian error with «تلاش دوباره» and no key value. Restore the key and generate again.
+9. Leave tagging `v0.1.0` for ticket #8.
+
+The longer [demo path](#demo-path-qa) below still covers a boot with no key.
 
 ## Demo path (QA)
 

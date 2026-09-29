@@ -8,10 +8,12 @@ POST /vision/fridge sends one fridge photo to that client's vision call and
 returns candidate ingredient names. It does not store them.
 """
 
+import json
 import os
 
 import psycopg
 from flask import Flask, jsonify, request
+from werkzeug.exceptions import HTTPException
 
 from gapgpt import MAX_IMAGE_BYTES, GapGPTClient, GapGPTConfig, GapGPTError
 from recipes import (
@@ -91,6 +93,33 @@ def database_ok():
         return False
 
 
+def scrub_public_body(raw: bytes) -> bytes:
+    """Drop secrets and stack traces from a JSON response body.
+
+    The configured key is removed only when it is long enough that replacing
+    it cannot rewrite ordinary words. Tracebacks are replaced with a static
+    JSON error so a leaked stack never reaches the browser.
+    """
+    if not isinstance(raw, (bytes, bytearray)):
+        return raw
+    body = bytes(raw)
+    secret = os.environ.get("GAP_CODE_API_KEY", "")
+    if isinstance(secret, str):
+        secret = secret.strip()
+    else:
+        secret = ""
+    if len(secret) >= 8:
+        token = secret.encode("utf-8")
+        if token in body:
+            body = body.replace(token, b"[redacted]")
+        escaped = json.dumps(secret)[1:-1].encode("utf-8")
+        if escaped != token and escaped in body:
+            body = body.replace(escaped, b"[redacted]")
+    if b"Traceback (most recent call last)" in body:
+        body = b'{"ok":false,"error":"internal_error","message":"Request failed"}'
+    return body
+
+
 def respond_gapgpt(fn, failure_message):
     """Run a GapGPT call and return JSON. Unexpected failures omit exception text."""
     try:
@@ -123,6 +152,40 @@ def limit_request_body():
     if length > limit:
         return request_too_large(None)
     return None
+
+
+@app.after_request
+def scrub_json_response(response):
+    mimetype = response.mimetype or ""
+    if mimetype != "application/json":
+        return response
+    try:
+        raw = response.get_data()
+    except Exception:
+        return response
+    cleaned = scrub_public_body(raw)
+    if cleaned == raw:
+        return response
+    response.set_data(cleaned)
+    return response
+
+
+@app.errorhandler(Exception)
+def unhandled_error(exc):
+    """JSON only. HTTP errors keep their status. The body never includes the key."""
+    if isinstance(exc, HTTPException):
+        return exc
+    app.logger.warning("unhandled error: %s", exc.__class__.__name__)
+    return (
+        jsonify(
+            {
+                "ok": False,
+                "error": "internal_error",
+                "message": "Request failed",
+            }
+        ),
+        500,
+    )
 
 
 @app.errorhandler(413)

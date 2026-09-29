@@ -177,6 +177,36 @@ class EndpointTests(unittest.TestCase):
         self.assertNotIn("Traceback", res.get_data(as_text=True))
         self.assertTrue(any("RuntimeError" in line for line in records))
 
+    def test_public_body_scrub_removes_key_and_traceback(self):
+        leaked = json.dumps(
+            {"ok": False, "message": f"rejected {KEY}", "note": "keep"}
+        ).encode()
+        with patch.dict(os.environ, {"GAP_CODE_API_KEY": KEY}):
+            cleaned = app_module.scrub_public_body(leaked)
+        self.assertNotIn(KEY.encode(), cleaned)
+        self.assertIn(b"[redacted]", cleaned)
+        self.assertIn(b"keep", cleaned)
+
+        escaped_key = "quote\"key"
+        raw = json.dumps({"message": escaped_key}).encode()
+        with patch.dict(os.environ, {"GAP_CODE_API_KEY": escaped_key}):
+            cleaned = app_module.scrub_public_body(raw)
+        self.assertNotIn(b"quote", cleaned)
+        self.assertIn(b"[redacted]", cleaned)
+
+        blown = b'{"ok":false,"message":"Traceback (most recent call last)\\nFile \\"app.py\\""}'
+        cleaned = app_module.scrub_public_body(blown)
+        self.assertNotIn(b"Traceback", cleaned)
+        self.assertNotIn(b"app.py", cleaned)
+        self.assertEqual(
+            json.loads(cleaned.decode()),
+            {"ok": False, "error": "internal_error", "message": "Request failed"},
+        )
+
+        short = b'{"message":"invalid"}'
+        with patch.dict(os.environ, {"GAP_CODE_API_KEY": "invalid"}):
+            self.assertEqual(app_module.scrub_public_body(short), short)
+
     def test_get_is_not_allowed(self):
         res = self.client.get("/gapgpt/smoke")
         self.assertEqual(res.status_code, 405)

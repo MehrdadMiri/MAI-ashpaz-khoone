@@ -60,6 +60,24 @@ test("errors are friendly Persian and never echo the server message", () => {
     "برای پیشنهاد دستور، حداقل یک ماده به آشپزخانه اضافه کنید.",
   );
   assert.equal(recipes.messageForFailure(503, { error: "not_configured", message: secret }).includes(secret), false);
+  assert.equal(recipes.hintForFailure({ error: "empty_ingredients", message: secret }), "");
+  assert.equal(recipes.hintForFailure({ error: "invalid_budget" }), "");
+  const hint = recipes.hintForFailure({
+    error: "not_configured",
+    message: `Bearer ${secret}\nTraceback (most recent call last)`,
+  });
+  assert.equal(hint, recipes.SERVICE_HINT);
+  assert.match(hint, /GAP_CODE_API_KEY/);
+  assert.match(hint, /docker compose/);
+  assert.equal(hint.includes(secret), false);
+  assert.equal(hint.includes("Traceback"), false);
+  const upstream = recipes.messageForFailure(502, {
+    error: "upstream_error",
+    message: `Traceback (most recent call last)\n${secret}`,
+  });
+  assert.equal(upstream, ERROR_COPY.upstream_error);
+  assert.equal(upstream.includes(secret), false);
+  assert.equal(recipes.sanitizeDisplay(`Bearer ${secret}`).includes(secret), false);
 });
 
 test("cost badge uses Persian digits", () => {
@@ -94,8 +112,19 @@ test("pantry page wires the suggest button and recipe script", () => {
   assert.match(html, /id="recipe-retry"/);
   assert.match(html, />تلاش دوباره</);
   assert.match(html, /recipes\.js/);
+  assert.match(html, /id="recipe-empty"/);
+  assert.match(html, /بودجه هفته را وارد کنید و «پیشنهاد دستور» را بزنید/);
+  assert.match(html, /id="recipe-skeleton"/);
+  assert.match(html, /id="recipe-error-hint"/);
   assert.equal(html.includes("GAP_CODE_API_KEY"), false);
+  const script = fs.readFileSync(path.join(__dirname, "recipes.js"), "utf8");
+  assert.match(script, /GAP_CODE_API_KEY/);
+  assert.equal(script.includes(secretKey()), false);
 });
+
+function secretKey() {
+  return ["unit", "test", "key"].join("-");
+}
 
 function element(tag) {
   const node = {
@@ -149,9 +178,14 @@ function fakeDocument() {
   register("recipe-status", "p");
   register("recipe-error", "div");
   register("recipe-error-text", "p");
+  register("recipe-error-hint", "p");
+  register("recipe-empty", "div");
+  register("recipe-skeleton", "div");
   register("recipe-grid", "div");
   register("recipes", "section");
   nodes["recipe-error"].hidden = true;
+  nodes["recipe-error-hint"].hidden = true;
+  nodes["recipe-skeleton"].hidden = true;
   nodes["recipe-grid"].hidden = true;
   return {
     nodes,
@@ -218,6 +252,8 @@ test("suggest renders three Persian cards and blocks a second submit", async () 
   assert.equal(doc.nodes.suggest.disabled, true);
   assert.equal(doc.nodes["recipe-retry"].disabled, true);
   assert.equal(doc.nodes["recipe-status"].textContent, COPY.loading);
+  assert.equal(doc.nodes["recipe-skeleton"].hidden, false);
+  assert.equal(doc.nodes["recipe-empty"].hidden, true);
   assert.equal(doc.nodes.recipes.className.includes("is-busy"), true);
 
   doc.nodes.suggest.listeners.click();
@@ -230,6 +266,8 @@ test("suggest renders three Persian cards and blocks a second submit", async () 
   assert.equal(doc.nodes.suggest.disabled, false);
   assert.equal(doc.nodes["recipe-grid"].hidden, false);
   assert.equal(doc.nodes["recipe-error"].hidden, true);
+  assert.equal(doc.nodes["recipe-empty"].hidden, true);
+  assert.equal(doc.nodes["recipe-skeleton"].hidden, true);
   assert.equal(doc.nodes["recipe-status"].textContent, "");
   const cards = cardsOf(doc.nodes["recipe-grid"]);
   assert.equal(cards.length, 3);
@@ -270,6 +308,8 @@ test("empty pantry does not call the API", async () => {
   assert.equal(called, false);
   assert.equal(doc.nodes["recipe-error"].hidden, false);
   assert.equal(doc.nodes["recipe-error-text"].textContent, ERROR_COPY.empty_ingredients);
+  assert.equal(doc.nodes["recipe-error-hint"].hidden, true);
+  assert.equal(doc.nodes["recipe-error-hint"].textContent, "");
   assert.equal(doc.nodes.suggest.disabled, false);
 });
 
@@ -291,6 +331,11 @@ test("failures show Persian retry copy and hide secrets", async () => {
   assert.equal(doc.nodes["recipe-error"].hidden, false);
   assert.equal(doc.nodes["recipe-error-text"].textContent, ERROR_COPY.unauthorized);
   assert.equal(doc.nodes["recipe-error-text"].textContent.includes(secret), false);
+  assert.equal(doc.nodes["recipe-error-hint"].hidden, false);
+  assert.equal(doc.nodes["recipe-error-hint"].textContent, recipes.SERVICE_HINT);
+  assert.equal(doc.nodes["recipe-error-hint"].textContent.includes(secret), false);
+  assert.equal(doc.nodes["recipe-empty"].hidden, true);
+  assert.equal(doc.nodes["recipe-skeleton"].hidden, true);
   assert.equal(doc.nodes["recipe-grid"].hidden, true);
   assert.equal(doc.nodes.suggest.disabled, false);
   assert.equal(doc.nodes["recipe-retry"].disabled, false);
