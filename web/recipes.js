@@ -125,9 +125,21 @@
     };
   }
 
+  function publishRecipes(doc, recipes) {
+    if (!doc || typeof doc.dispatchEvent !== "function") return;
+    var event;
+    if (typeof CustomEvent === "function") {
+      event = new CustomEvent("ashpaz-recipes", { detail: { recipes: recipes } });
+    } else {
+      event = { type: "ashpaz-recipes", detail: { recipes: recipes } };
+    }
+    doc.dispatchEvent(event);
+  }
+
   function renderRecipeGrid(doc, grid, recipes) {
+    api.latestRecipes = recipes;
     var fragment = doc.createDocumentFragment();
-    recipes.forEach(function (card) {
+    recipes.forEach(function (card, index) {
       var article = doc.createElement("article");
       article.className = "recipe-card";
       article.dataset.testid = "recipe-card";
@@ -180,8 +192,12 @@
       var plan = doc.createElement("button");
       plan.type = "button";
       plan.className = "plan-button";
-      plan.disabled = true;
+      plan.disabled = false;
       plan.dataset.testid = "add-to-plan";
+      plan.dataset.recipeIndex = String(index);
+      plan.setAttribute("data-recipe-index", String(index));
+      plan.setAttribute("aria-haspopup", "dialog");
+      plan.setAttribute("aria-controls", "plan-sheet");
       plan.textContent = COPY.addToPlan;
 
       article.append(head, ingredientLabel, tags, stepLabel, steps, plan);
@@ -230,6 +246,7 @@
       errorBox.hidden = true;
       status.textContent = "";
       renderRecipeGrid(doc, grid, recipes);
+      publishRecipes(doc, recipes);
       grid.hidden = false;
     }
 
@@ -325,6 +342,7 @@
     createSubmitGate: createSubmitGate,
     renderRecipeGrid: renderRecipeGrid,
     mount: mount,
+    latestRecipes: [],
   };
 
   if (typeof module !== "undefined" && module.exports) {

@@ -600,15 +600,175 @@ h2 {
   margin-top: 0.3rem;
 }
 
+.recipes-actions,
+.plan-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.plan-head {
+  align-items: center;
+}
+
+.plan-button,
+.day-action,
+#build-plan,
+#plan-export {
+  min-height: 2.5rem;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid #efd0c4;
+  border-radius: 0.85rem;
+  background: #fff;
+  color: var(--accent);
+  font-weight: 700;
+}
+
 .plan-button {
   margin-top: auto;
-  min-height: 2.5rem;
+}
+
+.day-action {
+  margin-top: auto;
+}
+
+.plan-button:hover:not(:disabled),
+.day-action:hover,
+#build-plan:hover,
+#plan-export:hover {
+  border-color: transparent;
+  background: var(--accent);
+  color: #fffdf8;
+}
+
+#plan-status {
+  min-height: 0;
+  margin-top: 0.35rem;
+}
+
+#plan-status:empty {
+  display: none;
+}
+
+.budget-strip {
+  margin-top: 0.35rem;
   padding: 0.55rem 0.8rem;
-  border: 1px solid var(--line);
+  background: #fff8ee;
+  border: 1px solid var(--chip-line);
+  border-inline-start: 4px solid var(--saffron);
   border-radius: 0.85rem;
-  background: transparent;
+  color: var(--ink);
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.budget-strip.is-over {
+  background: #fff4f2;
+  border-color: #f0d0c8;
+  border-inline-start-color: var(--accent);
+}
+
+.week-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+}
+
+.day-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: 0.85rem 0.9rem 0.75rem;
+  background: #fffaf3;
+  border: 1px dashed var(--chip-line);
+  border-radius: 1rem;
+}
+
+.day-card.is-filled {
+  background: #fffdf8;
+  border-style: solid;
+  border-color: var(--line);
+}
+
+.day-name {
+  margin: 0;
+  font-size: 1.02rem;
+  line-height: 1.4;
+}
+
+.day-kicker {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.day-meal {
+  margin: 0;
+  font-weight: 700;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.day-card.is-empty .day-meal {
   color: var(--muted);
   font-weight: 600;
+}
+
+.day-cost {
+  margin: 0;
+  color: #8a5a12;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.plan-choice-list {
+  margin-top: 0.75rem;
+}
+
+.plan-choice {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  min-height: 2.9rem;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid var(--chip-line);
+  border-radius: 0.9rem;
+  background: var(--chip-bg);
+  color: var(--ink);
+  font-weight: 700;
+  text-align: start;
+  white-space: normal;
+}
+
+.plan-choice:hover {
+  background: #fff1ef;
+  border-color: #e7b2a8;
+}
+
+.plan-choice-label {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.plan-choice-detail {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.plan-choice-action {
+  flex: none;
+  color: var(--accent);
+  font-size: 0.85rem;
+}
+
+.print-only {
+  display: none;
 }
 
 .fridge-launch {
@@ -636,7 +796,9 @@ h2 {
 #fridge-open,
 #fridge-pick,
 #fridge-cancel,
-#fridge-close {
+#plan-sheet-cancel,
+#fridge-close,
+#plan-sheet-close {
   border: 1px solid var(--line);
   background: #fff;
   color: var(--ink);
@@ -677,7 +839,9 @@ h2 {
 
 #fridge-pick:hover:not(:disabled),
 #fridge-cancel:hover:not(:disabled),
-#fridge-close:hover:not(:disabled) {
+#plan-sheet-cancel:hover:not(:disabled),
+#fridge-close:hover:not(:disabled),
+#plan-sheet-close:hover:not(:disabled) {
   background: #faf6f0;
 }
 
@@ -711,7 +875,8 @@ h2 {
   margin-bottom: 0.35rem;
 }
 
-#fridge-close {
+#fridge-close,
+#plan-sheet-close {
   display: grid;
   place-items: center;
   width: 2.25rem;
@@ -845,14 +1010,21 @@ h2 {
   #suggest,
   #recipe-retry,
   .plan-button,
+  .day-action,
+  #build-plan,
+  #plan-export,
   #fridge-open,
   .sheet-actions button,
   #fridge-retry {
     width: 100%;
   }
 
-  .recipes-head {
+  .recipes-head,
+  .plan-head,
+  .recipes-actions,
+  .plan-toolbar {
     align-items: stretch;
+    flex-direction: column;
   }
 }
 
@@ -896,5 +1068,110 @@ h2 {
 
   .page:has(#recipe-grid:not([hidden])) .recipe-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 80rem) {
+  .page:has(#week-grid) {
+    width: min(90rem, calc(100% - 2rem));
+  }
+
+  .page:has(#week-grid) .topbar,
+  .page:has(#week-grid) #pantry,
+  .page:has(#week-grid) .footer,
+  .page:has(#week-grid) #recipes:not(:has(#recipe-grid:not([hidden]))) {
+    width: min(44rem, 100%);
+    margin-inline: auto;
+  }
+
+  .page:has(#week-grid):has(#recipe-grid:not([hidden])) #recipes {
+    width: min(72rem, 100%);
+    margin-inline: auto;
+  }
+
+  .week-grid {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+}
+
+@media print {
+  @page {
+    margin: 12mm;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    color: #1a1a1a !important;
+    font-family: Vazirmatn, "Noto Sans Arabic", Tahoma, sans-serif;
+  }
+
+  .page {
+    width: auto !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .topbar,
+  #pantry,
+  #recipes,
+  .footer,
+  .sheet,
+  .noscript,
+  .plan-toolbar,
+  .day-action,
+  #plan-status {
+    display: none !important;
+  }
+
+  .week-grid {
+    display: block !important;
+  }
+
+  .day-card {
+    display: block !important;
+    margin: 0 0 0.45rem !important;
+  }
+
+  .print-only {
+    display: block !important;
+    margin: 0 0 0.2rem;
+    color: #1a1a1a !important;
+    font-size: 0.9rem;
+    font-weight: 700;
+  }
+
+  .plan-panel,
+  .day-card,
+  .budget-strip {
+    background: #fff !important;
+    color: #1a1a1a !important;
+    box-shadow: none !important;
+  }
+
+  .plan-panel {
+    border: 0 !important;
+    padding: 0 !important;
+  }
+
+  .day-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border: 1px solid #ccc !important;
+    border-radius: 0 !important;
+  }
+
+  .day-name,
+  .day-meal,
+  .day-kicker,
+  .day-cost,
+  .day-card.is-empty .day-meal,
+  .budget-strip {
+    color: #1a1a1a !important;
+  }
+
+  .budget-strip {
+    border: 1px solid #ccc !important;
   }
 }

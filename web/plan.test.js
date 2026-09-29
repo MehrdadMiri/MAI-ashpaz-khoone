@@ -1,0 +1,506 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+
+require("./pantry.js");
+const recipes = require("./recipes.js");
+const plan = require("./plan.js");
+
+const { COPY, DAYS, STORAGE_KEY, MAX_RECIPES } = plan;
+
+function dish(title, ingredients, steps, cost) {
+  const recipe = { title, ingredients, steps };
+  if (cost !== undefined) recipe.cost_toman = cost;
+  return recipe;
+}
+
+const THREE = [
+  dish("عدس‌پلو", ["برنج", "عدس"], ["پیاز را تفت بده", "عدس را بپز"], 180000),
+  dish("لوبیا پلو", ["برنج", "لوبیا"], ["لوبیا را بپز", "برنج را دم کن"], 160000),
+  dish("ماست و خیار", ["ماست", "خیار"], ["ماست را هم بزن", "سرد سرو کن"], 70000),
+];
+
+function fresh() {
+  return plan.createPlan({ storage: plan.createMemoryStorage() });
+}
+
+function element(tag) {
+  const node = {
+    tag,
+    hidden: false,
+    disabled: false,
+    textContent: "",
+    className: "",
+    dataset: {},
+    children: [],
+    attrs: {},
+    listeners: {},
+    parentNode: null,
+    append(...kids) {
+      kids.forEach((kid) => {
+        if (!kid) return;
+        kid.parentNode = node;
+        node.children.push(kid);
+      });
+    },
+    replaceChildren(...kids) {
+      node.children.forEach((kid) => {
+        kid.parentNode = null;
+      });
+      node.children = [];
+      node.append(...kids);
+    },
+    setAttribute(name, value) {
+      node.attrs[name] = value;
+    },
+    getAttribute(name) {
+      return node.attrs[name];
+    },
+    addEventListener(type, fn) {
+      node.listeners[type] = fn;
+    },
+    focus() {
+      node.focused = true;
+    },
+  };
+  node.classList = {
+    toggle(name, on) {
+      const parts = new Set(node.className.split(/\s+/).filter(Boolean));
+      const enable = on === undefined ? !parts.has(name) : !!on;
+      if (enable) parts.add(name);
+      else parts.delete(name);
+      node.className = [...parts].join(" ");
+    },
+  };
+  return node;
+}
+
+function fakeDocument() {
+  const nodes = {};
+  function register(id, tag, hidden) {
+    const node = element(tag);
+    node.id = id;
+    node.hidden = !!hidden;
+    nodes[id] = node;
+    return node;
+  }
+  register("build-plan", "button");
+  register("plan-export", "button");
+  register("plan-status", "p");
+  register("plan-budget", "p", true);
+  nodes["plan-budget"].className = "budget-strip";
+  register("week-grid", "div");
+  register("plan", "section");
+  register("plan-sheet", "div", true);
+  nodes["plan-sheet"].className = "sheet";
+  nodes["plan-sheet"].dataset.mode = "";
+  register("plan-sheet-title", "h2");
+  register("plan-sheet-hint", "p");
+  register("plan-sheet-list", "ul");
+  register("plan-sheet-close", "button");
+  register("plan-sheet-cancel", "button");
+  register("week-budget", "input");
+  const doc = {
+    nodes,
+    listeners: {},
+    body: element("body"),
+    getElementById(id) {
+      return nodes[id] || null;
+    },
+    createElement: element,
+    addEventListener(type, fn) {
+      if (!doc.listeners[type]) doc.listeners[type] = [];
+      doc.listeners[type].push(fn);
+    },
+  };
+  return doc;
+}
+
+function fire(doc, type, event) {
+  (doc.listeners[type] || []).forEach((fn) => fn(event));
+}
+
+function click(doc, target) {
+  fire(doc, "click", { target });
+}
+
+function sheetChoices(doc) {
+  return doc.nodes["plan-sheet-list"].children.map((li) => li.children[0]);
+}
+
+function dayCards(doc) {
+  return doc.nodes["week-grid"].children;
+}
+
+function mountPlan(options) {
+  const model = options.model || fresh();
+  const doc = fakeDocument();
+  const downloads = [];
+  const prints = [];
+  let budget = Object.prototype.hasOwnProperty.call(options, "budget") ? options.budget : null;
+  plan.mount(doc, model, {
+    latest() {
+      return options.latest || [];
+    },
+    budget() {
+      return budget;
+    },
+    download(text, filename) {
+      downloads.push({ text, filename });
+    },
+    print() {
+      prints.push(1);
+    },
+  });
+  return {
+    doc,
+    model,
+    downloads,
+    prints,
+    setBudget(value) {
+      budget = value;
+    },
+  };
+}
+
+test("the Persian week runs Saturday through Friday", () => {
+  assert.deepEqual(
+    DAYS.map((day) => day.id),
+    ["sat", "sun", "mon", "tue", "wed", "thu", "fri"],
+  );
+  assert.deepEqual(
+    DAYS.map((day) => day.label),
+    ["شنبه", "یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه"],
+  );
+  assert.equal(DAYS[3].label, "\u0633\u0647\u200c\u0634\u0646\u0628\u0647");
+  assert.equal(COPY.empty, "خالی");
+  assert.equal(COPY.swap, "جایگزین");
+  assert.equal(COPY.addToPlan, "افزودن به برنامه");
+  assert.equal(COPY.export, "چاپ / خروجی");
+  assert.equal(STORAGE_KEY, "ashpaz-khoone.plan.v1");
+});
+
+test("empty days stay خالی until a recipe is assigned or swapped", () => {
+  const model = fresh();
+  assert.equal(model.week().length, 7);
+  model.week().forEach((day) => assert.equal(day.recipe, null));
+
+  const assigned = model.assign("sat", THREE[0]);
+  assert.equal(assigned.ok, true);
+  assert.equal(assigned.replaced, false);
+  assert.equal(model.week()[0].recipe.title, "عدس‌پلو");
+  assert.equal(model.week()[1].recipe, null);
+
+  const swapped = model.assign("sat", THREE[1]);
+  assert.equal(swapped.replaced, true);
+  assert.equal(model.week()[0].recipe.title, "لوبیا پلو");
+
+  const cleared = model.clearDay("sat");
+  assert.equal(cleared.cleared, true);
+  assert.equal(model.week()[0].recipe, null);
+  assert.equal(model.assign("nope", THREE[0]).ok, false);
+  assert.equal(model.assign("sun", { title: "  " }).ok, false);
+});
+
+test("Arabic and Persian spellings of one title stay one recipe", () => {
+  const model = fresh();
+  model.remember([dish("كباب", ["پیاز"], ["بپز"], 1000)]);
+  model.assign("fri", model.recipes()[0].id);
+  model.remember([dish("کباب", ["پیاز"], ["کباب را بپز"], 2000)]);
+  assert.equal(model.recipes().length, 1);
+  assert.equal(model.recipes()[0].title, "کباب");
+  assert.equal(model.recipes()[0].cost_toman, 2000);
+  assert.equal(model.week()[6].recipe.title, "کباب");
+  assert.equal(model.week()[6].recipe.cost_toman, 2000);
+});
+
+test("building the week fills only empty days, repeating recipes", () => {
+  const model = fresh();
+  assert.equal(model.fillEmpty().filled, 0);
+  model.remember(THREE);
+  model.assign("sat", THREE[2]);
+  const result = model.fillEmpty();
+  assert.equal(result.filled, 6);
+  const titles = model.week().map((day) => day.recipe.title);
+  assert.deepEqual(titles, [
+    "ماست و خیار",
+    "عدس‌پلو",
+    "لوبیا پلو",
+    "ماست و خیار",
+    "عدس‌پلو",
+    "لوبیا پلو",
+    "ماست و خیار",
+  ]);
+  assert.equal(model.fillEmpty().filled, 0);
+  assert.equal(model.spend(), 180000 + 160000 + 70000 + 180000 + 160000 + 70000 + 70000);
+});
+
+test("the plan is remembered in localStorage and ignores a broken save", () => {
+  const storage = plan.createMemoryStorage();
+  const first = plan.createPlan({ storage });
+  first.assign("sun", THREE[0]);
+  const second = plan.createPlan({ storage });
+  assert.equal(second.week()[1].recipe.title, "عدس‌پلو");
+  assert.equal(second.week()[0].recipe, null);
+
+  storage.setItem(STORAGE_KEY, "{");
+  const broken = plan.createPlan({ storage });
+  assert.equal(broken.week().every((day) => day.recipe === null), true);
+
+  storage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      recipes: [{ title: "عدس‌پلو", ingredients: ["برنج"], steps: ["بپز"] }],
+      slots: { sat: "missing" },
+    }),
+  );
+  const dangling = plan.createPlan({ storage });
+  assert.equal(dangling.recipes()[0].title, "عدس‌پلو");
+  assert.equal(dangling.week()[0].recipe, null);
+});
+
+test("assigned recipes are kept when the catalog is trimmed", () => {
+  const model = fresh();
+  model.assign("sat", dish("ثابت", ["برنج"], ["بپز"], 10));
+  const many = [];
+  for (let i = 0; i < 30; i += 1) {
+    many.push(dish("غذا " + i, ["برنج"], ["بپز"], 10));
+  }
+  model.remember(many);
+  assert.ok(model.recipes().length <= MAX_RECIPES);
+  assert.equal(model.week()[0].recipe.title, "ثابت");
+  assert.equal(
+    model.recipes().some((recipe) => recipe.title === "ثابت"),
+    true,
+  );
+});
+
+test("markdown lists every day and the budget line stays soft", () => {
+  const model = fresh();
+  model.assign("sat", THREE[0]);
+  const emptyNote = plan.budgetLine(0, 1500000);
+  assert.equal(emptyNote, null);
+  const under = plan.budgetLine(180000, 1500000);
+  assert.equal(under.over, false);
+  assert.match(under.text, /۱۸۰٬۰۰۰/);
+  assert.match(under.text, /۱٬۵۰۰٬۰۰۰/);
+  assert.equal(under.text.includes("بیشتر"), false);
+  const over = plan.budgetLine(2000000, 1500000);
+  assert.equal(over.over, true);
+  assert.match(over.text, /بیشتر از بودجه هفته/);
+
+  const text = model.markdown(1500000);
+  assert.match(text, /^# برنامه ۷ روزه/);
+  DAYS.forEach((day) => assert.match(text, new RegExp("\\*\\*" + day.label + ":\\*\\*")));
+  assert.match(text, /\*\*شنبه:\*\* عدس‌پلو — حدود ۱۸۰٬۰۰۰ تومان/);
+  assert.match(text, /\*\*یکشنبه:\*\* خالی/);
+  assert.match(text, /جمع شام‌ها حدود ۱۸۰٬۰۰۰ تومان از بودجه ۱٬۵۰۰٬۰۰۰ تومان/);
+  assert.equal(recipes.formatCostToman(180000), "حدود ۱۸۰٬۰۰۰ تومان");
+});
+
+test("the week renders seven days and an empty placeholder", () => {
+  const doc = fakeDocument();
+  const model = fresh();
+  model.assign("mon", THREE[1]);
+  plan.renderWeek(doc, doc.nodes["week-grid"], model);
+  const cards = dayCards(doc);
+  assert.equal(cards.length, 7);
+  assert.equal(cards[0].children[0].textContent, "شنبه");
+  assert.equal(cards[0].queryMeal || cards[0].children.find((child) => child.dataset.testid === "day-meal").textContent, "خالی");
+  assert.equal(cards[0].children.find((child) => child.tag === "button").textContent, COPY.pick);
+  assert.equal(cards[2].children.find((child) => child.dataset.testid === "day-meal").textContent, "لوبیا پلو");
+  assert.equal(cards[2].children.find((child) => child.tag === "button").textContent, COPY.swap);
+  assert.equal(cards[6].children[0].textContent, "جمعه");
+});
+
+test("برنامه ۷ روزه fills the grid from the recipes on the page", () => {
+  const view = mountPlan({ latest: THREE });
+  assert.equal(dayCards(view.doc).length, 7);
+  dayCards(view.doc).forEach((card) => {
+    assert.equal(card.children.find((child) => child.dataset.testid === "day-meal").textContent, "خالی");
+  });
+
+  view.doc.nodes["build-plan"].listeners.click();
+  assert.equal(view.doc.nodes["plan-status"].textContent, COPY.filledWeek);
+  const meals = dayCards(view.doc).map(
+    (card) => card.children.find((child) => child.dataset.testid === "day-meal").textContent,
+  );
+  assert.deepEqual(meals, [
+    "عدس‌پلو",
+    "لوبیا پلو",
+    "ماست و خیار",
+    "عدس‌پلو",
+    "لوبیا پلو",
+    "ماست و خیار",
+    "عدس‌پلو",
+  ]);
+  dayCards(view.doc).forEach((card) => {
+    assert.equal(card.children.find((child) => child.tag === "button").textContent, COPY.swap);
+  });
+
+  view.doc.nodes["build-plan"].listeners.click();
+  assert.equal(view.doc.nodes["plan-status"].textContent, COPY.weekFull);
+});
+
+test("without recipes the plan action leaves every day fillable and empty", () => {
+  const view = mountPlan({ latest: [] });
+  view.doc.nodes["build-plan"].listeners.click();
+  assert.equal(view.doc.nodes["plan-status"].textContent, COPY.needRecipes);
+  assert.equal(view.doc.nodes["plan-sheet"].hidden, true);
+  dayCards(view.doc).forEach((card) => {
+    assert.equal(card.children.find((child) => child.dataset.testid === "day-meal").textContent, "خالی");
+    assert.equal(card.children.find((child) => child.tag === "button").dataset.testid, "day-pick");
+  });
+});
+
+test("افزودن به برنامه assigns a card, then جایگزین swaps or clears the day", () => {
+  const view = mountPlan({ latest: THREE });
+  const add = element("button");
+  add.dataset.testid = "add-to-plan";
+  add.dataset.recipeIndex = "0";
+  click(view.doc, add);
+
+  assert.equal(view.doc.nodes["plan-sheet"].hidden, false);
+  assert.equal(view.doc.nodes["plan-sheet"].dataset.mode, "assign");
+  assert.equal(view.doc.nodes["plan-sheet-title"].textContent, COPY.addToPlan);
+  assert.match(view.doc.nodes["plan-sheet-hint"].textContent, /عدس‌پلو/);
+  const days = sheetChoices(view.doc);
+  assert.equal(days.length, 7);
+  assert.equal(days[0].dataset.choice, "sat");
+  assert.equal(days[0].children[1].textContent, "خالی");
+  assert.equal(days[3].children[0].textContent, "سه‌شنبه");
+  click(view.doc, days[0]);
+
+  assert.equal(view.doc.nodes["plan-sheet"].hidden, true);
+  assert.match(view.doc.nodes["plan-status"].textContent, /عدس‌پلو/);
+  assert.match(view.doc.nodes["plan-status"].textContent, /شنبه/);
+  assert.equal(
+    dayCards(view.doc)[0].children.find((child) => child.dataset.testid === "day-meal").textContent,
+    "عدس‌پلو",
+  );
+
+  click(view.doc, dayCards(view.doc)[0].children.find((child) => child.tag === "button"));
+  assert.equal(view.doc.nodes["plan-sheet"].dataset.mode, "swap");
+  assert.equal(view.doc.nodes["plan-sheet-title"].textContent, COPY.swap);
+  const swaps = sheetChoices(view.doc);
+  assert.equal(swaps.length, 4);
+  const other = swaps.find((button) => button.children[0].textContent === "لوبیا پلو");
+  click(view.doc, other);
+  assert.equal(
+    dayCards(view.doc)[0].children.find((child) => child.dataset.testid === "day-meal").textContent,
+    "لوبیا پلو",
+  );
+  assert.match(view.doc.nodes["plan-status"].textContent, /جایگزین/);
+
+  click(view.doc, dayCards(view.doc)[0].children.find((child) => child.tag === "button"));
+  const clear = sheetChoices(view.doc).find((button) => button.dataset.choice === "clear");
+  assert.equal(clear.children[0].textContent, "خالی");
+  click(view.doc, clear);
+  assert.equal(
+    dayCards(view.doc)[0].children.find((child) => child.dataset.testid === "day-meal").textContent,
+    "خالی",
+  );
+});
+
+test("a click on the choice label still selects that day", () => {
+  const view = mountPlan({ latest: THREE });
+  const add = element("button");
+  add.dataset.testid = "add-to-plan";
+  add.dataset.recipeIndex = "2";
+  click(view.doc, add);
+  const label = sheetChoices(view.doc)[4].children[0];
+  assert.equal(label.textContent, "چهارشنبه");
+  click(view.doc, label);
+  assert.equal(view.model.week()[4].recipe.title, "ماست و خیار");
+});
+
+test("چاپ / خروجی prints and downloads Persian day assignments", () => {
+  const view = mountPlan({ latest: THREE, budget: 100000 });
+  view.model.assign("sat", THREE[0]);
+  view.doc.nodes["build-plan"].listeners.click();
+
+  view.doc.nodes["plan-export"].listeners.click();
+  assert.equal(view.doc.nodes["plan-sheet"].hidden, false);
+  assert.equal(view.doc.nodes["plan-sheet-title"].textContent, COPY.export);
+  assert.equal(view.doc.nodes["plan-sheet-close"].focused, true);
+  const printChoice = sheetChoices(view.doc).find((button) => button.dataset.choice === "print");
+  click(view.doc, printChoice);
+  assert.deepEqual(view.prints, [1]);
+  assert.equal(view.doc.nodes["plan-sheet"].hidden, true);
+
+  view.doc.nodes["plan-export"].listeners.click();
+  const downloadChoice = sheetChoices(view.doc).find((button) => button.dataset.choice === "download");
+  click(view.doc, downloadChoice);
+  assert.equal(view.downloads.length, 1);
+  assert.equal(view.downloads[0].filename, COPY.filename);
+  assert.match(view.downloads[0].text, /# برنامه ۷ روزه/);
+  assert.match(view.downloads[0].text, /\*\*شنبه:\*\* عدس‌پلو/);
+  assert.match(view.downloads[0].text, /\*\*جمعه:\*\*/);
+  assert.equal(view.downloads[0].text.includes("GAP_CODE"), false);
+
+  assert.equal(view.doc.nodes["plan-budget"].hidden, false);
+  assert.match(view.doc.nodes["plan-budget"].textContent, /بیشتر از بودجه هفته/);
+  assert.match(view.doc.nodes["plan-budget"].className, /is-over/);
+  view.setBudget(5000000);
+  view.doc.nodes["week-budget"].listeners.input();
+  assert.equal(view.doc.nodes["plan-budget"].className.includes("is-over"), false);
+});
+
+test("escape, backdrop, and انصراف close the sheet without changing the week", () => {
+  const view = mountPlan({ latest: THREE });
+  view.doc.nodes["plan-export"].listeners.click();
+  fire(view.doc, "keydown", {
+    key: "Escape",
+    preventDefault() {
+      this.defaulted = true;
+    },
+  });
+  assert.equal(view.doc.nodes["plan-sheet"].hidden, true);
+
+  view.doc.nodes["plan-export"].listeners.click();
+  view.doc.nodes["plan-sheet"].listeners.click({ target: view.doc.nodes["plan-sheet"] });
+  assert.equal(view.doc.nodes["plan-sheet"].hidden, true);
+
+  view.doc.nodes["plan-export"].listeners.click();
+  view.doc.nodes["plan-sheet-cancel"].listeners.click();
+  assert.equal(view.doc.nodes["plan-sheet"].hidden, true);
+  assert.equal(view.model.week().every((day) => day.recipe === null), true);
+});
+
+test("recipe events are stored for a later plan action", () => {
+  const view = mountPlan({ latest: [] });
+  fire(view.doc, "ashpaz-recipes", { detail: { recipes: THREE } });
+  assert.equal(view.model.recipes().length, 3);
+  view.doc.nodes["build-plan"].listeners.click();
+  assert.equal(view.model.week()[0].recipe.title, "عدس‌پلو");
+});
+
+test("the page, stylesheet, and image wire the plan without an API key", () => {
+  const html = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+  const css = fs.readFileSync(path.join(__dirname, "pantry.css"), "utf8");
+  const script = fs.readFileSync(path.join(__dirname, "plan.js"), "utf8");
+  const docker = fs.readFileSync(path.join(__dirname, "Dockerfile"), "utf8");
+  assert.match(html, /id="build-plan"/);
+  assert.match(html, /id="plan-export"/);
+  assert.match(html, /id="week-grid"/);
+  assert.match(html, /id="plan-sheet"/);
+  assert.match(html, />برنامه ۷ روزه</);
+  assert.match(html, /چاپ \/ خروجی/);
+  assert.ok(html.indexOf("recipes.js") < html.indexOf("plan.js"));
+  assert.equal(html.includes("GAP_CODE_API_KEY"), false);
+  assert.equal(script.includes("GAP_CODE_API_KEY"), false);
+  assert.equal(script.includes("fetch("), false);
+  assert.match(docker, /plan\.js/);
+
+  const printCss = css.slice(css.indexOf("@media print"));
+  assert.match(printCss, /#pantry/);
+  assert.match(printCss, /#recipes/);
+  assert.match(printCss, /\.sheet/);
+  assert.match(printCss, /\.topbar/);
+  assert.match(printCss, /\.footer/);
+  assert.match(printCss, /\.day-action/);
+  assert.match(printCss, /#fff/);
+  assert.match(printCss, /Vazirmatn/);
+  assert.equal(printCss.includes("#week-grid"), false);
+});

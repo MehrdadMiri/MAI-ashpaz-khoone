@@ -143,6 +143,7 @@ function fakeDocument() {
     nodes[id] = node;
     return node;
   }
+  const doc = { events: [] };
   register("suggest", "button");
   register("recipe-retry", "button");
   register("recipe-status", "p");
@@ -154,6 +155,7 @@ function fakeDocument() {
   nodes["recipe-grid"].hidden = true;
   return {
     nodes,
+    events: doc.events,
     getElementById(id) {
       return nodes[id] || null;
     },
@@ -165,6 +167,9 @@ function fakeDocument() {
           this.children.push(...kids);
         },
       };
+    },
+    dispatchEvent(event) {
+      doc.events.push(event);
     },
   };
 }
@@ -232,12 +237,25 @@ test("suggest renders three Persian cards and blocks a second submit", async () 
   assert.equal(cards[0].children[0].children[1].textContent, "حدود ۱۸۰٬۰۰۰ تومان");
   assert.equal(cards[0].children[2].children[0].textContent, "برنج");
   assert.equal(cards[0].children[4].children.length, 3);
-  cards.forEach((card) => {
+  cards.forEach((card, index) => {
     const plan = card.children[card.children.length - 1];
-    assert.equal(plan.disabled, true);
+    assert.equal(plan.disabled, false);
     assert.equal(plan.textContent, COPY.addToPlan);
     assert.equal(plan.dataset.testid, "add-to-plan");
+    assert.equal(plan.dataset.recipeIndex, String(index));
   });
+  assert.equal(doc.events.length, 1);
+  assert.equal(doc.events[0].type, "ashpaz-recipes");
+  assert.equal(doc.events[0].detail.recipes[0].title, "عدس‌پلو");
+});
+
+test("recipe cards keep an index the meal plan can assign", () => {
+  const doc = fakeDocument();
+  recipes.renderRecipeGrid(doc, doc.nodes["recipe-grid"], THREE);
+  assert.equal(recipes.latestRecipes[0].title, "عدس‌پلو");
+  const cards = cardsOf(doc.nodes["recipe-grid"]);
+  assert.equal(cards[2].children[cards[2].children.length - 1].dataset.recipeIndex, "2");
+  assert.equal(cards[2].children[cards[2].children.length - 1].disabled, false);
 });
 
 test("empty pantry does not call the API", async () => {

@@ -122,7 +122,10 @@
               <h2 id="recipes-title">پیشنهاد دستور</h2>
               <p class="hint">از مواد آشپزخانه و بودجه همین هفته.</p>
             </div>
-            <button type="button" id="suggest" data-testid="suggest-button">پیشنهاد دستور</button>
+            <div class="recipes-actions">
+              <button type="button" id="suggest" data-testid="suggest-button">پیشنهاد دستور</button>
+              <button type="button" id="build-plan" data-testid="build-plan">برنامه ۷ روزه</button>
+            </div>
           </div>
           <p id="recipe-status" class="status" role="status" aria-live="polite" data-testid="recipe-status"></p>
           <div id="recipe-error" class="recipe-error" role="alert" hidden data-testid="recipe-error">
@@ -131,10 +134,34 @@
           </div>
           <div id="recipe-grid" class="recipe-grid" data-testid="recipe-grid" hidden></div>
         </section>
+
+        <section class="panel plan-panel" id="plan" aria-labelledby="plan-title">
+          <div class="panel-head plan-head">
+            <div>
+              <p class="print-only">آشپزخونه</p>
+              <h2 id="plan-title">برنامه ۷ روزه</h2>
+              <p class="hint">شام هر روز، از شنبه تا جمعه.</p>
+            </div>
+            <div class="plan-toolbar">
+              <button
+                type="button"
+                id="plan-export"
+                data-testid="plan-export"
+                aria-haspopup="dialog"
+                aria-controls="plan-sheet"
+              >
+                چاپ / خروجی
+              </button>
+            </div>
+          </div>
+          <p id="plan-budget" class="budget-strip" data-testid="plan-budget" hidden></p>
+          <p id="plan-status" class="status" role="status" aria-live="polite" data-testid="plan-status"></p>
+          <div id="week-grid" class="week-grid" data-testid="week-grid" aria-label="برنامه ۷ روزه"></div>
+        </section>
       </main>
 
       <footer class="footer">
-        <span>مواد و بودجه در همین مرورگر می‌ماند.</span>
+        <span>مواد، بودجه و برنامه در همین مرورگر می‌ماند.</span>
         <a href="/health">سلامت سرویس</a>
       </footer>
     </div>
@@ -203,11 +230,34 @@
         </div>
       </div>
     </div>
+    <div
+      id="plan-sheet"
+      class="sheet"
+      hidden
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="plan-sheet-title"
+      aria-describedby="plan-sheet-hint"
+      data-testid="plan-sheet"
+    >
+      <div class="sheet-card">
+        <div class="sheet-head">
+          <h2 id="plan-sheet-title" data-testid="plan-sheet-title">افزودن به برنامه</h2>
+          <button type="button" id="plan-sheet-close" data-testid="plan-sheet-close" aria-label="بستن">×</button>
+        </div>
+        <p id="plan-sheet-hint" class="hint" data-testid="plan-sheet-hint"></p>
+        <ul id="plan-sheet-list" class="confirm-list plan-choice-list" data-testid="plan-sheet-list"></ul>
+        <div class="sheet-actions">
+          <button type="button" id="plan-sheet-cancel" data-testid="plan-sheet-cancel">انصراف</button>
+        </div>
+      </div>
+    </div>
     <noscript>
       <p class="noscript">برای استفاده از آشپزخانه، جاوااسکریپت را روشن کنید.</p>
     </noscript>
     <script src="pantry.js"></script>
     <script src="fridge.js"></script>
     <script src="recipes.js"></script>
+    <script src="plan.js"></script>
   </body>
 </html>
