@@ -690,21 +690,25 @@ h2 {
 }
 
 .recipes-actions,
-.plan-toolbar {
+.plan-toolbar,
+.shop-toolbar {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
   align-items: center;
 }
 
-.plan-head {
+.plan-head,
+.shop-head {
   align-items: center;
 }
 
 .plan-button,
 .day-action,
 #build-plan,
-#plan-export {
+#plan-export,
+#shop-open,
+#shop-export {
   min-height: 2.5rem;
   padding: 0.55rem 0.85rem;
   border: 1px solid #efd0c4;
@@ -725,7 +729,9 @@ h2 {
 .plan-button:hover:not(:disabled),
 .day-action:hover,
 #build-plan:hover,
-#plan-export:hover {
+#plan-export:hover,
+#shop-open:hover,
+#shop-export:hover {
   border-color: transparent;
   background: var(--accent);
   color: #fffdf8;
@@ -736,8 +742,92 @@ h2 {
   margin-top: 0.35rem;
 }
 
-#plan-status:empty {
+#plan-status:empty,
+#shop-status:empty {
   display: none;
+}
+
+.shop-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  margin-top: 0.85rem;
+}
+
+.shop-category {
+  margin: 0 0 0.4rem;
+  color: var(--accent-dark);
+  font-size: 0.95rem;
+}
+
+.shop-items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shop-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.2rem 0.75rem;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--chip-line);
+  border-radius: 0.9rem;
+  background: var(--chip-bg);
+}
+
+.shop-item-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.shop-item-qty {
+  color: var(--accent-dark);
+  font-weight: 700;
+}
+
+.shop-item-meta {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.shop-note {
+  margin-top: 0.75rem;
+  padding: 1rem 1.1rem;
+  text-align: start;
+}
+
+.shop-empty {
+  margin-top: 0.75rem;
+}
+
+.shop-skipped {
+  margin-top: 0.85rem;
+  padding: 0.85rem 1rem;
+  background: #fffaf3;
+  border: 1px dashed var(--chip-line);
+  border-radius: 0.9rem;
+}
+
+.shop-skipped p {
+  font-weight: 700;
+}
+
+.shop-skipped ul {
+  margin: 0.35rem 0 0;
+  padding-inline-start: 1.2rem;
+}
+
+#shop-status {
+  min-height: 0;
+  margin-top: 0.35rem;
 }
 
 .budget-strip {
@@ -887,8 +977,10 @@ h2 {
 #fridge-cancel,
 #fridge-loading-cancel,
 #plan-sheet-cancel,
+#shop-sheet-cancel,
 #fridge-close,
-#plan-sheet-close {
+#plan-sheet-close,
+#shop-sheet-close {
   border: 1px solid var(--line);
   background: #fff;
   color: var(--ink);
@@ -932,8 +1024,10 @@ h2 {
 #fridge-cancel:hover:not(:disabled),
 #fridge-loading-cancel:hover:not(:disabled),
 #plan-sheet-cancel:hover:not(:disabled),
+#shop-sheet-cancel:hover:not(:disabled),
 #fridge-close:hover:not(:disabled),
-#plan-sheet-close:hover:not(:disabled) {
+#plan-sheet-close:hover:not(:disabled),
+#shop-sheet-close:hover:not(:disabled) {
   background: #faf6f0;
 }
 
@@ -968,7 +1062,8 @@ h2 {
 }
 
 #fridge-close,
-#plan-sheet-close {
+#plan-sheet-close,
+#shop-sheet-close {
   display: grid;
   place-items: center;
   width: 2.25rem;
@@ -1119,6 +1214,8 @@ h2 {
   .day-action,
   #build-plan,
   #plan-export,
+  #shop-open,
+  #shop-export,
   #fridge-open,
   .sheet-actions button,
   #fridge-retry {
@@ -1127,8 +1224,10 @@ h2 {
 
   .recipes-head,
   .plan-head,
+  .shop-head,
   .recipes-actions,
-  .plan-toolbar {
+  .plan-toolbar,
+  .shop-toolbar {
     align-items: stretch;
     flex-direction: column;
   }
@@ -1196,6 +1295,11 @@ h2 {
     margin-inline: auto;
   }
 
+  .page:has(#week-grid) #shop {
+    width: min(44rem, 100%);
+    margin-inline: auto;
+  }
+
   .week-grid {
     grid-template-columns: repeat(7, minmax(0, 1fr));
   }
@@ -1223,12 +1327,15 @@ h2 {
   .topbar,
   #pantry,
   #recipes,
+  #shop,
   .footer,
   .sheet,
   .noscript,
   .plan-toolbar,
+  .shop-toolbar,
   .day-action,
-  #plan-status {
+  #plan-status,
+  #shop-status {
     display: none !important;
   }
 
@@ -1294,5 +1401,63 @@ h2 {
 
   .budget-strip {
     border: 1px solid #ccc !important;
+  }
+
+  body[data-print="shop"] #plan {
+    display: none !important;
+  }
+
+  body[data-print="shop"] #shop {
+    display: block !important;
+    width: auto !important;
+    margin: 0 !important;
+  }
+
+  body[data-print="shop"] .shop-panel,
+  body[data-print="shop"] .shop-item,
+  body[data-print="shop"] .shop-skipped,
+  body[data-print="shop"] .empty {
+    background: #fff !important;
+    color: #1a1a1a !important;
+    box-shadow: none !important;
+  }
+
+  body[data-print="shop"] .shop-panel {
+    border: 0 !important;
+    padding: 0 !important;
+  }
+
+  body[data-print="shop"] .shop-category,
+  body[data-print="shop"] .shop-item-name,
+  body[data-print="shop"] .shop-item-qty,
+  body[data-print="shop"] .shop-item-meta,
+  body[data-print="shop"] .hint,
+  body[data-print="shop"] .empty-help {
+    color: #1a1a1a !important;
+  }
+
+  body[data-print="shop"] .shop-item {
+    justify-content: flex-start;
+    gap: 0.35rem 0.85rem;
+    padding: 0.4rem 0 !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border: 0 !important;
+    border-bottom: 1px solid #ccc !important;
+    border-radius: 0 !important;
+  }
+
+  body[data-print="shop"] #shop-count {
+    display: none !important;
+  }
+
+  body[data-print="shop"] .shop-item-name::before {
+    content: "";
+    display: inline-block;
+    width: 0.75rem;
+    height: 0.75rem;
+    margin-inline-end: 0.45rem;
+    border: 1px solid #1a1a1a;
+    vertical-align: -0.05rem;
   }
 }

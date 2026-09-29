@@ -10,7 +10,7 @@ Persian RTL AI meal and recipe demo (آشپزخونه).
 | api | Python (Flask + Gunicorn) | http://localhost:8000 |
 | db | Postgres 16 | localhost:5432 |
 
-The web page is a Persian RTL pantry. You can add and remove ingredient chips, load a sample set of Iranian staples, and set a numeric week budget. The list and budget stay in this browser (`localStorage`); they are not stored in Postgres. «پیشنهاد دستور» asks the shared GapGPT client (`api/gapgpt.py`) for at least three Persian recipes from those chips and the week budget. «عکس یخچال» sends one photo to the same client and shows candidate chips; nothing is added to the pantry until you confirm. «برنامه ۷ روزه» assigns those recipes to شنبه through جمعه and can print or download the week. The plan does not call GapGPT. Product UI is Persian RTL. This scaffold’s docs and code comments are English.
+The web page is a Persian RTL pantry. You can add and remove ingredient chips, load a sample set of Iranian staples, and set a numeric week budget. The list and budget stay in this browser (`localStorage`); they are not stored in Postgres. «پیشنهاد دستور» asks the shared GapGPT client (`api/gapgpt.py`) for at least three Persian recipes from those chips and the week budget. «عکس یخچال» sends one photo to the same client and shows candidate chips; nothing is added to the pantry until you confirm. «برنامه ۷ روزه» assigns those recipes to شنبه through جمعه and can print or download the week. The plan does not call GapGPT. «مواد خرید» diffs those planned dinners against the pantry chips and can print or download the missing items. That list does not call GapGPT either. Product UI is Persian RTL. This scaffold’s docs and code comments are English.
 
 The GitHub repository is public.
 
@@ -187,6 +187,67 @@ QA on http://localhost:8080, still with no key:
 3. Click «چاپ / خروجی», then «دانلود مارک‌داون». The file lists all seven days as خالی.
 4. After «پیشنهاد دستور» (that call needs a key), «افزودن به برنامه» chooses a day, «جایگزین» swaps it, and «برنامه ۷ روزه» fills any day that is still «خالی».
 
+## Shopping list
+
+«مواد خرید» is on the week plan. It does not call GapGPT and does not read `GAP_CODE_API_KEY`. The browser diffs pantry chips against the ingredient lines already stored on each planned شام — the same lines the recipe cards show. Nothing is written to Postgres or a new `localStorage` key. Change a chip or a day and the list is rebuilt.
+
+- A chip covers a recipe line after the pantry's usual cleanup (spacing, ZWNJ, Arabic and Persian letters). A pantry name also covers a longer line when the extra words are only size or prep, so پیاز covers «۲ عدد پیاز متوسط». «روغن» does not cover «روغن زیتون».
+- A quantity on the stored line is kept (`۲۰۰ گرم`, `نصف پیمانه`, `۳ عدد`, `یک و نیم پیمانه`). The same item and unit are added across the days that شام is planned. Different units stay side by side. With no quantity, a repeated item says how many dinners need it.
+- Rows are grouped with a small built-in map: سبزی و صیفی، میوه، پروتئین، لبنیات، حبوبات و غلات، نان و آرد، چاشنی و ادویه، خشکبار. Anything else is «سایر».
+- «چاپ / خروجی» on this section prints only the list (white page, Vazirmatn, RTL) or downloads `مواد-خرید.md`. Printing the week still hides this section.
+
+Empty states:
+
+- No شام on the week: «برنامه هفته خالی است».
+- No شام and no chips: «برنامه و آشپزخانه خالی است».
+- Chips empty, week filled: «آشپزخانه خالی است», and every planned ingredient is on the list.
+- Every planned ingredient is already a chip: «چیزی برای خرید نمانده».
+
+If a planned dinner has no ingredient lines, that day is named under the list and left off it. Guessing those lines with GapGPT (`gpt-5.6-luna` through `GapGPTClient`) is not wired. Recipe cards already include `ingredients`, so the list stays a client-side diff and a missing list stays visible instead of being filled with a guessed one.
+
+Checks without a browser and without an API key:
+
+```bash
+node --test web/shop.test.js
+```
+
+QA on http://localhost:8080, still with no key. «بارگذاری نمونه» fills the pantry. The week can be filled without a model by writing the plan key the page already uses, then reloading:
+
+```js
+localStorage.setItem(
+  "ashpaz-khoone.plan.v1",
+  JSON.stringify({
+    recipes: [
+      {
+        title: "عدس پلو",
+        ingredients: ["برنج", "عدس", "پیاز", "۲۰۰ گرم گوشت"],
+        steps: ["بپز"],
+        cost_toman: 0,
+      },
+    ],
+    slots: {
+      sat: "r:عدسپلو",
+      sun: null,
+      mon: null,
+      tue: null,
+      wed: null,
+      thu: null,
+      fri: null,
+    },
+  }),
+);
+```
+
+The slot id is `r:` plus the title with spaces and ZWNJ removed. After reload:
+
+1. Click «مواد خرید». برنج، عدس، and پیاز are already chips, so they are absent. گوشت is listed as ۲۰۰ گرم under پروتئین.
+2. «چاپ / خروجی» on the shopping section, then «چاپ». The preview is the list, in Persian, on white. The pantry and the seven day cards are not in it.
+3. «دانلود مارک‌داون» saves `مواد-خرید.md`.
+4. Clear every day (or remove the plan key and reload). The section says the week is empty.
+5. With the dinner restored, «پاک کردن» says the pantry is empty and lists every ingredient on that dinner.
+
+With a key, the same checks work after «پیشنهاد دستور» and «برنامه ۷ روزه» instead of the `localStorage` snippet. The page still does not send the list to GapGPT.
+
 ## QA smoke
 
 The release smoke for this slice is [docs/QA-SMOKE.md](docs/QA-SMOKE.md). Run it with a real key only in the gitignored `.env` or the environment. Do not print the key. Do not tag `v0.1.0` from this work; that tag is ticket #8 after this path is green.
@@ -291,6 +352,8 @@ The longer [demo path](#demo-path-qa) below still covers a boot with no key.
 
 11. Meal plan, print, and download do not need a key. On http://localhost:8080 confirm seven days from شنبه to جمعه, each «خالی». Use «چاپ / خروجی» once, as in [Meal plan](#meal-plan). With recipe cards from step 9, assign a day, swap it with «جایگزین», and click «برنامه ۷ روزه» to fill any day that is still «خالی».
 
+12. Shopping list, print, and download do not need a key. With the sample pantry and a dinner on the week (step 11, or the `localStorage` snippet in [Shopping list](#shopping-list)), open «مواد خرید». Chips already in the pantry are absent. «چاپ / خروجی» on that section prints only the list and downloads `مواد-خرید.md`. An empty week says «برنامه هفته خالی است». «پاک کردن» with a filled week says «آشپزخانه خالی است» and lists every planned ingredient.
+
 ## GapGPT checks (SE/QA)
 
 Unit tests mock HTTP or talk to a local socket. They do not need a key and do not call GapGPT. `LiveSmokeTest` is skipped unless you opt in.
@@ -302,7 +365,7 @@ python3 -m venv .venv
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Expected: every test OK, with `LiveSmokeTest` skipped. From the repo root, `node --test web/pantry.test.js web/recipes.test.js web/fridge.test.js web/plan.test.js` covers the pantry, the recipe page, the fridge confirm sheet, and the meal plan.
+Expected: every test OK, with `LiveSmokeTest` skipped. From the repo root, `node --test web/pantry.test.js web/recipes.test.js web/fridge.test.js web/plan.test.js web/shop.test.js` covers the pantry, the recipe page, the fridge confirm sheet, the meal plan, and the shopping list.
 
 Smoke check without a key (controlled error, no stack trace). The stack from the demo path can already be running:
 

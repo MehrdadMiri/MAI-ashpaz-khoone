@@ -13,7 +13,7 @@ test -n "$GAP_CODE_API_KEY" && echo "GAP_CODE_API_KEY is set (value hidden)"
 Automated checks (no key, no network):
 
 ```bash
-node --test web/pantry.test.js web/recipes.test.js web/fridge.test.js web/plan.test.js
+node --test web/pantry.test.js web/recipes.test.js web/fridge.test.js web/plan.test.js web/shop.test.js
 cd api && python3 -m unittest discover -s tests -v
 ```
 
@@ -75,6 +75,20 @@ On a fresh browser profile (or after «پاک کردن»):
 - «چاپ / خروجی» → «چاپ». The preview is white, Persian, and shows the seven days (title or «خالی»). Pantry, recipe controls, and sheets are not in the preview.
 - «چاپ / خروجی» → «دانلود مارک‌داون» saves `برنامه-۷-روزه.md` with one line per day.
 - If the summed شام costs are over «بودجه هفته», the plan line says «بیشتر از بودجه هفته» and that چاپ و خروجی are still allowed. Print and download still work. The warning does not block them.
+
+### 7b. مواد خرید
+
+After the week has at least one شام (step 5) and the pantry has chips (step 2). This check does not call GapGPT and does not create a `v0.2.0` tag.
+
+- «مواد خرید» on the plan scrolls to the shopping list.
+- Rows are ingredients on the planned dinners that are not already chips. A chip covers the usual spelling variants (spacing, ZWNJ, Arabic/Persian letters).
+- If a stored line has a quantity, the row shows it. Rows are grouped (سبزی و صیفی، پروتئین، …).
+- «چاپ / خروجی» on that section → «چاپ» is a white RTL page of the list only. The week grid and the pantry are hidden.
+- «دانلود مارک‌داون» saves `مواد-خرید.md` with Persian headings.
+- With no شام left on the week, the section says «برنامه هفته خالی است».
+- With a filled week, «پاک کردن» says «آشپزخانه خالی است» and lists every planned ingredient.
+
+Without a key, the same list can be checked after «بارگذاری نمونه» by saving a plan in the browser and reloading. See the shopping-list section of the README for the `localStorage` snippet (`ashpaz-khoone.plan.v1`, Saturday slot `r:عدسپلو`).
 
 ### 8. Break the key — Persian error and retry — restore
 

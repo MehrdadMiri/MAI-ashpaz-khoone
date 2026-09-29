@@ -164,6 +164,7 @@
               <p class="hint">شام هر روز، از شنبه تا جمعه.</p>
             </div>
             <div class="plan-toolbar">
+              <button type="button" id="shop-open" data-testid="shop-open">مواد خرید</button>
               <button
                 type="button"
                 id="plan-export"
@@ -179,10 +180,57 @@
           <p id="plan-status" class="status" role="status" aria-live="polite" data-testid="plan-status"></p>
           <div id="week-grid" class="week-grid" data-testid="week-grid" aria-label="برنامه ۷ روزه"></div>
         </section>
+
+        <section class="panel shop-panel" id="shop" aria-labelledby="shop-title" data-testid="shop">
+          <div class="panel-head shop-head">
+            <div>
+              <p class="print-only">آشپزخونه</p>
+              <h2 id="shop-title">
+                مواد خرید
+                <span id="shop-count" class="count" data-testid="shop-count" hidden></span>
+              </h2>
+              <p class="hint">آنچه برای شام این هفته در آشپزخانه نیست.</p>
+            </div>
+            <div class="shop-toolbar">
+              <button
+                type="button"
+                id="shop-export"
+                data-testid="shop-export"
+                aria-haspopup="dialog"
+                aria-controls="shop-sheet"
+              >
+                چاپ / خروجی
+              </button>
+            </div>
+          </div>
+          <p id="shop-status" class="status" role="status" aria-live="polite" data-testid="shop-status"></p>
+          <div id="shop-empty" class="empty shop-empty" data-testid="shop-empty">
+            <div class="empty-art" aria-hidden="true">
+              <svg viewBox="0 0 80 80" width="80" height="80" focusable="false">
+                <path d="M22 28h36l-3 30a8 8 0 0 1-8 7H33a8 8 0 0 1-8-7l-3-30z" fill="#fff4e2" stroke="#c9842a" stroke-width="2" />
+                <path d="M30 28c0-8 20-8 20 0" fill="none" stroke="#9f3d24" stroke-width="2" />
+                <path d="M34 42h12M34 50h12" stroke="#9f3d24" stroke-width="2" stroke-linecap="round" />
+              </svg>
+            </div>
+            <p id="shop-empty-title" class="empty-title" data-testid="shop-empty-title">برنامه هفته خالی است</p>
+            <p id="shop-empty-help" class="empty-help" data-testid="shop-empty-help">
+              اول شام شنبه تا جمعه را بچینید تا مواد خرید از روی همان برنامه ساخته شود.
+            </p>
+          </div>
+          <div id="shop-pantry-note" class="empty shop-note" data-testid="shop-pantry-note" hidden>
+            <p class="empty-title" data-testid="shop-pantry-title">آشپزخانه خالی است</p>
+            <p class="empty-help">چون انباری نیست، همه مواد برنامه در فهرست خرید آمده‌اند.</p>
+          </div>
+          <div id="shop-list" class="shop-groups" data-testid="shop-list" hidden></div>
+          <div id="shop-skipped" class="shop-skipped" data-testid="shop-skipped" hidden>
+            <p id="shop-skipped-title" data-testid="shop-skipped-title"></p>
+            <ul id="shop-skipped-list" data-testid="shop-skipped-list"></ul>
+          </div>
+        </section>
       </main>
 
       <footer class="footer">
-        <span>مواد، بودجه و برنامه در همین مرورگر می‌ماند.</span>
+        <span>مواد، بودجه و برنامه در همین مرورگر می‌ماند. مواد خرید از روی آن‌ها ساخته می‌شود.</span>
         <a href="/health">سلامت سرویس</a>
       </footer>
     </div>
@@ -282,6 +330,28 @@
         </div>
       </div>
     </div>
+    <div
+      id="shop-sheet"
+      class="sheet"
+      hidden
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="shop-sheet-title"
+      aria-describedby="shop-sheet-hint"
+      data-testid="shop-sheet"
+    >
+      <div class="sheet-card">
+        <div class="sheet-head">
+          <h2 id="shop-sheet-title" data-testid="shop-sheet-title">چاپ / خروجی</h2>
+          <button type="button" id="shop-sheet-close" data-testid="shop-sheet-close" aria-label="بستن">×</button>
+        </div>
+        <p id="shop-sheet-hint" class="hint" data-testid="shop-sheet-hint"></p>
+        <ul id="shop-sheet-list" class="confirm-list plan-choice-list" data-testid="shop-sheet-list"></ul>
+        <div class="sheet-actions">
+          <button type="button" id="shop-sheet-cancel" data-testid="shop-sheet-cancel">انصراف</button>
+        </div>
+      </div>
+    </div>
     <noscript>
       <p class="noscript">برای استفاده از آشپزخانه، جاوااسکریپت را روشن کنید.</p>
     </noscript>
@@ -289,5 +359,6 @@
     <script src="fridge.js"></script>
     <script src="recipes.js"></script>
     <script src="plan.js"></script>
+    <script src="shop.js"></script>
   </body>
 </html>

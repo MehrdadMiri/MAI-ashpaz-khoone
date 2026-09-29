@@ -531,6 +531,38 @@
     urlApi.revokeObjectURL(url);
   }
 
+  function setPrintMode(doc, mode) {
+    var body = doc && doc.body;
+    if (body && body.dataset) body.dataset.print = mode || "";
+  }
+
+  function watchPrintEnd(doc) {
+    var view = doc && doc.defaultView;
+    if (!view || typeof view.addEventListener !== "function" || view.__ashpazPrintWatch) return;
+    view.__ashpazPrintWatch = true;
+    view.addEventListener("afterprint", function () {
+      setPrintMode(doc, "");
+    });
+  }
+
+  function emitPlan(doc) {
+    if (!doc || typeof doc.dispatchEvent !== "function") return;
+    var event;
+    try {
+      event =
+        typeof CustomEvent === "function"
+          ? new CustomEvent("ashpaz-plan-changed")
+          : { type: "ashpaz-plan-changed" };
+    } catch (err) {
+      event = { type: "ashpaz-plan-changed" };
+    }
+    try {
+      doc.dispatchEvent(event);
+    } catch (err2) {
+      /* The week is already saved. Opening مواد خرید reads it again. */
+    }
+  }
+
   function mount(doc, plan, hooks) {
     hooks = hooks || {};
     var grid = doc.getElementById("week-grid");
@@ -570,6 +602,7 @@
     function render() {
       renderWeek(doc, grid, plan);
       renderBudget();
+      emitPlan(doc);
     }
 
     function reveal() {
@@ -698,6 +731,7 @@
     }
 
     function doPrint() {
+      setPrintMode(doc, "plan");
       if (typeof hooks.print === "function") {
         hooks.print();
         return;
@@ -749,6 +783,7 @@
       return index;
     }
 
+    watchPrintEnd(doc);
     if (buildBtn) buildBtn.addEventListener("click", onBuild);
     if (exportBtn) exportBtn.addEventListener("click", openExport);
     if (closeBtn) closeBtn.addEventListener("click", closeSheet);
