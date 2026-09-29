@@ -769,6 +769,8 @@ h2 {
 .day-action,
 #build-plan,
 #plan-export,
+#plan-share,
+#plan-share-copy,
 #shop-open,
 #shop-export {
   min-height: 2.5rem;
@@ -792,6 +794,8 @@ h2 {
 .day-action:hover,
 #build-plan:hover,
 #plan-export:hover,
+#plan-share:hover,
+#plan-share-copy:hover,
 #shop-open:hover,
 #shop-export:hover {
   border-color: transparent;
@@ -1035,6 +1039,36 @@ h2 {
 
 .print-only {
   display: none;
+}
+
+.plan-empty {
+  margin-top: 0.35rem;
+  padding: 1rem 1.05rem;
+  text-align: start;
+}
+
+.plan-share {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-top: 0.85rem;
+}
+
+.plan-share-label {
+  font-weight: 700;
+}
+
+.plan-share-url {
+  width: 100%;
+  min-height: 2.6rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  direction: ltr;
+  text-align: left;
 }
 
 .fridge-launch {
@@ -1406,6 +1440,8 @@ h2 {
   .day-eaten,
   #build-plan,
   #plan-export,
+  #plan-share,
+  #plan-share-copy,
   #shop-open,
   #shop-export,
   #fridge-open,
@@ -1499,11 +1535,13 @@ h2 {
 
 @media print {
   @page {
-    margin: 12mm;
+    size: A4 portrait;
+    margin: 14mm 16mm;
   }
 
   html,
   body {
+    direction: rtl;
     background: #fff !important;
     color: #1a1a1a !important;
     font-family: Vazirmatn, "Noto Sans Arabic", Tahoma, sans-serif;
@@ -1525,6 +1563,7 @@ h2 {
   .noscript,
   .plan-toolbar,
   .shop-toolbar,
+  .plan-screen-hint,
   .day-action,
   .day-eaten,
   #plan-status,
@@ -1533,33 +1572,90 @@ h2 {
   }
 
   .week-grid {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr;
+    gap: 3.5mm;
+    align-items: stretch;
+  }
+
+  .plan-head,
+  .plan-poster-brand,
+  .plan-poster-range,
+  #plan-title {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .plan-head {
     display: block !important;
+    margin: 0 0 4mm !important;
+    padding: 0 0 2mm !important;
+    border-bottom: 2px solid #1a1a1a !important;
+  }
+
+  #plan-title {
+    margin: 0;
+    font-size: 1.45rem;
+    line-height: 1.3;
+  }
+
+  .plan-poster-range {
+    margin: 1.5mm 0 0 !important;
+    font-size: 1rem;
+    font-weight: 600 !important;
   }
 
   .day-card {
-    display: flex !important;
-    flex-direction: row !important;
-    align-items: baseline;
-    gap: 0.75rem;
+    display: block !important;
     margin: 0 !important;
-    padding: 0.45rem 0 !important;
+    padding: 2.5mm 3mm !important;
     break-inside: avoid;
     page-break-inside: avoid;
-    border: 0 !important;
-    border-bottom: 1px solid #ccc !important;
+    border: 1px solid #1a1a1a !important;
+    border-inline-start-width: 4px !important;
     border-radius: 0 !important;
     background: #fff !important;
     box-shadow: none !important;
   }
 
   .day-name {
-    flex: none;
-    min-width: 5.5rem;
+    margin: 0;
+    font-size: 1.15rem;
+    line-height: 1.3;
+  }
+
+  .day-name::before,
+  .day-kicker::before {
+    display: block;
+    font-size: 0.68rem;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  .day-name::before {
+    content: "روز";
+    margin-bottom: 0.8mm;
+  }
+
+  .day-kicker {
+    margin: 1.5mm 0 0;
+    font-size: 0.95rem;
+  }
+
+  .day-kicker::before {
+    content: "وعده";
+    margin-bottom: 0.6mm;
   }
 
   .day-meal {
-    flex: 1;
-    min-width: 0;
+    margin: 1mm 0 0;
+    font-size: 1.05rem;
+    line-height: 1.4;
+  }
+
+  .day-cost {
+    margin: 1mm 0 0;
+    font-size: 0.9rem;
   }
 
   .print-only {
@@ -1572,13 +1668,16 @@ h2 {
 
   .plan-panel,
   .day-card,
-  .budget-strip {
+  .budget-strip,
+  #plan-empty {
     background: #fff !important;
     color: #1a1a1a !important;
     box-shadow: none !important;
   }
 
   .plan-panel {
+    direction: rtl;
+    text-align: start;
     border: 0 !important;
     padding: 0 !important;
   }
@@ -1588,12 +1687,32 @@ h2 {
   .day-kicker,
   .day-cost,
   .day-card.is-empty .day-meal,
-  .budget-strip {
+  .budget-strip,
+  #plan-empty .empty-title,
+  #plan-empty .empty-help {
     color: #1a1a1a !important;
   }
 
   .budget-strip {
-    border: 1px solid #ccc !important;
+    margin: 0 0 5mm !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border: 1px solid #1a1a1a !important;
+  }
+
+  #plan-empty:not([hidden]) {
+    display: block !important;
+    margin: 0 0 5mm !important;
+    padding: 4mm !important;
+    text-align: start !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border: 1px solid #1a1a1a !important;
+    border-radius: 0 !important;
+  }
+
+  #plan-empty[hidden] {
+    display: none !important;
   }
 
   body[data-print="shop"] #plan {

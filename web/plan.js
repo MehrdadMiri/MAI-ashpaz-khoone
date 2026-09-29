@@ -5,7 +5,11 @@
    When AshpazPersist is loaded, the same snapshot is also stored in Postgres.
    If that api is down, the localStorage copy is what the page keeps using.
    Print and Markdown export are client-side. This file does not call
-   GapGPT and never sees the API key. */
+   GapGPT and never sees the API key.
+   A share link is only the week, in the URL hash (#p=). It is not this
+   browser's local user id. Keys and environment values are refused.
+   Opening the link replaces the plan here; Postgres then stores it under
+   the reader's own id, the same way any other local edit is saved. */
 (function (global) {
   "use strict";
 
@@ -24,6 +28,18 @@
     export: "چاپ / خروجی",
     print: "چاپ",
     download: "دانلود مارک‌داون",
+    share: "کپی لینک",
+    shareCopied: "لینک برنامه کپی شد.",
+    shareReady: "لینک آماده است. اگر کپی نشد، آن را از کادر انتخاب کنید.",
+    shareOpened: "برنامه اشتراکی باز شد.",
+    shareEmptyOpened: "این لینک یک برنامه خالی است. روزها «خالی» هستند.",
+    shareBad: "لینک برنامه خوانده نشد. برنامه همین مرورگر سر جایش ماند.",
+    emptyPlanTitle: "برنامه هفته خالی است",
+    emptyPlanHelp:
+      "هنوز شامی برای شنبه تا جمعه چیده نشده. لینک اشتراک و چاپ پوستر برای همین برنامه خالی هم کار می‌کنند.",
+    posterRange: "هفت وعده شام، از شنبه تا جمعه",
+    dayRole: "روز",
+    mealRole: "وعده",
     cancel: "انصراف",
     clear: "خالی کردن",
     current: "فعلی",
@@ -32,7 +48,7 @@
     weekFull: "هر هفت روز شام دارد. برای عوض کردن، «جایگزین» را بزنید.",
     noRecipes: "هنوز دستوری نیست. اول «پیشنهاد دستور» را بزنید.",
     exportHint:
-      "چاپ، پس‌زمینه سفید و خط فارسی است و بقیه صفحه را پنهان می‌کند. خروجی یک فایل مارک‌داون از روزها و نام غذاهاست.",
+      "چاپ، پوستر A4 با پس‌زمینه سفید است: نام روز، وعده شام، و نام غذا. لینک اشتراک فقط همین برنامه را باز می‌کند و کلید یا شناسه داخلی ندارد. فایل مارک‌داون فهرست روزهاست.",
     filename: "برنامه-۷-روزه.md",
     eaten: "خورده شد",
     freshIdeas: "ایده‌های تازه آماده‌اند. شام‌های خورده‌شده سر جایشان ماندند.",
@@ -217,6 +233,343 @@
       lines.push("");
     }
     return lines.join("\n");
+  }
+
+  /* Same key persist.js uses for unsynced edits. A shared week is a local
+     edit so GET /plan does not paint over it before this browser saves. */
+  var SYNC_META_KEY = "ashpaz-khoone.sync.v1";
+  var SHARE_VERSION = 1;
+  var SHARE_TOKEN_MAX = 24000;
+
+  var FORBIDDEN_KEY = /(api[_-]?key|authorization|token|secret|password|passwd|local[_-]?user|gap[_-]?code|postgres|credential|^env$)/i;
+  var SECRET_TEXT = /GAP_CODE|POSTGRES_|api[_-]?key|local[_-]?user[_-]?id|bearer\s+|password\s*[:=]|secret\s*[:=]/i;
+
+  function containsSecret(value, depth) {
+    if (depth > 8) return true;
+    if (typeof value === "string") return SECRET_TEXT.test(value);
+    if (!value || typeof value !== "object") return false;
+    if (Array.isArray(value)) {
+      for (var i = 0; i < value.length; i += 1) {
+        if (containsSecret(value[i], depth + 1)) return true;
+      }
+      return false;
+    }
+    var keys = Object.keys(value);
+    for (var k = 0; k < keys.length; k += 1) {
+      if (FORBIDDEN_KEY.test(keys[k])) return true;
+      if (containsSecret(value[keys[k]], depth + 1)) return true;
+    }
+    return false;
+  }
+
+  function safeText(value, limit) {
+    var text = cleanLine(value, limit);
+    if (!text || SECRET_TEXT.test(text)) return "";
+    return text;
+  }
+
+  function safeList(value, maxItems, itemLimit) {
+    return cleanList(value, maxItems, itemLimit).filter(function (item) {
+      return !SECRET_TEXT.test(item);
+    });
+  }
+
+  function utf8Bytes(text) {
+    if (typeof TextEncoder === "function") {
+      var encoded = new TextEncoder().encode(text);
+      var bytes = [];
+      for (var i = 0; i < encoded.length; i += 1) bytes.push(encoded[i]);
+      return bytes;
+    }
+    var escaped = encodeURIComponent(text);
+    var fallback = [];
+    for (var j = 0; j < escaped.length; j += 1) {
+      if (escaped.charAt(j) === "%") {
+        fallback.push(parseInt(escaped.slice(j + 1, j + 3), 16));
+        j += 2;
+      } else {
+        fallback.push(escaped.charCodeAt(j));
+      }
+    }
+    return fallback;
+  }
+
+  function bytesToString(bytes) {
+    if (typeof TextDecoder === "function") {
+      return new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(bytes));
+    }
+    var binary = "";
+    for (var i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+    return decodeURIComponent(escape(binary));
+  }
+
+  var B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+  function base64UrlEncode(text) {
+    var bytes = utf8Bytes(text);
+    var out = "";
+    for (var i = 0; i < bytes.length; i += 3) {
+      var b0 = bytes[i];
+      var b1 = i + 1 < bytes.length ? bytes[i + 1] : 0;
+      var b2 = i + 2 < bytes.length ? bytes[i + 2] : 0;
+      var n = (b0 << 16) | (b1 << 8) | b2;
+      out += B64.charAt((n >> 18) & 63);
+      out += B64.charAt((n >> 12) & 63);
+      if (i + 1 < bytes.length) out += B64.charAt((n >> 6) & 63);
+      if (i + 2 < bytes.length) out += B64.charAt(n & 63);
+    }
+    return out;
+  }
+
+  function base64UrlDecode(token) {
+    var map = Object.create(null);
+    for (var i = 0; i < B64.length; i += 1) map[B64.charAt(i)] = i;
+    var bytes = [];
+    for (var j = 0; j < token.length; j += 4) {
+      var c0 = map[token.charAt(j)];
+      var c1 = map[token.charAt(j + 1)];
+      var has2 = j + 2 < token.length;
+      var has3 = j + 3 < token.length;
+      var c2 = has2 ? map[token.charAt(j + 2)] : 0;
+      var c3 = has3 ? map[token.charAt(j + 3)] : 0;
+      if (c0 == null || c1 == null || (has2 && c2 == null) || (has3 && c3 == null)) {
+        throw new Error("token");
+      }
+      var n = (c0 << 18) | (c1 << 12) | (c2 << 6) | c3;
+      bytes.push((n >> 16) & 255);
+      if (has2) bytes.push((n >> 8) & 255);
+      if (has3) bytes.push(n & 255);
+    }
+    return bytesToString(bytes);
+  }
+
+  function recipeBySlot(snapshot, slotId) {
+    if (!slotId || !snapshot || !Array.isArray(snapshot.recipes)) return null;
+    for (var i = 0; i < snapshot.recipes.length; i += 1) {
+      var recipe = snapshot.recipes[i];
+      if (!recipe || typeof recipe !== "object") continue;
+      var title = safeText(recipe.title, MAX_TITLE);
+      if (!title) continue;
+      var id = typeof recipe.id === "string" && recipe.id ? recipe.id : "r:" + identityKey(title);
+      if (id === slotId) return recipe;
+    }
+    return null;
+  }
+
+  function compactShare(snapshot) {
+    var days = [];
+    var source = snapshot && typeof snapshot === "object" ? snapshot : {};
+    DAYS.forEach(function (day) {
+      var slotId = source.slots && typeof source.slots[day.id] === "string" ? source.slots[day.id] : "";
+      var recipe = recipeBySlot(source, slotId);
+      if (!recipe) return;
+      var title = safeText(recipe.title, MAX_TITLE);
+      if (!title) return;
+      var row = { id: day.id, title: title };
+      var cost = recipe.cost_toman;
+      if (typeof cost === "number" && isFinite(cost) && cost > 0) row.cost = Math.round(cost);
+      if (source.used && source.used[day.id] === true) row.used = true;
+      var ingredients = safeList(recipe.ingredients, 16, 80);
+      var steps = safeList(recipe.steps, 12, 400);
+      if (ingredients.length) row.ingredients = ingredients;
+      if (steps.length) row.steps = steps;
+      if (containsSecret(row)) return;
+      days.push(row);
+    });
+    return { v: SHARE_VERSION, days: days };
+  }
+
+  function shrinkShare(body) {
+    var json = JSON.stringify(body);
+    if (json.length <= 6000) return json;
+    body.days.forEach(function (day) {
+      delete day.steps;
+    });
+    json = JSON.stringify(body);
+    if (json.length <= 6000) return json;
+    body.days.forEach(function (day) {
+      delete day.ingredients;
+    });
+    return JSON.stringify(body);
+  }
+
+  function encodeShare(snapshot) {
+    var body = compactShare(snapshot);
+    var json = shrinkShare(body);
+    if (SECRET_TEXT.test(json) || containsSecret(JSON.parse(json))) {
+      json = JSON.stringify({ v: SHARE_VERSION, days: [] });
+    }
+    return base64UrlEncode(json);
+  }
+
+  function planFromShare(parsed) {
+    var recipes = [];
+    var slots = emptySlots();
+    var used = emptyUsed();
+    if (!parsed || parsed.v !== SHARE_VERSION || !Array.isArray(parsed.days)) {
+      return { recipes: recipes, slots: slots, used: used };
+    }
+    parsed.days.forEach(function (row) {
+      if (!row || typeof row !== "object" || containsSecret(row)) return;
+      var day = dayById(typeof row.id === "string" ? row.id : "");
+      if (!day) return;
+      var recipe = normalizeRecipe({
+        title: row.title,
+        ingredients: row.ingredients,
+        steps: row.steps,
+        cost_toman: row.cost,
+      });
+      if (!recipe) return;
+      var known = false;
+      for (var i = 0; i < recipes.length; i += 1) {
+        if (recipes[i].id === recipe.id) known = true;
+      }
+      if (!known) recipes.push(recipe);
+      slots[day.id] = recipe.id;
+      used[day.id] = row.used === true;
+    });
+    return { recipes: recipes, slots: slots, used: used };
+  }
+
+  function decodeShare(token) {
+    if (typeof token !== "string") return { ok: false, reason: "token" };
+    var raw = token.replace(/\s+/g, "");
+    if (!raw || raw.length > SHARE_TOKEN_MAX || !/^[A-Za-z0-9_-]+$/.test(raw)) {
+      return { ok: false, reason: raw && raw.length > SHARE_TOKEN_MAX ? "size" : "token" };
+    }
+    var json;
+    try {
+      json = base64UrlDecode(raw);
+    } catch (err) {
+      return { ok: false, reason: "token" };
+    }
+    if (!json || json.length > SHARE_TOKEN_MAX * 2 || SECRET_TEXT.test(json)) {
+      return { ok: false, reason: SECRET_TEXT.test(json) ? "secret" : "size" };
+    }
+    var parsed;
+    try {
+      parsed = JSON.parse(json);
+    } catch (err2) {
+      return { ok: false, reason: "token" };
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { ok: false, reason: "token" };
+    }
+    if (containsSecret(parsed) || parsed.v !== SHARE_VERSION || !Array.isArray(parsed.days)) {
+      return { ok: false, reason: containsSecret(parsed) ? "secret" : "token" };
+    }
+    var plan = planFromShare(parsed);
+    if (containsSecret(plan)) return { ok: false, reason: "secret" };
+    var empty = true;
+    DAYS.forEach(function (day) {
+      if (plan.slots[day.id]) empty = false;
+    });
+    return { ok: true, empty: empty, plan: plan };
+  }
+
+  function shareHref(loc, token) {
+    var origin = "";
+    var path = "/";
+    if (loc && typeof loc === "object") {
+      if (typeof loc.origin === "string" && loc.origin && loc.origin !== "null") origin = loc.origin;
+      if (typeof loc.pathname === "string" && loc.pathname.charAt(0) === "/") path = loc.pathname;
+    }
+    var href = origin + path;
+    if (!token) return href;
+    return href + "#p=" + token;
+  }
+
+  function shareTokenFromLocation(loc) {
+    if (!loc || typeof loc.hash !== "string") return "";
+    var hash = loc.hash.charAt(0) === "#" ? loc.hash.slice(1) : loc.hash;
+    if (!hash) return "";
+    var pieces = hash.split("&");
+    for (var i = 0; i < pieces.length; i += 1) {
+      var piece = pieces[i];
+      var eq = piece.indexOf("=");
+      var key = eq === -1 ? piece : piece.slice(0, eq);
+      if (key !== "p") continue;
+      var raw = eq === -1 ? "" : piece.slice(eq + 1);
+      try {
+        return decodeURIComponent(raw.replace(/\+/g, " "));
+      } catch (err) {
+        return "";
+      }
+    }
+    return "";
+  }
+
+  function clearShareHash(loc) {
+    if (!loc) return;
+    try {
+      loc.hash = "";
+    } catch (err) {
+      /* The week is already loaded. A leftover hash is only a nuisance. */
+    }
+    var history = global.history;
+    if (!history || typeof history.replaceState !== "function") return;
+    var path = loc.pathname && typeof loc.pathname === "string" && loc.pathname.charAt(0) === "/" ? loc.pathname : "/";
+    var search = typeof loc.search === "string" ? loc.search : "";
+    if (SECRET_TEXT.test(search) || FORBIDDEN_KEY.test(search) || /local_user_id/i.test(search)) search = "";
+    try {
+      history.replaceState(null, "", path + search);
+    } catch (err2) {
+      /* The hash property was already cleared when the browser allowed it. */
+    }
+  }
+
+  function markPlanAhead(storage) {
+    if (!storage || typeof storage.getItem !== "function" || typeof storage.setItem !== "function") return;
+    var meta = { pantryRev: 0, pantrySyncedRev: 0, planRev: 0, planSyncedRev: 0 };
+    try {
+      var raw = storage.getItem(SYNC_META_KEY);
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          ["pantryRev", "pantrySyncedRev", "planRev", "planSyncedRev"].forEach(function (key) {
+            var value = parsed[key];
+            if (typeof value === "number" && isFinite(value) && value >= 0) meta[key] = Math.floor(value);
+          });
+        }
+      }
+    } catch (err) {
+      meta = { pantryRev: 0, pantrySyncedRev: 0, planRev: 0, planSyncedRev: 0 };
+    }
+    meta.planRev = Math.max(meta.planRev, meta.planSyncedRev) + 1;
+    try {
+      storage.setItem(SYNC_META_KEY, JSON.stringify(meta));
+    } catch (err2) {
+      /* The week is in the plan key. A later edit can sync it. */
+    }
+  }
+
+  function posterOutline(week) {
+    var list = Array.isArray(week) ? week : [];
+    var days = list.map(function (day) {
+      var hasMeal = !!(day && day.recipe && day.recipe.title);
+      return {
+        id: day && day.id ? day.id : "",
+        dayRole: COPY.dayRole,
+        dayLabel: day && day.label ? day.label : "",
+        mealRole: COPY.mealRole,
+        mealLabel: COPY.dinner,
+        title: hasMeal ? day.recipe.title : COPY.empty,
+        empty: !hasMeal,
+        eaten: !!(hasMeal && day.used),
+      };
+    });
+    var filled = days.some(function (day) {
+      return !day.empty;
+    });
+    return {
+      brand: "آشپزخونه",
+      title: COPY.title,
+      range: COPY.posterRange,
+      empty: !filled,
+      emptyTitle: COPY.emptyPlanTitle,
+      emptyHelp: COPY.emptyPlanHelp,
+      days: days,
+    };
   }
 
   function createPlan(options) {
@@ -466,6 +819,18 @@
         writeLocal();
         return planSnapshot();
       },
+      applyShare: function (token) {
+        var decoded = decodeShare(token);
+        if (!decoded.ok) return { ok: false, reason: decoded.reason || "token" };
+        state = sanitize(decoded.plan);
+        writeLocal();
+        markPlanAhead(storage);
+        notifyRemote();
+        var empty = week().every(function (day) {
+          return !day.recipe;
+        });
+        return { ok: true, empty: empty };
+      },
       remainingChips: function (pantryItems) {
         var items = Array.isArray(pantryItems) ? pantryItems.slice() : [];
         var lines = [];
@@ -691,6 +1056,10 @@
 
   function mount(doc, plan, hooks) {
     hooks = hooks || {};
+    var incoming = hooks.shared || null;
+    if (!hooks.shared && hooks.location && plan && typeof plan.applyShare === "function") {
+      incoming = consumeShareLocation(plan, hooks.location) || incoming;
+    }
     var grid = doc.getElementById("week-grid");
     var sheet = doc.getElementById("plan-sheet");
     var titleEl = doc.getElementById("plan-sheet-title");
@@ -700,6 +1069,9 @@
     var budgetEl = doc.getElementById("plan-budget");
     var buildBtn = doc.getElementById("build-plan");
     var exportBtn = doc.getElementById("plan-export");
+    var shareBtn = doc.getElementById("plan-share");
+    var shareBox = doc.getElementById("plan-share-box");
+    var shareInput = doc.getElementById("plan-share-url");
     var closeBtn = doc.getElementById("plan-sheet-close");
     var cancelBtn = doc.getElementById("plan-sheet-cancel");
     var budgetInput = doc.getElementById("week-budget");
@@ -725,8 +1097,18 @@
       if (budgetEl.classList) budgetEl.classList.toggle("is-over", note.over);
     }
 
+    function renderEmpty() {
+      var banner = doc.getElementById("plan-empty");
+      if (!banner) return;
+      var filled = plan.week().some(function (day) {
+        return !!(day && day.recipe);
+      });
+      banner.hidden = filled;
+    }
+
     function render() {
       renderWeek(doc, grid, plan);
+      renderEmpty();
       renderBudget();
       emitPlan(doc);
     }
@@ -759,6 +1141,8 @@
       list.replaceChildren.apply(list, rows);
       onChoice = typeof opts.onChoice === "function" ? opts.onChoice : null;
       if (sheet.dataset) sheet.dataset.mode = opts.mode || "";
+      if (shareBox) shareBox.hidden = !opts.share;
+      if (opts.share) fillShareField();
       sheet.hidden = false;
       if (closeBtn && typeof closeBtn.focus === "function") closeBtn.focus();
     }
@@ -876,13 +1260,117 @@
       saveMarkdown(doc, COPY.filename, text);
     }
 
+    function pageLocation() {
+      if (hooks.location) return hooks.location;
+      try {
+        if (global.location && typeof global.location.pathname === "string") return global.location;
+      } catch (err) {
+        /* Tests and locked-down pages still get a path-only link. */
+      }
+      return null;
+    }
+
+    function fillShareField() {
+      var href = shareHref(pageLocation(), encodeShare(plan.snapshot()));
+      if (shareInput) {
+        shareInput.value = href;
+        if (typeof shareInput.setAttribute === "function") shareInput.setAttribute("value", href);
+      }
+      return href;
+    }
+
+    function selectCopy(text) {
+      if (!doc || typeof doc.createElement !== "function" || !doc.body) return false;
+      if (typeof doc.execCommand !== "function") return false;
+      var area = doc.createElement("textarea");
+      area.value = text;
+      if (typeof area.setAttribute === "function") area.setAttribute("readonly", "readonly");
+      if (typeof doc.body.appendChild === "function") doc.body.appendChild(area);
+      var ok = false;
+      try {
+        if (typeof area.select === "function") area.select();
+        ok = !!doc.execCommand("copy");
+      } catch (err) {
+        ok = false;
+      }
+      if (typeof area.remove === "function") area.remove();
+      else if (area.parentNode && typeof area.parentNode.removeChild === "function") {
+        area.parentNode.removeChild(area);
+      }
+      return ok;
+    }
+
+    function copyText(text, done) {
+      if (hooks && typeof hooks.copy === "function") {
+        try {
+          var result = hooks.copy(text);
+          if (result && typeof result.then === "function") {
+            result.then(
+              function () {
+                done(true);
+              },
+              function () {
+                done(false);
+              }
+            );
+            return;
+          }
+          done(result !== false);
+        } catch (err) {
+          done(false);
+        }
+        return;
+      }
+      var nav = global.navigator;
+      if (nav && nav.clipboard && typeof nav.clipboard.writeText === "function") {
+        try {
+          var pending = nav.clipboard.writeText(text);
+          if (pending && typeof pending.then === "function") {
+            pending.then(
+              function () {
+                done(true);
+              },
+              function () {
+                done(selectCopy(text));
+              }
+            );
+            return;
+          }
+        } catch (err2) {
+          /* Fall through to the readonly field. */
+        }
+      }
+      done(selectCopy(text));
+    }
+
+    function focusShareField() {
+      if (!shareInput || typeof shareInput.focus !== "function") return;
+      shareInput.focus();
+      if (typeof shareInput.select === "function") shareInput.select();
+    }
+
+    function doShare() {
+      var href = fillShareField();
+      copyText(href, function (ok) {
+        if (ok) {
+          setStatus(COPY.shareCopied);
+          return;
+        }
+        if (sheet.hidden) openExport();
+        else if (shareBox) shareBox.hidden = false;
+        setStatus(COPY.shareReady);
+        focusShareField();
+      });
+    }
+
     function openExport() {
       openSheet({
         mode: "export",
         title: COPY.export,
         hint: COPY.exportHint,
+        share: true,
         choices: [
-          { id: "print", label: COPY.print, detail: "پس‌زمینه سفید، فقط برنامه", action: COPY.print },
+          { id: "print", label: COPY.print, detail: "پوستر A4، روز و وعده", action: COPY.print },
           { id: "download", label: COPY.download, detail: "روزها و نام غذاها", action: "دانلود" },
         ],
         onChoice: function (choice) {
@@ -912,6 +1400,7 @@
     watchPrintEnd(doc);
     if (buildBtn) buildBtn.addEventListener("click", onBuild);
     if (exportBtn) exportBtn.addEventListener("click", openExport);
+    if (shareBtn) shareBtn.addEventListener("click", doShare);
     if (closeBtn) closeBtn.addEventListener("click", closeSheet);
     if (cancelBtn) cancelBtn.addEventListener("click", closeSheet);
     if (budgetInput) budgetInput.addEventListener("input", renderBudget);
@@ -975,6 +1464,11 @@
         if (dayId) openSwap(dayId);
         return;
       }
+      var shareHit = matchTestId(target, "plan-share-copy");
+      if (shareHit) {
+        doShare();
+        return;
+      }
       if (sheet.hidden) return;
       var choice = matchTestId(target, "plan-choice");
       if (!choice) return;
@@ -986,11 +1480,60 @@
 
     doc.addEventListener("ashpaz-plan-changed", function (event) {
       var detail = (event && event.detail) || {};
-      if (detail.source !== "remote") return;
+      if (detail.source !== "remote" && detail.source !== "share") return;
       render();
+      if (!detail.shared) return;
+      if (detail.shared.ok && detail.shared.empty) setStatus(COPY.shareEmptyOpened);
+      else if (detail.shared.ok) setStatus(COPY.shareOpened);
+      else if (detail.shared.ok === false) setStatus(COPY.shareBad);
     });
 
     render();
+    if (incoming && incoming.ok && incoming.empty) setStatus(COPY.shareEmptyOpened);
+    else if (incoming && incoming.ok) setStatus(COPY.shareOpened);
+    else if (incoming && incoming.ok === false) setStatus(COPY.shareBad);
+  }
+
+  function consumeShareLocation(plan, loc) {
+    var token = shareTokenFromLocation(loc);
+    if (!token || !plan || typeof plan.applyShare !== "function") return null;
+    var shared = plan.applyShare(token);
+    clearShareHash(loc);
+    return shared;
+  }
+
+  function announceShare(shared) {
+    if (!shared || typeof document === "undefined" || typeof document.dispatchEvent !== "function") return;
+    var event;
+    try {
+      event =
+        typeof CustomEvent === "function"
+          ? new CustomEvent("ashpaz-plan-changed", { detail: { source: "share", shared: shared } })
+          : { type: "ashpaz-plan-changed", detail: { source: "share", shared: shared } };
+    } catch (err) {
+      event = { type: "ashpaz-plan-changed", detail: { source: "share", shared: shared } };
+    }
+    try {
+      document.dispatchEvent(event);
+    } catch (err2) {
+      /* The week is already stored. The next paint reads it. */
+    }
+  }
+
+  function watchShareHash() {
+    if (!global || typeof global.addEventListener !== "function" || global.__ashpazShareWatch) return;
+    global.__ashpazShareWatch = true;
+    global.addEventListener("hashchange", function () {
+      var plan = api.active;
+      var loc = null;
+      try {
+        loc = global.location;
+      } catch (err) {
+        loc = null;
+      }
+      var shared = consumeShareLocation(plan, loc);
+      if (shared) announceShare(shared);
+    });
   }
 
   function boot() {
@@ -1006,19 +1549,33 @@
       storage = createMemoryStorage();
     }
     var plan = createPlan({ storage: storage });
+    var loc = null;
+    try {
+      loc = global.location;
+    } catch (err) {
+      loc = null;
+    }
+    var shared = consumeShareLocation(plan, loc);
     api.active = plan;
-    mount(document, plan);
+    mount(document, plan, { shared: shared });
+    watchShareHash();
   }
 
   var api = {
     COPY: COPY,
     DAYS: DAYS,
     STORAGE_KEY: STORAGE_KEY,
+    SYNC_META_KEY: SYNC_META_KEY,
     MAX_RECIPES: MAX_RECIPES,
     createPlan: createPlan,
     createMemoryStorage: createMemoryStorage,
     budgetLine: budgetLine,
     renderWeek: renderWeek,
+    encodeShare: encodeShare,
+    decodeShare: decodeShare,
+    shareHref: shareHref,
+    shareTokenFromLocation: shareTokenFromLocation,
+    posterOutline: posterOutline,
     mount: mount,
   };
 
