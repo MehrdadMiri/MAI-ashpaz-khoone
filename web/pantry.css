@@ -1028,9 +1028,35 @@ h2 {
   overflow-wrap: anywhere;
 }
 
-.day-card.is-empty .day-meal {
+.day-card.is-empty .day-meal,
+.meal-slot.is-empty .day-meal {
   color: var(--muted);
   font-weight: 600;
+}
+
+.meal-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-top: 0.55rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed var(--chip-line);
+}
+
+.meal-slot:first-of-type {
+  margin-top: 0.2rem;
+}
+
+.meal-slot.is-filled {
+  padding-inline: 0.15rem;
+}
+
+.meal-slot.is-used {
+  margin-inline: -0.35rem;
+  padding: 0.45rem 0.35rem 0.35rem;
+  background: #fff6f3;
+  border-radius: 0.75rem;
+  border-top-color: transparent;
 }
 
 .day-cost {
@@ -1664,6 +1690,16 @@ h2 {
     box-shadow: none !important;
   }
 
+  .meal-slot {
+    display: block !important;
+    margin: 1.6mm 0 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
   .day-name {
     margin: 0;
     font-size: 1.15rem;
@@ -1732,7 +1768,9 @@ h2 {
   .day-meal,
   .day-kicker,
   .day-cost,
+  .meal-slot,
   .day-card.is-empty .day-meal,
+  .meal-slot.is-empty .day-meal,
   .budget-strip,
   #plan-empty .empty-title,
   #plan-empty .empty-help {

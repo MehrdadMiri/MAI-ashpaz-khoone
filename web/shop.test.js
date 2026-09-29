@@ -168,7 +168,7 @@ test("empty plan, empty pantry, covered pantry, and missing ingredients have Per
   assert.equal(bare.state, "missing");
   assert.equal(bare.skipped[0].title, "کباب");
   assert.equal(bare.skipped[0].day, "جمعه");
-  assert.match(shop.markdownDocument(bare), /مواد این شام‌ها در برنامه نیست/);
+  assert.match(shop.markdownDocument(bare), /مواد این وعده‌ها در برنامه نیست/);
   assert.match(shop.markdownDocument(bare), /کباب \(جمعه\)/);
 
   const covered = shop.buildShoppingList(
@@ -488,7 +488,8 @@ test("pantry edits and plan fills refresh the list without a model call", () => 
   assert.equal(view.doc.nodes.shop.dataset.state, "empty-both");
 
   doc.nodes["build-plan"].listeners.click();
-  assert.equal(model.week()[0].recipe.title, "عدس پلو");
+  assert.equal(model.week()[0].meals[0].recipe.title, "عدس پلو");
+  assert.equal(model.week()[0].meals.length, 3);
   assert.deepEqual(
     byTestId(doc.nodes["shop-list"], "shop-item-name").map((node) => node.textContent),
     ["گوشت", "برنج"],
@@ -501,6 +502,29 @@ test("pantry edits and plan fills refresh the list without a model call", () => 
     byTestId(doc.nodes["shop-list"], "shop-item-name").map((node) => node.textContent),
     ["گوشت"],
   );
+});
+
+test("breakfast lunch and dinner all contribute ingredients", () => {
+  const result = shop.buildShoppingList(
+    ["برنج"],
+    [
+      {
+        id: "sat",
+        label: "شنبه",
+        meals: [
+          { id: "breakfast", label: "صبحانه", recipe: dish("املت", ["۲ عدد تخم‌مرغ"]) },
+          { id: "lunch", label: "ناهار", recipe: dish("کتلت", ["۲۰۰ گرم گوشت"]) },
+          { id: "dinner", label: "شام", recipe: dish("پلو", ["برنج", "پیاز"]) },
+        ],
+      },
+    ],
+  );
+  assert.equal(result.planEmpty, false);
+  assert.deepEqual(names(result), ["پیاز", "تخم مرغ", "گوشت"]);
+  assert.equal(item(result, "گوشت").quantityLabel, "۲۰۰ گرم");
+  assert.match(item(result, "گوشت").meta, /ناهار/);
+  assert.match(item(result, "پیاز").meta, /شام/);
+  assert.equal(names(result).includes("برنج"), false);
 });
 
 test("the documented plan snippet keeps گوشت and drops pantry staples", () => {
@@ -520,7 +544,8 @@ test("the documented plan snippet keeps گوشت and drops pantry staples", () =
     }),
   );
   const model = plan.createPlan({ storage });
-  assert.equal(model.week()[0].recipe.title, "عدس پلو");
+  assert.equal(model.week()[0].meals.find((meal) => meal.id === "dinner").recipe.title, "عدس پلو");
+  assert.equal(model.week()[0].meals.find((meal) => meal.id === "breakfast").recipe, null);
   const result = shop.buildShoppingList(["برنج", "عدس", "پیاز"], model.week());
   assert.deepEqual(names(result), ["گوشت"]);
   assert.equal(item(result, "گوشت").quantityLabel, "۲۰۰ گرم");

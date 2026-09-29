@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 MIGRATION_PATH = Path(__file__).resolve().parent / "migrations" / "001_kitchen_state.sql"
 
 DAYS = ("sat", "sun", "mon", "tue", "wed", "thu", "fri")
+MEALS = ("breakfast", "lunch", "dinner")
 MAX_PANTRY_ITEMS = 100
 MAX_NAME_LENGTH = 40
 MAX_BUDGET = 1_000_000_000_000
@@ -175,11 +176,19 @@ def empty_pantry() -> dict[str, Any]:
     return {"items": [], "budget": "", "filters": empty_diet_filters()}
 
 
+def empty_day_slots() -> dict[str, None]:
+    return {meal: None for meal in MEALS}
+
+
+def empty_day_used() -> dict[str, bool]:
+    return {meal: False for meal in MEALS}
+
+
 def empty_plan() -> dict[str, Any]:
     return {
         "recipes": [],
-        "slots": {day: None for day in DAYS},
-        "used": {day: False for day in DAYS},
+        "slots": {day: empty_day_slots() for day in DAYS},
+        "used": {day: empty_day_used() for day in DAYS},
     }
 
 
@@ -283,10 +292,46 @@ def normalize_recipe(raw: Any) -> dict[str, Any] | None:
     }
 
 
-def _prune_recipes(recipes: list[dict[str, Any]], slots: dict[str, str | None]) -> list[dict[str, Any]]:
+def _assigned_ids(slots: dict[str, Any]) -> set[str]:
+    found: set[str] = set()
+    for value in slots.values():
+        if isinstance(value, str) and value:
+            found.add(value)
+        elif isinstance(value, dict):
+            for meal_id in value.values():
+                if isinstance(meal_id, str) and meal_id:
+                    found.add(meal_id)
+    return found
+
+
+def _read_day_slots(raw: Any) -> dict[str, str | None]:
+    """A string on the day is the older dinner-only save."""
+    meals = empty_day_slots()
+    if isinstance(raw, str):
+        meals["dinner"] = raw
+        return meals
+    if isinstance(raw, dict):
+        for meal in MEALS:
+            slot_id = raw.get(meal)
+            meals[meal] = slot_id if isinstance(slot_id, str) else None
+    return meals
+
+
+def _read_day_used(raw: Any, meals: dict[str, str | None]) -> dict[str, bool]:
+    used = empty_day_used()
+    if isinstance(raw, bool):
+        used["dinner"] = bool(meals["dinner"]) and raw
+        return used
+    if isinstance(raw, dict):
+        for meal in MEALS:
+            used[meal] = bool(meals[meal]) and raw.get(meal) is True
+    return used
+
+
+def _prune_recipes(recipes: list[dict[str, Any]], slots: dict[str, Any]) -> list[dict[str, Any]]:
     if len(recipes) <= MAX_RECIPES:
         return recipes
-    assigned = {slot for slot in slots.values() if slot}
+    assigned = _assigned_ids(slots)
     kept = [recipe for recipe in recipes if recipe["id"] in assigned]
     rest = [recipe for recipe in recipes if recipe["id"] not in assigned]
     room = MAX_RECIPES - len(kept)
@@ -312,18 +357,23 @@ def sanitize_plan(raw: Any) -> dict[str, Any]:
             recipes.append(recipe)
     slots_in = raw.get("slots") if isinstance(raw.get("slots"), dict) else {}
     used_in = raw.get("used") if isinstance(raw.get("used"), dict) else {}
-    slots: dict[str, str | None] = {}
-    used: dict[str, bool] = {}
+    slots: dict[str, dict[str, str | None]] = {}
+    used: dict[str, dict[str, bool]] = {}
     for day in DAYS:
-        slot_id = slots_in.get(day)
-        slots[day] = slot_id if isinstance(slot_id, str) and slot_id in seen else None
-        used[day] = bool(slots[day]) and used_in.get(day) is True
+        migrated = _read_day_slots(slots_in.get(day))
+        day_slots = empty_day_slots()
+        for meal in MEALS:
+            slot_id = migrated[meal]
+            day_slots[meal] = slot_id if isinstance(slot_id, str) and slot_id in seen else None
+        slots[day] = day_slots
+        used[day] = _read_day_used(used_in.get(day), day_slots)
     recipes = _prune_recipes(recipes, slots)
     live = {recipe["id"] for recipe in recipes}
     for day in DAYS:
-        if slots[day] not in live:
-            slots[day] = None
-            used[day] = False
+        for meal in MEALS:
+            if slots[day][meal] not in live:
+                slots[day][meal] = None
+                used[day][meal] = False
     return {"recipes": recipes, "slots": slots, "used": used}
 
 

@@ -305,10 +305,12 @@ test("the week plan round-trips through the same local id", async () => {
   const { created } = session({ storage: store, fetchBox });
   await created.hydrate(null, model);
   const put = fetchBox.calls.find((call) => call.options.method === "PUT" && call.url === "/api/plan");
-  assert.equal(put.body.plan.slots.sat, "r:عدسپلو");
-  assert.equal(put.body.plan.used.sat, true);
+  assert.equal(put.body.plan.slots.sat.dinner, "r:عدسپلو");
+  assert.equal(put.body.plan.slots.sat.breakfast, null);
+  assert.equal(put.body.plan.used.sat.dinner, true);
+  assert.equal(put.body.plan.used.sat.lunch, false);
   assert.equal(put.body.plan.recipes[0].title, "عدس‌پلو");
-  assert.equal(model.week()[0].used, true);
+  assert.equal(model.week()[0].meals.find((meal) => meal.id === "dinner").used, true);
 });
 
 test("the page wires persist.js after the plan and does not embed a key", () => {

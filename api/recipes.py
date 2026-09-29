@@ -119,8 +119,8 @@ Rules:
 - cost_toman is a rough whole-number cost in toman for cooking the dish once.
 - When a week budget is given, keep each dish's cost within that budget.
 - If the user message includes «مواد باقی‌مانده», prefer that shorter list.
-- If it includes «شام‌های خورده‌شده», do not repeat those titles.
-- If it says «بازتولید کامل», ignore leftovers and you may repeat earlier dinners.
+- If it includes «وعده‌های خورده‌شده», do not repeat those titles.
+- If it says «بازتولید کامل», ignore leftovers and you may repeat earlier meals.
 - The week budget still applies in every case.
 - If the user message includes «محدودیت غذایی», every recipe must follow each listed limit.
 - Those limits override the pantry. Do not use a forbidden food even when it is listed in the pantry.
@@ -450,7 +450,7 @@ def build_messages(
     lines.extend(f"- {name}" for name in ingredients)
     if full:
         lines.extend(_budget_lines(budget))
-        lines.append("بازتولید کامل: مواد باقی‌مانده و شام‌های خورده‌شده را نادیده بگیر.")
+        lines.append("بازتولید کامل: مواد باقی‌مانده و وعده‌های خورده‌شده را نادیده بگیر.")
         lines.append("نام مواد آشپزخانه را در فهرست مواد هر دستور بیاور.")
     else:
         skip_titles = list(skip or [])
@@ -461,9 +461,9 @@ def build_messages(
             lines.extend(f"- {name}" for name in remaining_names)
         lines.extend(_budget_lines(budget))
         if skip_titles:
-            lines.append("شام‌های خورده‌شده:")
+            lines.append("وعده‌های خورده‌شده:")
             lines.extend(f"- {title}" for title in skip_titles)
-            lines.append("این شام‌ها خورده شده‌اند و نباید تکرار شوند.")
+            lines.append("این وعده‌ها خورده شده‌اند و نباید تکرار شوند.")
         if show_remaining:
             lines.append("دستورها را بیشتر با مواد باقی‌مانده بساز.")
             lines.append("نام مواد باقی‌مانده را در فهرست مواد هر دستور بیاور.")

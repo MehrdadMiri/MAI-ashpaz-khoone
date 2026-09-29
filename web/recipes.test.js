@@ -452,8 +452,8 @@ test("leftover suggest sends remaining chips, skips eaten dinners, and keeps the
     assert.equal(doc.events[0].detail.full, undefined);
     assert.equal(removed, false);
     assert.deepEqual(source.items(), chips);
-    assert.equal(model.week()[0].used, true);
-    assert.equal(model.week()[0].recipe.title, "عدس‌پلو");
+    assert.equal(model.week()[0].meals.find((meal) => meal.id === "dinner").used, true);
+    assert.equal(model.week()[0].meals.find((meal) => meal.id === "dinner").recipe.title, "عدس‌پلو");
   } finally {
     global.AshpazPlan = previous;
   }
@@ -494,8 +494,8 @@ test("full regenerate ignores the eaten skip and retry repeats that mode", async
     assert.ok(Array.isArray(calls[2].recipes));
     assert.equal(doc.nodes["recipe-status"].textContent, COPY.fullNote);
     assert.equal(doc.nodes["recipe-grid"].hidden, false);
-    assert.equal(model.week()[0].recipe.title, "عدس‌پلو");
-    assert.equal(model.week()[0].used, true);
+    assert.equal(model.week()[0].meals.find((meal) => meal.id === "dinner").recipe.title, "عدس‌پلو");
+    assert.equal(model.week()[0].meals.find((meal) => meal.id === "dinner").used, true);
     assert.deepEqual(pantry(chips, "250000").items(), chips);
   } finally {
     global.AshpazPlan = previous;

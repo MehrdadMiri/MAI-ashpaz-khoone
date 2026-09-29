@@ -361,7 +361,7 @@ class LeftoverPromptTests(unittest.TestCase):
         user = messages[1]["content"]
         self.assertIn("مواد باقی‌مانده:", user)
         self.assertIn("\n- ماست", user)
-        self.assertIn("شام‌های خورده‌شده:", user)
+        self.assertIn("وعده‌های خورده‌شده:", user)
         self.assertIn("عدس‌پلو", user)
         self.assertIn("نباید تکرار شوند", user)
         self.assertIn("بودجه هفته: 1500000 تومان", user)
@@ -392,7 +392,7 @@ class LeftoverPromptTests(unittest.TestCase):
         self.assertIn("برنج", user)
         self.assertIn("ماست", user)
         self.assertNotIn("عدس‌پلو", user)
-        self.assertNotIn("شام‌های خورده‌شده:", user)
+        self.assertNotIn("وعده‌های خورده‌شده:", user)
         self.assertNotIn("مواد باقی‌مانده:", user)
 
 
@@ -551,7 +551,7 @@ class GenerateTests(unittest.TestCase):
         self.assertIn("بازتولید کامل:", user)
         self.assertIn("بودجه هفته: 1500000 تومان", user)
         self.assertNotIn("عدس‌پلو", user)
-        self.assertNotIn("شام‌های خورده‌شده:", user)
+        self.assertNotIn("وعده‌های خورده‌شده:", user)
 
 
 class DietFilterTests(unittest.TestCase):

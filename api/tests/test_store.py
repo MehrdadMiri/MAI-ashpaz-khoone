@@ -78,11 +78,42 @@ class SanitizeTests(unittest.TestCase):
         )
         self.assertEqual(plan["recipes"][0]["title"], "کباب")
         self.assertEqual(plan["recipes"][0]["id"], "r:کباب")
-        self.assertEqual(plan["slots"]["fri"], "r:کباب")
-        self.assertTrue(plan["used"]["fri"])
-        self.assertIsNone(plan["slots"]["sat"])
-        self.assertFalse(plan["used"]["sat"])
+        self.assertEqual(plan["slots"]["fri"]["dinner"], "r:کباب")
+        self.assertIsNone(plan["slots"]["fri"]["breakfast"])
+        self.assertIsNone(plan["slots"]["fri"]["lunch"])
+        self.assertTrue(plan["used"]["fri"]["dinner"])
+        self.assertFalse(plan["used"]["fri"]["breakfast"])
+        self.assertIsNone(plan["slots"]["sat"]["dinner"])
+        self.assertFalse(plan["used"]["sat"]["dinner"])
         self.assertNotIn("nope", plan["slots"])
+
+    def test_plan_keeps_breakfast_lunch_and_dinner(self):
+        plan = store.sanitize_plan(
+            {
+                "recipes": [
+                    recipe("املت", ["تخم‌مرغ"]),
+                    recipe("کتلت", ["گوشت"]),
+                    recipe("عدس‌پلو", ["برنج"]),
+                ],
+                "slots": {
+                    "sat": {
+                        "breakfast": "r:املت",
+                        "lunch": "r:کتلت",
+                        "dinner": "r:عدسپلو",
+                        "snack": "r:املت",
+                    }
+                },
+                "used": {"sat": {"breakfast": True, "lunch": False, "dinner": True}},
+            }
+        )
+        self.assertEqual(plan["slots"]["sat"]["breakfast"], "r:املت")
+        self.assertEqual(plan["slots"]["sat"]["lunch"], "r:کتلت")
+        self.assertEqual(plan["slots"]["sat"]["dinner"], "r:عدسپلو")
+        self.assertNotIn("snack", plan["slots"]["sat"])
+        self.assertTrue(plan["used"]["sat"]["breakfast"])
+        self.assertFalse(plan["used"]["sat"]["lunch"])
+        self.assertTrue(plan["used"]["sat"]["dinner"])
+        self.assertIsNone(plan["slots"]["sun"]["breakfast"])
 
     def test_assigned_recipes_survive_the_catalog_cap(self):
         recipes = [recipe("ثابت")]
@@ -95,7 +126,8 @@ class SanitizeTests(unittest.TestCase):
             }
         )
         self.assertLessEqual(len(plan["recipes"]), store.MAX_RECIPES)
-        self.assertEqual(plan["slots"]["sat"], "r:ثابت")
+        self.assertEqual(plan["slots"]["sat"]["dinner"], "r:ثابت")
+        self.assertIsNone(plan["slots"]["sat"]["lunch"])
         self.assertTrue(any(item["title"] == "ثابت" for item in plan["recipes"]))
 
     def test_secret_is_rejected_and_not_echoed(self):
@@ -262,8 +294,9 @@ class PostgresKitchenTests(unittest.TestCase):
                 "used": {"sat": True},
             },
         )
-        self.assertEqual(plan["plan"]["slots"]["sat"], "r:عدسپلو")
-        self.assertTrue(plan["plan"]["used"]["sat"])
+        self.assertEqual(plan["plan"]["slots"]["sat"]["dinner"], "r:عدسپلو")
+        self.assertIsNone(plan["plan"]["slots"]["sat"]["breakfast"])
+        self.assertTrue(plan["plan"]["used"]["sat"]["dinner"])
         self.assertEqual(plan["plan"]["recipes"][0]["ingredients"], ["برنج", "عدس"])
 
         again = self.kitchen.load_pantry(self.user)
@@ -274,7 +307,7 @@ class PostgresKitchenTests(unittest.TestCase):
 
         cleared = self.kitchen.save_pantry(self.user, {"items": [], "budget": "1500000"})
         self.assertEqual(cleared["pantry"]["items"], [])
-        self.assertEqual(self.kitchen.load_plan(self.user)["plan"]["slots"]["sat"], "r:عدسپلو")
+        self.assertEqual(self.kitchen.load_plan(self.user)["plan"]["slots"]["sat"]["dinner"], "r:عدسپلو")
 
 
 if __name__ == "__main__":
