@@ -648,7 +648,9 @@ class SourceTests(unittest.TestCase):
                 continue
             if any(part in skip for part in path.parts):
                 continue
-            if path.suffix not in {".py", ".md", ".yml", ".yaml", ".example", ".txt", ".html", ".conf"} and path.name not in {
+            if path.name.endswith(".test.js"):
+                continue
+            if path.suffix not in {".py", ".md", ".yml", ".yaml", ".example", ".txt", ".html", ".conf", ".js", ".css"} and path.name not in {
                 ".env.example",
                 ".gitignore",
                 "Dockerfile",

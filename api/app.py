@@ -2,19 +2,45 @@
 
 The shared GapGPT client lives in gapgpt.py. /health reports whether a key
 is configured and does not call the model. POST /gapgpt/smoke sends one
-fixed chat completion when GAP_CODE_API_KEY is set.
+fixed chat completion when GAP_CODE_API_KEY is set. POST /recipes/generate
+asks that client for Persian recipes from pantry items and a week budget.
 """
 
 import os
 
 import psycopg
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 
 from gapgpt import GapGPTClient, GapGPTConfig, GapGPTError
+from recipes import (
+    RECIPE_CLIENT_TIMEOUT,
+    RecipeRequestError,
+    generate_recipes,
+    parse_generate_body,
+)
+
+class ApiPrefixMiddleware:
+    """Treat /api/... as an alias of /... so nginx can forward the path unchanged."""
+
+    def __init__(self, wsgi):
+        self.wsgi = wsgi
+
+    def __call__(self, environ, start_response):
+        path = environ.get("PATH_INFO") or ""
+        if path == "/api":
+            environ["PATH_INFO"] = "/"
+        elif path.startswith("/api/"):
+            environ["PATH_INFO"] = path[4:] or "/"
+        return self.wsgi(environ, start_response)
+
 
 app = Flask(__name__)
+app.wsgi_app = ApiPrefixMiddleware(app.wsgi_app)
 # Insertion order, so documented smoke JSON matches the response body.
 app.json.sort_keys = False
+app.json.ensure_ascii = False
+# Pantry names are short. Reject oversized bodies before they reach the model.
+app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
 
 
 def setting(name, default=""):
@@ -26,8 +52,10 @@ def gapgpt_status():
     return GapGPTConfig.from_env().public_status()
 
 
-def build_gapgpt_client():
-    return GapGPTClient()
+def build_gapgpt_client(timeout=None):
+    if timeout is None:
+        return GapGPTClient()
+    return GapGPTClient(timeout=timeout)
 
 
 def database_ok():
@@ -69,6 +97,20 @@ def respond_gapgpt(fn, failure_message):
         )
 
 
+@app.errorhandler(413)
+def request_too_large(_exc):
+    return (
+        jsonify(
+            {
+                "ok": False,
+                "error": "invalid_request",
+                "message": "Request is too large",
+            }
+        ),
+        413,
+    )
+
+
 @app.get("/")
 def root():
     return jsonify(
@@ -77,6 +119,7 @@ def root():
             "name": "ashpaz-khoone",
             "health": "/health",
             "gapgpt_smoke": "/gapgpt/smoke",
+            "recipes_generate": "/recipes/generate",
         }
     )
 
@@ -113,4 +156,35 @@ def gapgpt_smoke():
     return respond_gapgpt(
         lambda: build_gapgpt_client().smoke(),
         "GapGPT smoke check failed",
+    )
+
+
+@app.get("/recipes/generate")
+def recipes_generate_get():
+    return (
+        jsonify(
+            {
+                "ok": False,
+                "error": "method_not_allowed",
+                "message": "Use POST /recipes/generate",
+            }
+        ),
+        405,
+    )
+
+
+@app.post("/recipes/generate")
+def recipes_generate():
+    # Body fields are pantry data. Error text stays static and never echoes them.
+    try:
+        ingredients, budget = parse_generate_body(request.get_json(silent=True))
+    except RecipeRequestError as exc:
+        return jsonify(exc.to_dict()), exc.http_status
+    return respond_gapgpt(
+        lambda: generate_recipes(
+            build_gapgpt_client(timeout=RECIPE_CLIENT_TIMEOUT),
+            ingredients,
+            budget,
+        ),
+        "Recipe generation failed",
     )

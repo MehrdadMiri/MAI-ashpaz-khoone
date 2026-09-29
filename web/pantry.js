@@ -1,5 +1,5 @@
-/* Client-side pantry for آشپزخونه (US-02 chips, US-04 week budget stub).
-   State stays in localStorage. Recipe generation is out of scope. */
+/* Client-side pantry for آشپزخونه (US-02 chips, US-04 week budget).
+   State stays in localStorage. Recipe generation reads the active pantry. */
 (function (global) {
   "use strict";
 
@@ -342,7 +342,9 @@
     } catch (err) {
       storage = createMemoryStorage();
     }
-    mount(document, createPantry({ storage: storage }));
+    var pantry = createPantry({ storage: storage });
+    api.active = pantry;
+    mount(document, pantry);
   }
 
   var api = {

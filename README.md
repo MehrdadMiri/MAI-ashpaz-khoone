@@ -10,7 +10,7 @@ Persian RTL AI meal and recipe demo (آشپزخونه).
 | api | Python (Flask + Gunicorn) | http://localhost:8000 |
 | db | Postgres 16 | localhost:5432 |
 
-The web page is a Persian RTL pantry. You can add and remove ingredient chips, load a sample set of Iranian staples, and set a numeric week budget. The list and budget stay in this browser (`localStorage`); they are not stored in Postgres. The API includes a shared GapGPT client (`api/gapgpt.py`) for later recipe and fridge-vision work. Later tickets add recipes, fridge vision, and the meal plan. Product UI is Persian RTL. This scaffold’s docs and code comments are English.
+The web page is a Persian RTL pantry. You can add and remove ingredient chips, load a sample set of Iranian staples, and set a numeric week budget. The list and budget stay in this browser (`localStorage`); they are not stored in Postgres. «پیشنهاد دستور» asks the shared GapGPT client (`api/gapgpt.py`) for at least three Persian recipes from those chips and the week budget. Later tickets add fridge vision and the meal plan. Product UI is Persian RTL. This scaffold’s docs and code comments are English.
 
 The GitHub repository is public.
 
@@ -94,6 +94,35 @@ node --test web/pantry.test.js
 
 Web `/health` is unchanged.
 
+## Recipe suggestions
+
+«پیشنهاد دستور» is on the pantry page. It sends the chips and the week budget already stored by the pantry (`AshpazPantry`) to `POST /api/recipes/generate`.
+
+The browser calls `http://localhost:8080/api/recipes/generate`. Nginx proxies `/api/` to the api service and forwards that path. The api accepts `/api/...` as an alias of the same routes, so `POST /recipes/generate` on port 8000 and `POST /api/recipes/generate` on port 8080 are the same call. The web `/health` check is still the nginx `ok` response. API health through the proxy is `http://localhost:8080/api/health`.
+
+The request JSON is `{ "ingredients": ["برنج"], "budget": 1500000 }`. `budget` may be `null` when the week field is empty; the model prompt still includes that budget context. The api service calls GapGPT with `GapGPTClient.chat_text` and the configured model (`gpt-5.6-luna` unless `GAPGPT_MODEL` is set). The key stays in the api container. The page never receives it.
+
+A successful body is `ok: true` and `recipes` with three objects. Each object has `title`, `ingredients`, `steps`, and `cost_toman` (`null` when the model gives no number). The page shows those as RTL cards: title, ingredient tags, steps, and a rough cost badge when a cost is present. «افزودن به برنامه» is on each card and disabled until the meal-plan ticket.
+
+While the request is in flight the status line is «در حال پختن ایده‌ها…» and both «پیشنهاد دستور» and «تلاش دوباره» are disabled, so a second click does not send another request. Failures stay on the page as short Persian text plus «تلاش دوباره». The page does not show stack traces, upstream bodies, or the API key.
+
+| Situation | HTTP | `error` | What the page says |
+| --- | --- | --- | --- |
+| No pantry items | 400 | `empty_ingredients` | ask for at least one ingredient (the page does this before calling) |
+| Bad budget | 400 | `invalid_budget` | the week budget is not a number |
+| Key missing | 503 | `not_configured` | the suggestion service is not ready |
+| Upstream rejects the key | 502 | `unauthorized` | friendly retry |
+| Timeout | 504 | `timeout` | friendly retry |
+| Unreadable model output, or fewer than three usable recipes | 502 | `bad_response` | friendly retry |
+
+The model is asked for Iranian home cooking in Persian that prefers the pantry names. QA should spot-check that the cards use those names.
+
+Checks without a browser:
+
+```bash
+node --test web/recipes.test.js
+```
+
 ## Demo path (QA)
 
 1. From a clean shell (no `GAP_CODE_API_KEY` in the environment, and no real key in `.env`), run `docker compose up --build`.
@@ -117,6 +146,33 @@ Web `/health` is unchanged.
 
 6. Optional: set `GAP_CODE_API_KEY` in `.env` (or the shell) and recreate the api service (`docker compose up -d --force-recreate api`). `/health` stays OK. `gapgpt.configured` becomes `true` when the variable is non-empty. The key is not returned by the API.
 
+7. Open http://localhost:8080. Click «بارگذاری نمونه» and set «بودجه هفته» to a number such as `1500000`. Click «پیشنهاد دستور».
+
+   Without a key, the status line shows «در حال پختن ایده‌ها…» and then a Persian message that the suggestion service is not ready, with «تلاش دوباره». The page does not show a stack trace or a key. An empty pantry does not call the API; it asks you to add an ingredient.
+
+   The same check from the shell:
+
+   ```bash
+   curl -sS -X POST http://localhost:8000/recipes/generate \
+     -H 'Content-Type: application/json' \
+     -d '{"ingredients":["برنج","عدس","پیاز"],"budget":1500000}' \
+     -w "\nHTTP %{http_code}\n"
+   ```
+
+   Expected HTTP 503 and `"error": "not_configured"`. No stack trace and no key. The proxied path is the same JSON:
+
+   ```bash
+   curl -sS -X POST http://localhost:8080/api/recipes/generate \
+     -H 'Content-Type: application/json' \
+     -d '{"ingredients":["برنج","عدس","پیاز"],"budget":1500000}'
+   ```
+
+8. With a real key only in the gitignored `.env` or the environment, recreate the api service and repeat step 7. After the loading line, at least three Persian cards appear. Each card has a title, ingredient tags, and steps. A rough تومان badge appears when the model returns a cost. «افزودن به برنامه» is visible and disabled.
+
+   Spot-check the cards against the sample pantry (برنج، پیاز، عدس، لوبیا، سیب‌زمینی، گوجه‌فرنگی، ماست، روغن). Those names should show up as the main ingredients. The request includes the week budget you typed.
+
+   Expected HTTP 200 from the curl in step 7: `"ok": true` and a `recipes` array of three objects. The API key must not appear in the body.
+
 ## GapGPT checks (SE/QA)
 
 Unit tests mock HTTP or talk to a local socket. They do not need a key and do not call GapGPT. `LiveSmokeTest` is skipped unless you opt in.
@@ -128,7 +184,7 @@ python3 -m venv .venv
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Expected: every test OK, with `LiveSmokeTest` skipped.
+Expected: every test OK, with `LiveSmokeTest` skipped. From the repo root, `node --test web/pantry.test.js web/recipes.test.js` covers the pantry and the recipe page.
 
 Smoke check without a key (controlled error, no stack trace). The stack from the demo path can already be running:
 
