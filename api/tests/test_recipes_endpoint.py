@@ -366,7 +366,7 @@ class EndpointTests(unittest.TestCase):
         self.assertIn("بودجه هفته: 1500000 تومان", user)
         self.assertIn("برنج", user)
         self.assertNotIn("عدس‌پلو", user)
-        self.assertNotIn("شام‌های خورده‌شده:", user)
+        self.assertNotIn("وعده‌های خورده‌شده:", user)
 
     def test_empty_remaining_and_key_in_skip_are_not_sent(self):
         seen = []

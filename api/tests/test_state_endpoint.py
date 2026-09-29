@@ -124,12 +124,13 @@ class EndpointTests(unittest.TestCase):
         )
         self.assertEqual(saved.status_code, 200)
         plan = saved.get_json()["plan"]
-        self.assertEqual(plan["slots"]["sat"], "r:عدسپلو")
-        self.assertTrue(plan["used"]["sat"])
+        self.assertEqual(plan["slots"]["sat"]["dinner"], "r:عدسپلو")
+        self.assertIsNone(plan["slots"]["sat"]["breakfast"])
+        self.assertTrue(plan["used"]["sat"]["dinner"])
         self.assertEqual(plan["recipes"][0]["ingredients"], ["برنج", "۲۰۰ گرم گوشت"])
 
         loaded = self.client.get("/plan", headers={"X-Local-User-Id": USER})
-        self.assertEqual(loaded.get_json()["plan"]["used"]["sat"], True)
+        self.assertEqual(loaded.get_json()["plan"]["used"]["sat"]["dinner"], True)
         self.assertFalse(self.client.get("/pantry", headers={"X-Local-User-Id": USER}).get_json()["found"])
 
     def test_bad_json_and_secret_are_not_stored(self):

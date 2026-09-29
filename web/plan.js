@@ -1,7 +1,10 @@
-/* Seven-day dinner plan for آشپزخونه (US-06, US-07, US-10).
-   Recipes already on the page can be assigned to شنبه–جمعه.
-   A day can be marked خورده شد. That flag stays in localStorage with the
-   plan and is how leftover regenerate knows which dinners to skip.
+/* Seven-day meal plan for آشپزخونه (US-06, US-07, US-10, ticket #18).
+   Each day شنبه–جمعه has سه وعده: صبحانه، ناهار، شام.
+   A meal can be marked خورده شد. That flag stays in localStorage with the
+   plan and is how leftover regenerate knows which meals to skip.
+   Older saves stored one شام per day (slots.sat as a recipe id, used.sat
+   as a boolean). Those load as the شام slot. صبحانه and ناهار start خالی.
+   Share links with v:1 do the same. New links are v:2 and list every meal.
    When AshpazPersist is loaded, the same snapshot is also stored in Postgres.
    If that api is down, the localStorage copy is what the page keeps using.
    Print and Markdown export are client-side. This file does not call
@@ -19,6 +22,8 @@
 
   var COPY = {
     title: "برنامه ۷ روزه",
+    breakfast: "صبحانه",
+    lunch: "ناهار",
     dinner: "شام",
     empty: "خالی",
     swap: "جایگزین",
@@ -32,27 +37,27 @@
     shareCopied: "لینک برنامه کپی شد.",
     shareReady: "لینک آماده است. اگر کپی نشد، آن را از کادر انتخاب کنید.",
     shareOpened: "برنامه اشتراکی باز شد.",
-    shareEmptyOpened: "این لینک یک برنامه خالی است. روزها «خالی» هستند.",
+    shareEmptyOpened: "این لینک یک برنامه خالی است. وعده‌ها «خالی» هستند.",
     shareBad: "لینک برنامه خوانده نشد. برنامه همین مرورگر سر جایش ماند.",
     emptyPlanTitle: "برنامه هفته خالی است",
     emptyPlanHelp:
-      "هنوز شامی برای شنبه تا جمعه چیده نشده. لینک اشتراک و چاپ پوستر برای همین برنامه خالی هم کار می‌کنند.",
-    posterRange: "هفت وعده شام، از شنبه تا جمعه",
+      "هنوز وعده‌ای برای شنبه تا جمعه چیده نشده. لینک اشتراک و چاپ پوستر برای همین برنامه خالی هم کار می‌کنند.",
+    posterRange: "صبحانه، ناهار و شام، از شنبه تا جمعه",
     dayRole: "روز",
     mealRole: "وعده",
     cancel: "انصراف",
     clear: "خالی کردن",
     current: "فعلی",
-    filledWeek: "شام هر روز این هفته چیده شد.",
+    filledWeek: "صبحانه، ناهار و شام هر روز این هفته چیده شد.",
     needRecipes: "برای چیدن برنامه، اول «پیشنهاد دستور» را بزنید.",
-    weekFull: "هر هفت روز شام دارد. برای عوض کردن، «جایگزین» را بزنید.",
+    weekFull: "هر ۲۱ وعده چیده شده. برای عوض کردن، «جایگزین» را بزنید.",
     noRecipes: "هنوز دستوری نیست. اول «پیشنهاد دستور» را بزنید.",
     exportHint:
-      "چاپ، پوستر A4 با پس‌زمینه سفید است: نام روز، وعده شام، و نام غذا. لینک اشتراک فقط همین برنامه را باز می‌کند و کلید یا شناسه داخلی ندارد. فایل مارک‌داون فهرست روزهاست.",
+      "چاپ، پوستر A4 با پس‌زمینه سفید است: نام روز و سه وعده صبحانه، ناهار و شام. لینک اشتراک فقط همین برنامه را باز می‌کند و کلید یا شناسه داخلی ندارد. فایل مارک‌داون فهرست روزها و وعده‌هاست.",
     filename: "برنامه-۷-روزه.md",
     eaten: "خورده شد",
-    freshIdeas: "ایده‌های تازه آماده‌اند. شام‌های خورده‌شده سر جایشان ماندند.",
-    fullIdeas: "پیشنهاد کامل آماده است. شام‌های چیده‌شده سر جایشان ماندند.",
+    freshIdeas: "ایده‌های تازه آماده‌اند. وعده‌های خورده‌شده سر جایشان ماندند.",
+    fullIdeas: "پیشنهاد کامل آماده است. وعده‌های چیده‌شده سر جایشان ماندند.",
   };
 
   var DAYS = Object.freeze([
@@ -63,6 +68,12 @@
     Object.freeze({ id: "wed", label: "چهارشنبه" }),
     Object.freeze({ id: "thu", label: "پنجشنبه" }),
     Object.freeze({ id: "fri", label: "جمعه" }),
+  ]);
+
+  var MEALS = Object.freeze([
+    Object.freeze({ id: "breakfast", label: "صبحانه" }),
+    Object.freeze({ id: "lunch", label: "ناهار" }),
+    Object.freeze({ id: "dinner", label: "شام" }),
   ]);
 
   function createMemoryStorage() {
@@ -151,10 +162,39 @@
     return null;
   }
 
+  function mealById(mealId) {
+    for (var i = 0; i < MEALS.length; i += 1) {
+      if (MEALS[i].id === mealId) return MEALS[i];
+    }
+    return null;
+  }
+
+  function slotKey(dayId, mealId) {
+    return dayId + ":" + mealId;
+  }
+
+  function parseSlotKey(value) {
+    if (typeof value !== "string") return null;
+    var parts = value.split(":");
+    if (parts.length !== 2) return null;
+    var day = dayById(parts[0]);
+    var meal = mealById(parts[1]);
+    if (!day || !meal) return null;
+    return { dayId: day.id, mealId: meal.id, dayLabel: day.label, mealLabel: meal.label };
+  }
+
+  function emptyDaySlots() {
+    return { breakfast: null, lunch: null, dinner: null };
+  }
+
+  function emptyDayUsed() {
+    return { breakfast: false, lunch: false, dinner: false };
+  }
+
   function emptySlots() {
     var slots = {};
     DAYS.forEach(function (day) {
-      slots[day.id] = null;
+      slots[day.id] = emptyDaySlots();
     });
     return slots;
   }
@@ -162,9 +202,69 @@
   function emptyUsed() {
     var used = {};
     DAYS.forEach(function (day) {
-      used[day.id] = false;
+      used[day.id] = emptyDayUsed();
     });
     return used;
+  }
+
+  function copyDaySlots(raw) {
+    var next = emptyDaySlots();
+    if (!raw || typeof raw !== "object") return next;
+    MEALS.forEach(function (meal) {
+      next[meal.id] = typeof raw[meal.id] === "string" ? raw[meal.id] : null;
+    });
+    return next;
+  }
+
+  function copyDayUsed(raw) {
+    var next = emptyDayUsed();
+    if (!raw || typeof raw !== "object") return next;
+    MEALS.forEach(function (meal) {
+      next[meal.id] = raw[meal.id] === true;
+    });
+    return next;
+  }
+
+  /* A string (or null) on the day is the old dinner-only save. */
+  function readLegacySlots(raw) {
+    var next = emptyDaySlots();
+    if (typeof raw === "string") next.dinner = raw;
+    else if (raw && typeof raw === "object") {
+      MEALS.forEach(function (meal) {
+        next[meal.id] = typeof raw[meal.id] === "string" ? raw[meal.id] : null;
+      });
+    }
+    return next;
+  }
+
+  function readLegacyUsed(raw, slots) {
+    var next = emptyDayUsed();
+    if (typeof raw === "boolean") {
+      next.dinner = !!(slots.dinner && raw);
+      return next;
+    }
+    if (raw && typeof raw === "object") {
+      MEALS.forEach(function (meal) {
+        next[meal.id] = !!(slots[meal.id] && raw[meal.id] === true);
+      });
+    }
+    return next;
+  }
+
+  function copySlotsMap(slots) {
+    var next = {};
+    DAYS.forEach(function (day) {
+      next[day.id] = copyDaySlots(slots[day.id]);
+    });
+    return next;
+  }
+
+  function copyUsedMap(used) {
+    var next = {};
+    DAYS.forEach(function (day) {
+      next[day.id] = copyDayUsed(used[day.id]);
+    });
+    return next;
   }
 
   function lineUsesChip(chip, line) {
@@ -210,22 +310,30 @@
     if (typeof spent !== "number" || !isFinite(spent) || spent <= 0) return null;
     var hasBudget = typeof budget === "number" && isFinite(budget) && budget >= 0;
     var over = !!(hasBudget && spent > budget);
-    var text = "جمع شام‌ها " + formatApprox(spent);
+    var text = "جمع وعده‌ها " + formatApprox(spent);
     if (hasBudget) text += " از بودجه " + formatToman(budget);
     if (over) text += " — بیشتر از بودجه هفته. چاپ و خروجی همچنان ممکن است";
     return { text: text, over: over };
   }
 
+  function mealLine(meal) {
+    var text = meal.recipe ? meal.recipe.title : COPY.empty;
+    if (meal.recipe && meal.used) text += " — " + COPY.eaten;
+    if (meal.recipe && typeof meal.recipe.cost_toman === "number" && meal.recipe.cost_toman > 0) {
+      var cost = formatApprox(meal.recipe.cost_toman);
+      if (cost) text += " — " + cost;
+    }
+    return text;
+  }
+
   function markdownDocument(week, note) {
     var lines = ["# " + COPY.title, ""];
     week.forEach(function (day) {
-      var meal = day.recipe ? day.recipe.title : COPY.empty;
-      if (day.recipe && day.used) meal += " — " + COPY.eaten;
-      if (day.recipe && typeof day.recipe.cost_toman === "number" && day.recipe.cost_toman > 0) {
-        var cost = formatApprox(day.recipe.cost_toman);
-        if (cost) meal += " — " + cost;
-      }
-      lines.push("- **" + day.label + ":** " + meal);
+      lines.push("- **" + day.label + ":**");
+      var meals = Array.isArray(day.meals) ? day.meals : [];
+      meals.forEach(function (meal) {
+        lines.push("  - **" + meal.label + ":** " + mealLine(meal));
+      });
     });
     lines.push("");
     if (note && note.text) {
@@ -238,7 +346,7 @@
   /* Same key persist.js uses for unsynced edits. A shared week is a local
      edit so GET /plan does not paint over it before this browser saves. */
   var SYNC_META_KEY = "ashpaz-khoone.sync.v1";
-  var SHARE_VERSION = 1;
+  var SHARE_VERSION = 2;
   var SHARE_TOKEN_MAX = 24000;
 
   var FORBIDDEN_KEY = /(api[_-]?key|authorization|token|secret|password|passwd|local[_-]?user|gap[_-]?code|postgres|credential|^env$)/i;
@@ -356,39 +464,65 @@
     return null;
   }
 
+  function shareMealRow(recipe, usedFlag) {
+    var title = safeText(recipe.title, MAX_TITLE);
+    if (!title) return null;
+    var row = { title: title };
+    var cost = recipe.cost_toman;
+    if (typeof cost === "number" && isFinite(cost) && cost > 0) row.cost = Math.round(cost);
+    if (usedFlag) row.used = true;
+    var ingredients = safeList(recipe.ingredients, 16, 80);
+    var steps = safeList(recipe.steps, 12, 400);
+    if (ingredients.length) row.ingredients = ingredients;
+    if (steps.length) row.steps = steps;
+    if (containsSecret(row)) return null;
+    return row;
+  }
+
   function compactShare(snapshot) {
     var days = [];
     var source = snapshot && typeof snapshot === "object" ? snapshot : {};
     DAYS.forEach(function (day) {
-      var slotId = source.slots && typeof source.slots[day.id] === "string" ? source.slots[day.id] : "";
-      var recipe = recipeBySlot(source, slotId);
-      if (!recipe) return;
-      var title = safeText(recipe.title, MAX_TITLE);
-      if (!title) return;
-      var row = { id: day.id, title: title };
-      var cost = recipe.cost_toman;
-      if (typeof cost === "number" && isFinite(cost) && cost > 0) row.cost = Math.round(cost);
-      if (source.used && source.used[day.id] === true) row.used = true;
-      var ingredients = safeList(recipe.ingredients, 16, 80);
-      var steps = safeList(recipe.steps, 12, 400);
-      if (ingredients.length) row.ingredients = ingredients;
-      if (steps.length) row.steps = steps;
-      if (containsSecret(row)) return;
-      days.push(row);
+      var rawSlots = source.slots ? source.slots[day.id] : null;
+      var slots = readLegacySlots(rawSlots);
+      var used = readLegacyUsed(source.used ? source.used[day.id] : null, slots);
+      var meals = [];
+      MEALS.forEach(function (meal) {
+        var recipe = recipeBySlot(source, slots[meal.id] || "");
+        if (!recipe) return;
+        var row = shareMealRow(recipe, used[meal.id] === true);
+        if (!row) return;
+        row.meal = meal.id;
+        meals.push(row);
+      });
+      if (meals.length) days.push({ id: day.id, meals: meals });
     });
     return { v: SHARE_VERSION, days: days };
+  }
+
+  function eachShareMeal(day, visit) {
+    if (!day || typeof day !== "object") return;
+    if (Array.isArray(day.meals)) {
+      day.meals.forEach(visit);
+      return;
+    }
+    visit(day);
   }
 
   function shrinkShare(body) {
     var json = JSON.stringify(body);
     if (json.length <= 6000) return json;
     body.days.forEach(function (day) {
-      delete day.steps;
+      eachShareMeal(day, function (meal) {
+        delete meal.steps;
+      });
     });
     json = JSON.stringify(body);
     if (json.length <= 6000) return json;
     body.days.forEach(function (day) {
-      delete day.ingredients;
+      eachShareMeal(day, function (meal) {
+        delete meal.ingredients;
+      });
     });
     return JSON.stringify(body);
   }
@@ -402,31 +536,49 @@
     return base64UrlEncode(json);
   }
 
+  function rememberSharedRecipe(recipes, recipe) {
+    for (var i = 0; i < recipes.length; i += 1) {
+      if (recipes[i].id === recipe.id) return;
+    }
+    recipes.push(recipe);
+  }
+
+  function placeSharedMeal(recipes, slots, used, day, meal, row) {
+    if (!row || typeof row !== "object" || containsSecret(row)) return;
+    var recipe = normalizeRecipe({
+      title: row.title,
+      ingredients: row.ingredients,
+      steps: row.steps,
+      cost_toman: row.cost,
+    });
+    if (!recipe) return;
+    rememberSharedRecipe(recipes, recipe);
+    slots[day.id][meal.id] = recipe.id;
+    used[day.id][meal.id] = row.used === true;
+  }
+
   function planFromShare(parsed) {
     var recipes = [];
     var slots = emptySlots();
     var used = emptyUsed();
-    if (!parsed || parsed.v !== SHARE_VERSION || !Array.isArray(parsed.days)) {
+    if (!parsed || (parsed.v !== 1 && parsed.v !== SHARE_VERSION) || !Array.isArray(parsed.days)) {
       return { recipes: recipes, slots: slots, used: used };
     }
     parsed.days.forEach(function (row) {
       if (!row || typeof row !== "object" || containsSecret(row)) return;
       var day = dayById(typeof row.id === "string" ? row.id : "");
       if (!day) return;
-      var recipe = normalizeRecipe({
-        title: row.title,
-        ingredients: row.ingredients,
-        steps: row.steps,
-        cost_toman: row.cost,
-      });
-      if (!recipe) return;
-      var known = false;
-      for (var i = 0; i < recipes.length; i += 1) {
-        if (recipes[i].id === recipe.id) known = true;
+      if (parsed.v === 1) {
+        placeSharedMeal(recipes, slots, used, day, mealById("dinner"), row);
+        return;
       }
-      if (!known) recipes.push(recipe);
-      slots[day.id] = recipe.id;
-      used[day.id] = row.used === true;
+      var meals = Array.isArray(row.meals) ? row.meals : [];
+      meals.forEach(function (mealRow) {
+        if (!mealRow || typeof mealRow !== "object") return;
+        var meal = mealById(typeof mealRow.meal === "string" ? mealRow.meal : "");
+        if (!meal) return;
+        placeSharedMeal(recipes, slots, used, day, meal, mealRow);
+      });
     });
     return { recipes: recipes, slots: slots, used: used };
   }
@@ -455,14 +607,20 @@
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return { ok: false, reason: "token" };
     }
-    if (containsSecret(parsed) || parsed.v !== SHARE_VERSION || !Array.isArray(parsed.days)) {
+    if (
+      containsSecret(parsed) ||
+      (parsed.v !== 1 && parsed.v !== SHARE_VERSION) ||
+      !Array.isArray(parsed.days)
+    ) {
       return { ok: false, reason: containsSecret(parsed) ? "secret" : "token" };
     }
     var plan = planFromShare(parsed);
     if (containsSecret(plan)) return { ok: false, reason: "secret" };
     var empty = true;
     DAYS.forEach(function (day) {
-      if (plan.slots[day.id]) empty = false;
+      MEALS.forEach(function (meal) {
+        if (plan.slots[day.id][meal.id]) empty = false;
+      });
     });
     return { ok: true, empty: empty, plan: plan };
   }
@@ -546,20 +704,28 @@
   function posterOutline(week) {
     var list = Array.isArray(week) ? week : [];
     var days = list.map(function (day) {
-      var hasMeal = !!(day && day.recipe && day.recipe.title);
+      var meals = (day && Array.isArray(day.meals) ? day.meals : []).map(function (meal) {
+        var hasMeal = !!(meal && meal.recipe && meal.recipe.title);
+        return {
+          id: meal && meal.id ? meal.id : "",
+          mealRole: COPY.mealRole,
+          mealLabel: meal && meal.label ? meal.label : "",
+          title: hasMeal ? meal.recipe.title : COPY.empty,
+          empty: !hasMeal,
+          eaten: !!(hasMeal && meal.used),
+        };
+      });
       return {
         id: day && day.id ? day.id : "",
         dayRole: COPY.dayRole,
         dayLabel: day && day.label ? day.label : "",
-        mealRole: COPY.mealRole,
-        mealLabel: COPY.dinner,
-        title: hasMeal ? day.recipe.title : COPY.empty,
-        empty: !hasMeal,
-        eaten: !!(hasMeal && day.used),
+        meals: meals,
       };
     });
     var filled = days.some(function (day) {
-      return !day.empty;
+      return day.meals.some(function (meal) {
+        return !meal.empty;
+      });
     });
     return {
       brand: "آشپزخونه",
@@ -593,8 +759,8 @@
     function planSnapshot() {
       return {
         recipes: state.recipes.map(copyRecipe),
-        slots: Object.assign({}, state.slots),
-        used: Object.assign({}, state.used),
+        slots: copySlotsMap(state.slots),
+        used: copyUsedMap(state.used),
       };
     }
 
@@ -641,20 +807,33 @@
         });
       }
       DAYS.forEach(function (day) {
-        var id = parsed.slots && typeof parsed.slots[day.id] === "string" ? parsed.slots[day.id] : "";
-        next.slots[day.id] = seen[id] ? id : null;
-        var flagged = parsed.used && parsed.used[day.id] === true;
-        next.used[day.id] = !!(next.slots[day.id] && flagged);
+        var migrated = readLegacySlots(parsed.slots ? parsed.slots[day.id] : null);
+        MEALS.forEach(function (meal) {
+          var id = migrated[meal.id];
+          next.slots[day.id][meal.id] = seen[id] ? id : null;
+        });
+        var flagged = readLegacyUsed(parsed.used ? parsed.used[day.id] : null, next.slots[day.id]);
+        MEALS.forEach(function (meal) {
+          next.used[day.id][meal.id] = flagged[meal.id];
+        });
       });
       return next;
     }
 
-    function prune() {
-      if (state.recipes.length <= MAX_RECIPES) return;
+    function assignedIds() {
       var assigned = Object.create(null);
       DAYS.forEach(function (day) {
-        if (state.slots[day.id]) assigned[state.slots[day.id]] = true;
+        MEALS.forEach(function (meal) {
+          var id = state.slots[day.id][meal.id];
+          if (id) assigned[id] = true;
+        });
       });
+      return assigned;
+    }
+
+    function prune() {
+      if (state.recipes.length <= MAX_RECIPES) return;
+      var assigned = assignedIds();
       var kept = [];
       var rest = [];
       state.recipes.forEach(function (recipe) {
@@ -682,12 +861,18 @@
 
     function week() {
       return DAYS.map(function (day) {
-        var recipe = find(state.slots[day.id]);
         return {
           id: day.id,
           label: day.label,
-          used: !!state.used[day.id],
-          recipe: recipe ? copyRecipe(recipe) : null,
+          meals: MEALS.map(function (meal) {
+            var recipe = find(state.slots[day.id][meal.id]);
+            return {
+              id: meal.id,
+              label: meal.label,
+              used: !!state.used[day.id][meal.id],
+              recipe: recipe ? copyRecipe(recipe) : null,
+            };
+          }),
         };
       });
     }
@@ -695,9 +880,11 @@
     function spend() {
       var total = 0;
       week().forEach(function (day) {
-        if (day.recipe && typeof day.recipe.cost_toman === "number" && day.recipe.cost_toman > 0) {
-          total += day.recipe.cost_toman;
-        }
+        day.meals.forEach(function (meal) {
+          if (meal.recipe && typeof meal.recipe.cost_toman === "number" && meal.recipe.cost_toman > 0) {
+            total += meal.recipe.cost_toman;
+          }
+        });
       });
       return total;
     }
@@ -733,9 +920,11 @@
             return !!recipe;
           });
       },
-      assign: function (dayId, recipeOrId) {
+      assign: function (dayId, recipeOrId, mealId) {
         var day = dayById(dayId);
+        var meal = mealById(mealId || "dinner");
         if (!day) return { ok: false, reason: "day" };
+        if (!meal) return { ok: false, reason: "meal" };
         var recipe = null;
         if (typeof recipeOrId === "string") {
           recipe = find(recipeOrId);
@@ -746,37 +935,67 @@
           recipe = find(normalized.id);
         }
         if (!recipe) return { ok: false, reason: "recipe" };
-        var previous = state.slots[day.id];
-        state.slots[day.id] = recipe.id;
-        if (previous !== recipe.id) state.used[day.id] = false;
+        var previous = state.slots[day.id][meal.id];
+        state.slots[day.id][meal.id] = recipe.id;
+        if (previous !== recipe.id) state.used[day.id][meal.id] = false;
         prune();
         persist();
         return {
           ok: true,
           dayId: day.id,
+          mealId: meal.id,
           label: day.label,
+          mealLabel: meal.label,
           recipe: copyRecipe(recipe),
           replaced: !!(previous && previous !== recipe.id),
         };
       },
-      clearDay: function (dayId) {
+      clearDay: function (dayId, mealId) {
         var day = dayById(dayId);
+        var meal = mealById(mealId || "dinner");
         if (!day) return { ok: false, reason: "day" };
-        var had = !!state.slots[day.id];
-        state.slots[day.id] = null;
-        state.used[day.id] = false;
+        if (!meal) return { ok: false, reason: "meal" };
+        var had = !!state.slots[day.id][meal.id];
+        state.slots[day.id][meal.id] = null;
+        state.used[day.id][meal.id] = false;
         if (had) persist();
-        return { ok: true, dayId: day.id, label: day.label, cleared: had };
+        return {
+          ok: true,
+          dayId: day.id,
+          mealId: meal.id,
+          label: day.label,
+          mealLabel: meal.label,
+          cleared: had,
+        };
       },
       fillEmpty: function () {
         if (!state.recipes.length) return { filled: 0 };
         var cursor = 0;
         var filled = 0;
+        var count = state.recipes.length;
         DAYS.forEach(function (day) {
-          if (state.slots[day.id]) return;
-          state.slots[day.id] = state.recipes[cursor % state.recipes.length].id;
-          cursor += 1;
-          filled += 1;
+          var usedToday = Object.create(null);
+          MEALS.forEach(function (meal) {
+            var current = state.slots[day.id][meal.id];
+            if (current) usedToday[current] = true;
+          });
+          MEALS.forEach(function (meal) {
+            if (state.slots[day.id][meal.id]) return;
+            var pickIndex = -1;
+            for (var attempt = 0; attempt < count; attempt += 1) {
+              var index = (cursor + attempt) % count;
+              if (!usedToday[state.recipes[index].id]) {
+                pickIndex = index;
+                break;
+              }
+            }
+            if (pickIndex < 0) pickIndex = cursor % count;
+            var chosen = state.recipes[pickIndex];
+            state.slots[day.id][meal.id] = chosen.id;
+            usedToday[chosen.id] = true;
+            cursor = (pickIndex + 1) % count;
+            filled += 1;
+          });
         });
         if (filled) persist();
         return { filled: filled };
@@ -784,18 +1003,22 @@
       markdown: function (budget) {
         return markdownDocument(week(), budgetLine(spend(), budget));
       },
-      setUsed: function (dayId, eaten) {
+      setUsed: function (dayId, eaten, mealId) {
         var day = dayById(dayId);
+        var meal = mealById(mealId || "dinner");
         if (!day) return { ok: false, reason: "day" };
-        if (!state.slots[day.id]) return { ok: false, reason: "empty" };
-        state.used[day.id] = !!eaten;
+        if (!meal) return { ok: false, reason: "meal" };
+        if (!state.slots[day.id][meal.id]) return { ok: false, reason: "empty" };
+        state.used[day.id][meal.id] = !!eaten;
         persist();
-        var recipe = find(state.slots[day.id]);
+        var recipe = find(state.slots[day.id][meal.id]);
         return {
           ok: true,
           dayId: day.id,
+          mealId: meal.id,
           label: day.label,
-          used: !!state.used[day.id],
+          mealLabel: meal.label,
+          used: !!state.used[day.id][meal.id],
           title: recipe ? recipe.title : "",
         };
       },
@@ -803,11 +1026,13 @@
         var titles = [];
         var seen = Object.create(null);
         week().forEach(function (day) {
-          if (!day.used || !day.recipe || !day.recipe.title) return;
-          var key = identityKey(day.recipe.title);
-          if (!key || seen[key]) return;
-          seen[key] = true;
-          titles.push(day.recipe.title);
+          day.meals.forEach(function (meal) {
+            if (!meal.used || !meal.recipe || !meal.recipe.title) return;
+            var key = identityKey(meal.recipe.title);
+            if (!key || seen[key]) return;
+            seen[key] = true;
+            titles.push(meal.recipe.title);
+          });
         });
         return titles;
       },
@@ -827,7 +1052,9 @@
         markPlanAhead(storage);
         notifyRemote();
         var empty = week().every(function (day) {
-          return !day.recipe;
+          return day.meals.every(function (meal) {
+            return !meal.recipe;
+          });
         });
         return { ok: true, empty: empty };
       },
@@ -835,9 +1062,11 @@
         var items = Array.isArray(pantryItems) ? pantryItems.slice() : [];
         var lines = [];
         week().forEach(function (day) {
-          if (!day.used || !day.recipe || !Array.isArray(day.recipe.ingredients)) return;
-          day.recipe.ingredients.forEach(function (line) {
-            if (typeof line === "string" && line) lines.push(line);
+          day.meals.forEach(function (meal) {
+            if (!meal.used || !meal.recipe || !Array.isArray(meal.recipe.ingredients)) return;
+            meal.recipe.ingredients.forEach(function (line) {
+              if (typeof line === "string" && line) lines.push(line);
+            });
           });
         });
         if (!lines.length) return items;
@@ -897,80 +1126,107 @@
     return "";
   }
 
+  function renderMealSlot(doc, day, meal) {
+    var slot = doc.createElement("div");
+    slot.className = "meal-slot " + (meal.recipe ? "is-filled" : "is-empty") + (meal.used ? " is-used" : "");
+    slot.dataset.testid = "meal-slot";
+    slot.dataset.day = day.id;
+    slot.dataset.meal = meal.id;
+    slot.setAttribute("data-day", day.id);
+    slot.setAttribute("data-meal", meal.id);
+
+    var kicker = doc.createElement("p");
+    kicker.className = "day-kicker";
+    kicker.dataset.testid = "meal-label";
+    kicker.textContent = meal.label;
+
+    var title = doc.createElement("p");
+    title.className = "day-meal";
+    title.dataset.testid = "day-meal";
+    title.textContent = meal.recipe
+      ? meal.recipe.title + (meal.used ? " — " + COPY.eaten : "")
+      : COPY.empty;
+
+    slot.append(kicker, title);
+
+    if (meal.recipe && typeof meal.recipe.cost_toman === "number" && meal.recipe.cost_toman > 0) {
+      var costLabel = formatApprox(meal.recipe.cost_toman);
+      if (costLabel) {
+        var cost = doc.createElement("p");
+        cost.className = "day-cost";
+        cost.dataset.testid = "day-cost";
+        cost.textContent = costLabel;
+        slot.append(cost);
+      }
+    }
+
+    var action = doc.createElement("button");
+    action.type = "button";
+    action.className = "day-action";
+    action.dataset.testid = meal.recipe ? "day-swap" : "day-pick";
+    action.dataset.day = day.id;
+    action.dataset.meal = meal.id;
+    action.setAttribute("data-day", day.id);
+    action.setAttribute("data-meal", meal.id);
+    action.setAttribute("aria-haspopup", "dialog");
+    action.setAttribute("aria-controls", "plan-sheet");
+    action.textContent = meal.recipe ? COPY.swap : COPY.pick;
+    action.setAttribute(
+      "aria-label",
+      (meal.recipe ? COPY.swap : COPY.pick) + " " + meal.label + " " + day.label
+    );
+    slot.append(action);
+
+    if (meal.recipe) {
+      var eaten = doc.createElement("button");
+      eaten.type = "button";
+      eaten.className = "day-eaten" + (meal.used ? " is-on" : "");
+      eaten.dataset.testid = "day-eaten";
+      eaten.dataset.day = day.id;
+      eaten.dataset.meal = meal.id;
+      eaten.setAttribute("data-day", day.id);
+      eaten.setAttribute("data-meal", meal.id);
+      eaten.setAttribute("aria-pressed", meal.used ? "true" : "false");
+      eaten.textContent = COPY.eaten;
+      eaten.setAttribute(
+        "aria-label",
+        meal.used
+          ? meal.label + " " + day.label + " خورده شد. برای برگرداندن بزنید."
+          : "علامت خورده شد برای " + meal.label + " " + day.label
+      );
+      slot.append(eaten);
+    }
+    return slot;
+  }
+
   function renderWeek(doc, grid, plan) {
     var cards = plan.week().map(function (day) {
+      var anyFilled = day.meals.some(function (meal) {
+        return !!meal.recipe;
+      });
       var article = doc.createElement("article");
-      article.className =
-        "day-card " + (day.recipe ? "is-filled" : "is-empty") + (day.used ? " is-used" : "");
+      article.className = "day-card " + (anyFilled ? "is-filled" : "is-empty");
       article.dataset.testid = "day-card";
       article.dataset.day = day.id;
-      article.dataset.used = day.used ? "true" : "false";
       article.setAttribute("data-day", day.id);
 
       var name = doc.createElement("h3");
       name.className = "day-name";
       name.dataset.testid = "day-name";
       name.textContent = day.label;
+      article.append(name);
 
-      var kicker = doc.createElement("p");
-      kicker.className = "day-kicker";
-      kicker.textContent = COPY.dinner;
-
-      var meal = doc.createElement("p");
-      meal.className = "day-meal";
-      meal.dataset.testid = "day-meal";
-      meal.textContent = day.recipe
-        ? day.recipe.title + (day.used ? " — " + COPY.eaten : "")
-        : COPY.empty;
-
-      article.append(name, kicker, meal);
-
-      if (day.recipe && typeof day.recipe.cost_toman === "number" && day.recipe.cost_toman > 0) {
-        var costLabel = formatApprox(day.recipe.cost_toman);
-        if (costLabel) {
-          var cost = doc.createElement("p");
-          cost.className = "day-cost";
-          cost.dataset.testid = "day-cost";
-          cost.textContent = costLabel;
-          article.append(cost);
-        }
-      }
-
-      var action = doc.createElement("button");
-      action.type = "button";
-      action.className = "day-action";
-      action.dataset.testid = day.recipe ? "day-swap" : "day-pick";
-      action.dataset.day = day.id;
-      action.setAttribute("data-day", day.id);
-      action.setAttribute("aria-haspopup", "dialog");
-      action.setAttribute("aria-controls", "plan-sheet");
-      action.textContent = day.recipe ? COPY.swap : COPY.pick;
-      action.setAttribute(
-        "aria-label",
-        (day.recipe ? COPY.swap : COPY.pick) + " " + COPY.dinner + " " + day.label
-      );
-      article.append(action);
-
-      if (day.recipe) {
-        var eaten = doc.createElement("button");
-        eaten.type = "button";
-        eaten.className = "day-eaten" + (day.used ? " is-on" : "");
-        eaten.dataset.testid = "day-eaten";
-        eaten.dataset.day = day.id;
-        eaten.setAttribute("data-day", day.id);
-        eaten.setAttribute("aria-pressed", day.used ? "true" : "false");
-        eaten.textContent = COPY.eaten;
-        eaten.setAttribute(
-          "aria-label",
-          day.used
-            ? "شام " + day.label + " خورده شد. برای برگرداندن بزنید."
-            : "علامت خورده شد برای شام " + day.label
-        );
-        article.append(eaten);
-      }
+      day.meals.forEach(function (meal) {
+        article.append(renderMealSlot(doc, day, meal));
+      });
       return article;
     });
     grid.replaceChildren.apply(grid, cards);
+  }
+
+  function placedStatus(result) {
+    if (result.replaced) return result.mealLabel + " " + result.label + " جایگزین شد.";
+    return "«" + result.recipe.title + "» برای " + result.mealLabel + " " + result.label + " ثبت شد.";
   }
 
   function choiceRow(doc, choice) {
@@ -1101,7 +1357,9 @@
       var banner = doc.getElementById("plan-empty");
       if (!banner) return;
       var filled = plan.week().some(function (day) {
-        return !!(day && day.recipe);
+        return day.meals.some(function (meal) {
+          return !!meal.recipe;
+        });
       });
       banner.hidden = filled;
     }
@@ -1152,51 +1410,65 @@
       if (latest.length) plan.remember(latest);
     }
 
+    function findMeal(dayId, mealId) {
+      var found = null;
+      plan.week().forEach(function (day) {
+        if (day.id !== dayId) return;
+        day.meals.forEach(function (meal) {
+          if (meal.id === mealId) found = { day: day, meal: meal };
+        });
+      });
+      return found;
+    }
+
     function openAssign(recipe) {
       syncLatest();
       var accepted = plan.remember([recipe]);
       var normalized = accepted[0];
       if (!normalized) return;
-      var choices = plan.week().map(function (day) {
-        var same = day.recipe && day.recipe.id === normalized.id;
-        var action = COPY.add;
-        if (same) action = COPY.current;
-        else if (day.recipe) action = COPY.swap;
-        return {
-          id: day.id,
-          label: day.label,
-          detail: day.recipe ? day.recipe.title : COPY.empty,
-          action: action,
-        };
+      var choices = [];
+      plan.week().forEach(function (day) {
+        day.meals.forEach(function (meal) {
+          var same = meal.recipe && meal.recipe.id === normalized.id;
+          var action = COPY.add;
+          if (same) action = COPY.current;
+          else if (meal.recipe) action = COPY.swap;
+          choices.push({
+            id: slotKey(day.id, meal.id),
+            label: day.label + " · " + meal.label,
+            detail: meal.recipe ? meal.recipe.title : COPY.empty,
+            action: action,
+          });
+        });
       });
       openSheet({
         mode: "assign",
         title: COPY.addToPlan,
-        hint: "«" + normalized.title + "» را برای کدام روز می‌خواهید؟",
+        hint: "«" + normalized.title + "» را برای کدام وعده می‌خواهید؟",
         choices: choices,
-        onChoice: function (dayId) {
-          var result = plan.assign(dayId, normalized.id);
+        onChoice: function (choiceId) {
+          var slot = parseSlotKey(choiceId);
+          if (!slot) return;
+          var result = plan.assign(slot.dayId, normalized.id, slot.mealId);
           render();
           reveal();
           if (!result.ok) return;
-          if (result.replaced) setStatus("شام " + result.label + " جایگزین شد.");
-          else setStatus("«" + result.recipe.title + "» برای " + result.label + " ثبت شد.");
+          setStatus(placedStatus(result));
         },
       });
     }
 
-    function openSwap(dayId) {
+    function openSwap(dayId, mealId) {
       syncLatest();
-      var day = null;
-      plan.week().forEach(function (item) {
-        if (item.id === dayId) day = item;
-      });
-      if (!day) return;
+      var found = findMeal(dayId, mealId || "dinner");
+      if (!found) return;
+      var day = found.day;
+      var meal = found.meal;
       var recipes = plan.recipes();
       if (!recipes.length) {
         openSheet({
           mode: "swap",
-          title: day.recipe ? COPY.swap : COPY.pick,
+          title: meal.recipe ? COPY.swap : COPY.pick,
           hint: COPY.noRecipes,
           choices: [],
           onChoice: function () {},
@@ -1204,7 +1476,7 @@
         return;
       }
       var choices = recipes.map(function (recipe) {
-        var same = day.recipe && day.recipe.id === recipe.id;
+        var same = meal.recipe && meal.recipe.id === recipe.id;
         var detail = "";
         if (!same && recipe.cost_toman) detail = formatApprox(recipe.cost_toman);
         return {
@@ -1214,28 +1486,27 @@
           action: same ? COPY.current : COPY.swap,
         };
       });
-      if (day.recipe) {
+      if (meal.recipe) {
         choices.push({ id: "clear", label: COPY.empty, detail: "", action: COPY.clear });
       }
       openSheet({
         mode: "swap",
-        title: day.recipe ? COPY.swap : COPY.pick,
-        hint: day.recipe
-          ? "شام " + day.label + " را عوض کنید."
-          : "برای شام " + day.label + " یک غذا انتخاب کنید.",
+        title: meal.recipe ? COPY.swap : COPY.pick,
+        hint: meal.recipe
+          ? meal.label + " " + day.label + " را عوض کنید."
+          : "برای " + meal.label + " " + day.label + " یک غذا انتخاب کنید.",
         choices: choices,
         onChoice: function (choice) {
           if (choice === "clear") {
-            var cleared = plan.clearDay(dayId);
+            var cleared = plan.clearDay(dayId, meal.id);
             render();
-            if (cleared.ok) setStatus("شام " + cleared.label + " خالی شد.");
+            if (cleared.ok) setStatus(cleared.mealLabel + " " + cleared.label + " خالی شد.");
             return;
           }
-          var result = plan.assign(dayId, choice);
+          var result = plan.assign(dayId, choice, meal.id);
           render();
           if (!result.ok) return;
-          if (result.replaced) setStatus("شام " + result.label + " جایگزین شد.");
-          else setStatus("«" + result.recipe.title + "» برای " + result.label + " ثبت شد.");
+          setStatus(placedStatus(result));
         },
       });
     }
@@ -1370,8 +1641,8 @@
         hint: COPY.exportHint,
         share: true,
         choices: [
-          { id: "print", label: COPY.print, detail: "پوستر A4، روز و وعده", action: COPY.print },
-          { id: "download", label: COPY.download, detail: "روزها و نام غذاها", action: "دانلود" },
+          { id: "print", label: COPY.print, detail: "پوستر A4، روز و سه وعده", action: COPY.print },
+          { id: "download", label: COPY.download, detail: "روزها و هر سه وعده", action: "دانلود" },
         ],
         onChoice: function (choice) {
           if (choice === "print") doPrint();
@@ -1424,7 +1695,9 @@
       plan.remember(list);
       render();
       var hasMeal = plan.week().some(function (day) {
-        return !!(day && day.recipe);
+        return day.meals.some(function (meal) {
+          return !!meal.recipe;
+        });
       });
       if (!hasMeal || !list.length) return;
       if (detail.full) setStatus(COPY.fullIdeas);
@@ -1437,17 +1710,15 @@
       var eaten = matchTestId(target, "day-eaten");
       if (eaten) {
         var eatenDay = nodeValue(eaten, "day", "data-day");
-        var current = null;
-        plan.week().forEach(function (day) {
-          if (day.id === eatenDay) current = day;
-        });
-        var result = plan.setUsed(eatenDay, !(current && current.used));
+        var eatenMeal = nodeValue(eaten, "meal", "data-meal") || "dinner";
+        var current = findMeal(eatenDay, eatenMeal);
+        var result = plan.setUsed(eatenDay, !(current && current.meal.used), eatenMeal);
         render();
         if (!result.ok) return;
         if (result.used) {
-          setStatus("شام " + result.label + " خورده شد. پیشنهاد بعدی آن را تکرار نمی‌کند.");
+          setStatus(result.mealLabel + " " + result.label + " خورده شد. پیشنهاد بعدی آن را تکرار نمی‌کند.");
         } else {
-          setStatus("شام " + result.label + " دوباره در پیشنهادها می‌آید.");
+          setStatus(result.mealLabel + " " + result.label + " دوباره در پیشنهادها می‌آید.");
         }
         return;
       }
@@ -1461,7 +1732,8 @@
       var dayButton = matchTestId(target, "day-swap") || matchTestId(target, "day-pick");
       if (dayButton) {
         var dayId = nodeValue(dayButton, "day", "data-day");
-        if (dayId) openSwap(dayId);
+        var mealId = nodeValue(dayButton, "meal", "data-meal") || "dinner";
+        if (dayId) openSwap(dayId, mealId);
         return;
       }
       var shareHit = matchTestId(target, "plan-share-copy");
@@ -1564,6 +1836,7 @@
   var api = {
     COPY: COPY,
     DAYS: DAYS,
+    MEALS: MEALS,
     STORAGE_KEY: STORAGE_KEY,
     SYNC_META_KEY: SYNC_META_KEY,
     MAX_RECIPES: MAX_RECIPES,

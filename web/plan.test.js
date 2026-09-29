@@ -139,6 +139,26 @@ function dayCards(doc) {
   return doc.nodes["week-grid"].children;
 }
 
+function mealOf(day, mealId = "dinner") {
+  return day.meals.find((meal) => meal.id === mealId);
+}
+
+function allEmpty(days) {
+  return days.every((day) => day.meals.every((meal) => meal.recipe === null));
+}
+
+function mealSlots(card) {
+  return card.children.filter((child) => child.dataset.testid === "meal-slot");
+}
+
+function slotOf(card, mealId) {
+  return mealSlots(card).find((child) => child.dataset.meal === mealId);
+}
+
+function childByTestId(node, testid) {
+  return node.children.find((child) => child.dataset.testid === testid);
+}
+
 function mountPlan(options) {
   const model = options.model || fresh();
   const doc = fakeDocument();
@@ -190,23 +210,27 @@ test("the Persian week runs Saturday through Friday", () => {
 test("empty days stay خالی until a recipe is assigned or swapped", () => {
   const model = fresh();
   assert.equal(model.week().length, 7);
-  model.week().forEach((day) => assert.equal(day.recipe, null));
+  assert.equal(allEmpty(model.week()), true);
+  model.week().forEach((day) => assert.equal(day.meals.length, 3));
 
-  const assigned = model.assign("sat", THREE[0]);
+  const assigned = model.assign("sat", THREE[0], "breakfast");
   assert.equal(assigned.ok, true);
+  assert.equal(assigned.mealLabel, "صبحانه");
   assert.equal(assigned.replaced, false);
-  assert.equal(model.week()[0].recipe.title, "عدس‌پلو");
-  assert.equal(model.week()[1].recipe, null);
+  assert.equal(mealOf(model.week()[0], "breakfast").recipe.title, "عدس‌پلو");
+  assert.equal(mealOf(model.week()[0], "dinner").recipe, null);
+  assert.equal(mealOf(model.week()[1], "breakfast").recipe, null);
 
-  const swapped = model.assign("sat", THREE[1]);
+  const swapped = model.assign("sat", THREE[1], "breakfast");
   assert.equal(swapped.replaced, true);
-  assert.equal(model.week()[0].recipe.title, "لوبیا پلو");
+  assert.equal(mealOf(model.week()[0], "breakfast").recipe.title, "لوبیا پلو");
 
-  const cleared = model.clearDay("sat");
+  const cleared = model.clearDay("sat", "breakfast");
   assert.equal(cleared.cleared, true);
-  assert.equal(model.week()[0].recipe, null);
-  assert.equal(model.assign("nope", THREE[0]).ok, false);
-  assert.equal(model.assign("sun", { title: "  " }).ok, false);
+  assert.equal(mealOf(model.week()[0], "breakfast").recipe, null);
+  assert.equal(model.assign("nope", THREE[0], "lunch").ok, false);
+  assert.equal(model.assign("sun", { title: "  " }, "lunch").ok, false);
+  assert.equal(model.assign("sun", THREE[0], "snack").ok, false);
 });
 
 test("Arabic and Persian spellings of one title stay one recipe", () => {
@@ -217,29 +241,33 @@ test("Arabic and Persian spellings of one title stay one recipe", () => {
   assert.equal(model.recipes().length, 1);
   assert.equal(model.recipes()[0].title, "کباب");
   assert.equal(model.recipes()[0].cost_toman, 2000);
-  assert.equal(model.week()[6].recipe.title, "کباب");
-  assert.equal(model.week()[6].recipe.cost_toman, 2000);
+  assert.equal(mealOf(model.week()[6]).recipe.title, "کباب");
+  assert.equal(mealOf(model.week()[6]).recipe.cost_toman, 2000);
+  assert.equal(mealOf(model.week()[6], "breakfast").recipe, null);
 });
 
-test("building the week fills only empty days, repeating recipes", () => {
+test("building the week fills empty meal slots and varies dishes within a day", () => {
   const model = fresh();
   assert.equal(model.fillEmpty().filled, 0);
   model.remember(THREE);
-  model.assign("sat", THREE[2]);
+  model.assign("sat", THREE[2], "dinner");
   const result = model.fillEmpty();
-  assert.equal(result.filled, 6);
-  const titles = model.week().map((day) => day.recipe.title);
-  assert.deepEqual(titles, [
-    "ماست و خیار",
-    "عدس‌پلو",
-    "لوبیا پلو",
-    "ماست و خیار",
-    "عدس‌پلو",
-    "لوبیا پلو",
-    "ماست و خیار",
-  ]);
+  assert.equal(result.filled, 20);
+  assert.equal(mealOf(model.week()[0], "dinner").recipe.title, "ماست و خیار");
+  model.week().forEach((day) => {
+    const titles = day.meals.map((meal) => meal.recipe.title);
+    assert.equal(titles.length, 3);
+    assert.equal(new Set(titles).size, 3);
+  });
   assert.equal(model.fillEmpty().filled, 0);
-  assert.equal(model.spend(), 180000 + 160000 + 70000 + 180000 + 160000 + 70000 + 70000);
+  assert.equal(model.spend(), 7 * (180000 + 160000 + 70000));
+
+  const single = fresh();
+  single.remember([THREE[0]]);
+  assert.equal(single.fillEmpty().filled, 21);
+  single.week().forEach((day) => {
+    day.meals.forEach((meal) => assert.equal(meal.recipe.title, "عدس‌پلو"));
+  });
 });
 
 test("replace restores recipes, slots, and eaten days without a remote write", () => {
@@ -258,11 +286,13 @@ test("replace restores recipes, slots, and eaten days without a remote write", (
       used: { sat: true },
     });
     assert.equal(calls, 0);
-    assert.equal(model.week()[0].recipe.title, "عدس‌پلو");
-    assert.equal(model.week()[0].used, true);
+    assert.equal(mealOf(model.week()[0]).recipe.title, "عدس‌پلو");
+    assert.equal(mealOf(model.week()[0]).used, true);
+    assert.equal(mealOf(model.week()[0], "breakfast").recipe, null);
     const again = plan.createPlan({ storage });
-    assert.equal(again.week()[0].used, true);
-    assert.equal(again.snapshot().slots.sat, "r:عدسپلو");
+    assert.equal(mealOf(again.week()[0]).used, true);
+    assert.equal(again.snapshot().slots.sat.dinner, "r:عدسپلو");
+    assert.equal(again.snapshot().slots.sat.breakfast, null);
   } finally {
     delete global.AshpazPersist;
   }
@@ -275,12 +305,10 @@ test("a share event names an empty week without wiping a remote redraw", () => {
     detail: { source: "share", shared: { ok: true, empty: true } },
   });
   assert.equal(view.doc.nodes["plan-status"].textContent, COPY.shareEmptyOpened);
-  assert.equal(view.model.week()[0].recipe.title, "عدس‌پلو");
+  assert.equal(mealOf(view.model.week()[0]).recipe.title, "عدس‌پلو");
   fire(view.doc, "ashpaz-plan-changed", { detail: { source: "remote" } });
-  assert.equal(
-    dayCards(view.doc)[0].children.find((node) => node.dataset.testid === "day-meal").textContent,
-    "عدس‌پلو",
-  );
+  assert.equal(childByTestId(slotOf(dayCards(view.doc)[0], "dinner"), "day-meal").textContent, "عدس‌پلو");
+  assert.equal(childByTestId(slotOf(dayCards(view.doc)[0], "breakfast"), "day-meal").textContent, "خالی");
 });
 
 test("a remote plan event redraws the week", () => {
@@ -291,8 +319,9 @@ test("a remote plan event redraws the week", () => {
     used: { sat: true },
   });
   fire(view.doc, "ashpaz-plan-changed", { detail: { source: "remote" } });
-  const meal = dayCards(view.doc)[0].children.find((node) => node.dataset.testid === "day-meal");
+  const meal = childByTestId(slotOf(dayCards(view.doc)[0], "dinner"), "day-meal");
   assert.equal(meal.textContent, "عدس‌پلو — خورده شد");
+  assert.equal(childByTestId(slotOf(dayCards(view.doc)[0], "lunch"), "day-meal").textContent, "خالی");
 });
 
 test("the plan is remembered in localStorage and ignores a broken save", () => {
@@ -300,12 +329,12 @@ test("the plan is remembered in localStorage and ignores a broken save", () => {
   const first = plan.createPlan({ storage });
   first.assign("sun", THREE[0]);
   const second = plan.createPlan({ storage });
-  assert.equal(second.week()[1].recipe.title, "عدس‌پلو");
-  assert.equal(second.week()[0].recipe, null);
+  assert.equal(mealOf(second.week()[1]).recipe.title, "عدس‌پلو");
+  assert.equal(mealOf(second.week()[0]).recipe, null);
 
   storage.setItem(STORAGE_KEY, "{");
   const broken = plan.createPlan({ storage });
-  assert.equal(broken.week().every((day) => day.recipe === null), true);
+  assert.equal(allEmpty(broken.week()), true);
 
   storage.setItem(
     STORAGE_KEY,
@@ -316,7 +345,26 @@ test("the plan is remembered in localStorage and ignores a broken save", () => {
   );
   const dangling = plan.createPlan({ storage });
   assert.equal(dangling.recipes()[0].title, "عدس‌پلو");
-  assert.equal(dangling.week()[0].recipe, null);
+  assert.equal(mealOf(dangling.week()[0]).recipe, null);
+});
+
+test("an older dinner-only save loads as شام and leaves breakfast and lunch empty", () => {
+  const storage = plan.createMemoryStorage();
+  storage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      recipes: [{ title: "عدس‌پلو", ingredients: ["برنج"], steps: ["بپز"], cost_toman: 10 }],
+      slots: { sat: "r:عدسپلو" },
+      used: { sat: true },
+    }),
+  );
+  const model = plan.createPlan({ storage });
+  assert.equal(mealOf(model.week()[0], "dinner").recipe.title, "عدس‌پلو");
+  assert.equal(mealOf(model.week()[0], "dinner").used, true);
+  assert.equal(mealOf(model.week()[0], "breakfast").recipe, null);
+  assert.equal(mealOf(model.week()[0], "lunch").recipe, null);
+  assert.equal(model.snapshot().slots.sat.dinner, "r:عدسپلو");
+  assert.equal(model.snapshot().used.sat.breakfast, false);
 });
 
 test("assigned recipes are kept when the catalog is trimmed", () => {
@@ -328,7 +376,7 @@ test("assigned recipes are kept when the catalog is trimmed", () => {
   }
   model.remember(many);
   assert.ok(model.recipes().length <= MAX_RECIPES);
-  assert.equal(model.week()[0].recipe.title, "ثابت");
+  assert.equal(mealOf(model.week()[0]).recipe.title, "ثابت");
   assert.equal(
     model.recipes().some((recipe) => recipe.title === "ثابت"),
     true,
@@ -353,68 +401,73 @@ test("markdown lists every day and the budget line stays soft", () => {
   const text = model.markdown(1500000);
   assert.match(text, /^# برنامه ۷ روزه/);
   DAYS.forEach((day) => assert.match(text, new RegExp("\\*\\*" + day.label + ":\\*\\*")));
-  assert.match(text, /\*\*شنبه:\*\* عدس‌پلو — حدود ۱۸۰٬۰۰۰ تومان/);
-  assert.match(text, /\*\*یکشنبه:\*\* خالی/);
-  assert.match(text, /جمع شام‌ها حدود ۱۸۰٬۰۰۰ تومان از بودجه ۱٬۵۰۰٬۰۰۰ تومان/);
+  assert.match(text, /\*\*شنبه:\*\*/);
+  assert.match(text, /\*\*شام:\*\* عدس‌پلو — حدود ۱۸۰٬۰۰۰ تومان/);
+  assert.match(text, /\*\*صبحانه:\*\* خالی/);
+  assert.match(text, /\*\*ناهار:\*\* خالی/);
+  assert.match(text, /\*\*یکشنبه:\*\*/);
+  assert.match(text, /جمع وعده‌ها حدود ۱۸۰٬۰۰۰ تومان از بودجه ۱٬۵۰۰٬۰۰۰ تومان/);
   assert.equal(recipes.formatCostToman(180000), "حدود ۱۸۰٬۰۰۰ تومان");
 });
 
-test("the week renders seven days and an empty placeholder", () => {
+test("the week renders seven days and three meal slots", () => {
   const doc = fakeDocument();
   const model = fresh();
-  model.assign("mon", THREE[1]);
+  model.assign("mon", THREE[1], "lunch");
   plan.renderWeek(doc, doc.nodes["week-grid"], model);
   const cards = dayCards(doc);
   assert.equal(cards.length, 7);
   assert.equal(cards[0].children[0].textContent, "شنبه");
-  assert.equal(cards[0].queryMeal || cards[0].children.find((child) => child.dataset.testid === "day-meal").textContent, "خالی");
-  assert.equal(cards[0].children.find((child) => child.tag === "button").textContent, COPY.pick);
-  assert.equal(cards[2].children.find((child) => child.dataset.testid === "day-meal").textContent, "لوبیا پلو");
-  assert.equal(cards[2].children.find((child) => child.tag === "button").textContent, COPY.swap);
+  assert.equal(mealSlots(cards[0]).length, 3);
+  assert.deepEqual(
+    mealSlots(cards[0]).map((slot) => childByTestId(slot, "meal-label").textContent),
+    ["صبحانه", "ناهار", "شام"],
+  );
+  assert.equal(childByTestId(slotOf(cards[0], "breakfast"), "day-meal").textContent, "خالی");
+  assert.equal(childByTestId(slotOf(cards[0], "breakfast"), "day-pick").textContent, COPY.pick);
+  assert.equal(childByTestId(slotOf(cards[2], "lunch"), "day-meal").textContent, "لوبیا پلو");
+  assert.equal(childByTestId(slotOf(cards[2], "lunch"), "day-swap").textContent, COPY.swap);
+  assert.equal(childByTestId(slotOf(cards[2], "dinner"), "day-meal").textContent, "خالی");
   assert.equal(cards[6].children[0].textContent, "جمعه");
 });
 
-test("برنامه ۷ روزه fills the grid from the recipes on the page", () => {
+test("برنامه ۷ روزه fills every meal and does not repeat one dish across a day", () => {
   const view = mountPlan({ latest: THREE });
   assert.equal(dayCards(view.doc).length, 7);
   dayCards(view.doc).forEach((card) => {
-    assert.equal(card.children.find((child) => child.dataset.testid === "day-meal").textContent, "خالی");
+    mealSlots(card).forEach((slot) => {
+      assert.equal(childByTestId(slot, "day-meal").textContent, "خالی");
+    });
   });
 
   view.doc.nodes["build-plan"].listeners.click();
   assert.equal(view.doc.nodes["plan-status"].textContent, COPY.filledWeek);
-  const meals = dayCards(view.doc).map(
-    (card) => card.children.find((child) => child.dataset.testid === "day-meal").textContent,
-  );
-  assert.deepEqual(meals, [
-    "عدس‌پلو",
-    "لوبیا پلو",
-    "ماست و خیار",
-    "عدس‌پلو",
-    "لوبیا پلو",
-    "ماست و خیار",
-    "عدس‌پلو",
-  ]);
   dayCards(view.doc).forEach((card) => {
-    assert.equal(card.children.find((child) => child.tag === "button").textContent, COPY.swap);
+    const titles = mealSlots(card).map((slot) => childByTestId(slot, "day-meal").textContent);
+    assert.deepEqual(titles, ["عدس‌پلو", "لوبیا پلو", "ماست و خیار"]);
+    mealSlots(card).forEach((slot) => {
+      assert.equal(childByTestId(slot, "day-swap").textContent, COPY.swap);
+    });
   });
 
   view.doc.nodes["build-plan"].listeners.click();
   assert.equal(view.doc.nodes["plan-status"].textContent, COPY.weekFull);
 });
 
-test("without recipes the plan action leaves every day fillable and empty", () => {
+test("without recipes the plan action leaves every meal fillable and empty", () => {
   const view = mountPlan({ latest: [] });
   view.doc.nodes["build-plan"].listeners.click();
   assert.equal(view.doc.nodes["plan-status"].textContent, COPY.needRecipes);
   assert.equal(view.doc.nodes["plan-sheet"].hidden, true);
   dayCards(view.doc).forEach((card) => {
-    assert.equal(card.children.find((child) => child.dataset.testid === "day-meal").textContent, "خالی");
-    assert.equal(card.children.find((child) => child.tag === "button").dataset.testid, "day-pick");
+    mealSlots(card).forEach((slot) => {
+      assert.equal(childByTestId(slot, "day-meal").textContent, "خالی");
+      assert.equal(childByTestId(slot, "day-pick").dataset.testid, "day-pick");
+    });
   });
 });
 
-test("افزودن به برنامه assigns a card, then جایگزین swaps or clears the day", () => {
+test("افزودن به برنامه assigns one meal, then جایگزین swaps or clears that slot", () => {
   const view = mountPlan({ latest: THREE });
   const add = element("button");
   add.dataset.testid = "add-to-plan";
@@ -425,54 +478,51 @@ test("افزودن به برنامه assigns a card, then جایگزین swaps o
   assert.equal(view.doc.nodes["plan-sheet"].dataset.mode, "assign");
   assert.equal(view.doc.nodes["plan-sheet-title"].textContent, COPY.addToPlan);
   assert.match(view.doc.nodes["plan-sheet-hint"].textContent, /عدس‌پلو/);
+  assert.match(view.doc.nodes["plan-sheet-hint"].textContent, /وعده/);
   const days = sheetChoices(view.doc);
-  assert.equal(days.length, 7);
-  assert.equal(days[0].dataset.choice, "sat");
+  assert.equal(days.length, 21);
+  assert.equal(days[0].dataset.choice, "sat:breakfast");
+  assert.equal(days[0].children[0].textContent, "شنبه · صبحانه");
   assert.equal(days[0].children[1].textContent, "خالی");
-  assert.equal(days[3].children[0].textContent, "سه‌شنبه");
-  click(view.doc, days[0]);
+  assert.equal(days[2].dataset.choice, "sat:dinner");
+  assert.equal(days[11].children[0].textContent, "سه‌شنبه · شام");
+  click(view.doc, days[2]);
 
   assert.equal(view.doc.nodes["plan-sheet"].hidden, true);
   assert.match(view.doc.nodes["plan-status"].textContent, /عدس‌پلو/);
+  assert.match(view.doc.nodes["plan-status"].textContent, /شام/);
   assert.match(view.doc.nodes["plan-status"].textContent, /شنبه/);
-  assert.equal(
-    dayCards(view.doc)[0].children.find((child) => child.dataset.testid === "day-meal").textContent,
-    "عدس‌پلو",
-  );
+  assert.equal(childByTestId(slotOf(dayCards(view.doc)[0], "dinner"), "day-meal").textContent, "عدس‌پلو");
+  assert.equal(childByTestId(slotOf(dayCards(view.doc)[0], "breakfast"), "day-meal").textContent, "خالی");
 
-  click(view.doc, dayCards(view.doc)[0].children.find((child) => child.tag === "button"));
+  click(view.doc, childByTestId(slotOf(dayCards(view.doc)[0], "dinner"), "day-swap"));
   assert.equal(view.doc.nodes["plan-sheet"].dataset.mode, "swap");
   assert.equal(view.doc.nodes["plan-sheet-title"].textContent, COPY.swap);
   const swaps = sheetChoices(view.doc);
   assert.equal(swaps.length, 4);
   const other = swaps.find((button) => button.children[0].textContent === "لوبیا پلو");
   click(view.doc, other);
-  assert.equal(
-    dayCards(view.doc)[0].children.find((child) => child.dataset.testid === "day-meal").textContent,
-    "لوبیا پلو",
-  );
+  assert.equal(childByTestId(slotOf(dayCards(view.doc)[0], "dinner"), "day-meal").textContent, "لوبیا پلو");
   assert.match(view.doc.nodes["plan-status"].textContent, /جایگزین/);
 
-  click(view.doc, dayCards(view.doc)[0].children.find((child) => child.tag === "button"));
+  click(view.doc, childByTestId(slotOf(dayCards(view.doc)[0], "dinner"), "day-swap"));
   const clear = sheetChoices(view.doc).find((button) => button.dataset.choice === "clear");
   assert.equal(clear.children[0].textContent, "خالی");
   click(view.doc, clear);
-  assert.equal(
-    dayCards(view.doc)[0].children.find((child) => child.dataset.testid === "day-meal").textContent,
-    "خالی",
-  );
+  assert.equal(childByTestId(slotOf(dayCards(view.doc)[0], "dinner"), "day-meal").textContent, "خالی");
 });
 
-test("a click on the choice label still selects that day", () => {
+test("a click on the choice label still selects that meal slot", () => {
   const view = mountPlan({ latest: THREE });
   const add = element("button");
   add.dataset.testid = "add-to-plan";
   add.dataset.recipeIndex = "2";
   click(view.doc, add);
   const label = sheetChoices(view.doc)[4].children[0];
-  assert.equal(label.textContent, "چهارشنبه");
+  assert.equal(label.textContent, "یکشنبه · ناهار");
   click(view.doc, label);
-  assert.equal(view.model.week()[4].recipe.title, "ماست و خیار");
+  assert.equal(mealOf(view.model.week()[1], "lunch").recipe.title, "ماست و خیار");
+  assert.equal(mealOf(view.model.week()[1], "dinner").recipe, null);
 });
 
 test("چاپ / خروجی prints and downloads Persian day assignments", () => {
@@ -495,7 +545,9 @@ test("چاپ / خروجی prints and downloads Persian day assignments", () => {
   assert.equal(view.downloads.length, 1);
   assert.equal(view.downloads[0].filename, COPY.filename);
   assert.match(view.downloads[0].text, /# برنامه ۷ روزه/);
-  assert.match(view.downloads[0].text, /\*\*شنبه:\*\* عدس‌پلو/);
+  assert.match(view.downloads[0].text, /\*\*شنبه:\*\*/);
+  assert.match(view.downloads[0].text, /\*\*شام:\*\* عدس‌پلو/);
+  assert.match(view.downloads[0].text, /\*\*صبحانه:\*\*/);
   assert.match(view.downloads[0].text, /\*\*جمعه:\*\*/);
   assert.equal(view.downloads[0].text.includes("GAP_CODE"), false);
 
@@ -525,72 +577,74 @@ test("escape, backdrop, and انصراف close the sheet without changing the we
   view.doc.nodes["plan-export"].listeners.click();
   view.doc.nodes["plan-sheet-cancel"].listeners.click();
   assert.equal(view.doc.nodes["plan-sheet"].hidden, true);
-  assert.equal(view.model.week().every((day) => day.recipe === null), true);
+  assert.equal(allEmpty(view.model.week()), true);
 });
 
-test("خورده شد marks a dinner, survives reload, and frees the chip count", () => {
+test("خورده شد marks one meal, survives reload, and frees the chip count", () => {
   const storage = plan.createMemoryStorage();
   const model = plan.createPlan({ storage });
-  model.assign("sat", THREE[0]);
-  model.assign("sun", THREE[2]);
-  assert.equal(model.setUsed("sat", true).ok, true);
-  assert.equal(model.setUsed("fri", true).ok, false);
-  assert.equal(model.week()[0].used, true);
-  assert.equal(model.week()[1].used, false);
+  model.assign("sat", THREE[0], "dinner");
+  model.assign("sat", THREE[1], "breakfast");
+  model.assign("sun", THREE[2], "lunch");
+  assert.equal(model.setUsed("sat", true, "dinner").ok, true);
+  assert.equal(model.setUsed("fri", true, "breakfast").ok, false);
+  assert.equal(mealOf(model.week()[0], "dinner").used, true);
+  assert.equal(mealOf(model.week()[0], "breakfast").used, false);
+  assert.equal(mealOf(model.week()[1], "lunch").used, false);
   assert.deepEqual(model.usedTitles(), ["عدس‌پلو"]);
   assert.deepEqual(model.remainingChips(["برنج", "عدس", "پیاز", "ماست"]), ["پیاز", "ماست"]);
-  assert.match(model.markdown(null), /\*\*شنبه:\*\* عدس‌پلو — خورده شد/);
+  assert.match(model.markdown(null), /\*\*شام:\*\* عدس‌پلو — خورده شد/);
+  assert.match(model.markdown(null), /\*\*صبحانه:\*\* لوبیا پلو/);
 
   const again = plan.createPlan({ storage });
-  assert.equal(again.week()[0].used, true);
-  assert.equal(again.week()[0].recipe.title, "عدس‌پلو");
-  again.assign("sat", THREE[1]);
-  assert.equal(again.week()[0].used, false);
-  again.setUsed("sat", true);
-  again.clearDay("sat");
-  assert.equal(again.week()[0].used, false);
-  assert.equal(again.week()[0].recipe, null);
+  assert.equal(mealOf(again.week()[0], "dinner").used, true);
+  assert.equal(mealOf(again.week()[0], "dinner").recipe.title, "عدس‌پلو");
+  assert.equal(mealOf(again.week()[0], "breakfast").used, false);
+  again.assign("sat", THREE[1], "dinner");
+  assert.equal(mealOf(again.week()[0], "dinner").used, false);
+  again.setUsed("sat", true, "dinner");
+  again.clearDay("sat", "dinner");
+  assert.equal(mealOf(again.week()[0], "dinner").used, false);
+  assert.equal(mealOf(again.week()[0], "dinner").recipe, null);
+  assert.equal(mealOf(again.week()[0], "breakfast").recipe.title, "لوبیا پلو");
 
   const measured = plan.createPlan({ storage: plan.createMemoryStorage() });
-  measured.assign("mon", dish("کتلت", ["۲ عدد پیاز متوسط", "روغن زیتون"], ["بپز"], 10));
-  measured.setUsed("mon", true);
+  measured.assign("mon", dish("کتلت", ["۲ عدد پیاز متوسط", "روغن زیتون"], ["بپز"], 10), "lunch");
+  measured.setUsed("mon", true, "lunch");
   assert.deepEqual(measured.remainingChips(["پیاز", "روغن", "ماست"]), ["روغن", "ماست"]);
 });
 
-test("the eaten toggle stays on the day and swap clears it", () => {
+test("the eaten toggle stays on that meal and swap clears it", () => {
   const view = mountPlan({ latest: THREE });
-  view.model.assign("sat", THREE[0]);
+  view.model.assign("sat", THREE[0], "lunch");
   view.doc.nodes["build-plan"].listeners.click();
-  const eaten = dayCards(view.doc)[0].children.find((child) => child.dataset.testid === "day-eaten");
+  const lunch = slotOf(dayCards(view.doc)[0], "lunch");
+  const eaten = childByTestId(lunch, "day-eaten");
   assert.equal(eaten.textContent, COPY.eaten);
   assert.equal(eaten.getAttribute("aria-pressed"), "false");
   click(view.doc, eaten);
   assert.equal(view.doc.nodes["plan-sheet"].hidden, true);
-  assert.equal(view.model.week()[0].used, true);
-  const marked = dayCards(view.doc)[0];
+  assert.equal(mealOf(view.model.week()[0], "lunch").used, true);
+  assert.equal(mealOf(view.model.week()[0], "dinner").used, false);
+  const marked = slotOf(dayCards(view.doc)[0], "lunch");
   assert.match(marked.className, /is-used/);
-  assert.match(
-    marked.children.find((child) => child.dataset.testid === "day-meal").textContent,
-    /خورده شد/,
-  );
-  assert.equal(
-    marked.children.find((child) => child.dataset.testid === "day-eaten").getAttribute("aria-pressed"),
-    "true",
-  );
+  assert.match(childByTestId(marked, "day-meal").textContent, /خورده شد/);
+  assert.equal(childByTestId(marked, "day-eaten").getAttribute("aria-pressed"), "true");
+  assert.match(view.doc.nodes["plan-status"].textContent, /ناهار/);
   assert.match(view.doc.nodes["plan-status"].textContent, /خورده شد/);
   assert.match(view.doc.nodes["plan-status"].textContent, /تکرار نمی‌کند/);
 
-  click(view.doc, marked.children.find((child) => child.dataset.testid === "day-swap"));
+  click(view.doc, childByTestId(marked, "day-swap"));
   const other = sheetChoices(view.doc).find((button) => button.children[0].textContent === "لوبیا پلو");
   click(view.doc, other);
-  assert.equal(view.model.week()[0].used, false);
-  assert.equal(view.model.week()[0].recipe.title, "لوبیا پلو");
+  assert.equal(mealOf(view.model.week()[0], "lunch").used, false);
+  assert.equal(mealOf(view.model.week()[0], "lunch").recipe.title, "لوبیا پلو");
 });
 
-test("new suggestions stay beside eaten dinners and do not clear them", () => {
+test("new suggestions stay beside eaten meals and do not clear them", () => {
   const view = mountPlan({ latest: [] });
-  view.model.assign("sat", THREE[0]);
-  view.model.setUsed("sat", true);
+  view.model.assign("sat", THREE[0], "dinner");
+  view.model.setUsed("sat", true, "dinner");
   fire(view.doc, "ashpaz-recipes", {
     detail: {
       recipes: [
@@ -601,8 +655,8 @@ test("new suggestions stay beside eaten dinners and do not clear them", () => {
       skip: ["عدس‌پلو"],
     },
   });
-  assert.equal(view.model.week()[0].recipe.title, "عدس‌پلو");
-  assert.equal(view.model.week()[0].used, true);
+  assert.equal(mealOf(view.model.week()[0], "dinner").recipe.title, "عدس‌پلو");
+  assert.equal(mealOf(view.model.week()[0], "dinner").used, true);
   assert.equal(
     view.model.recipes().some((recipe) => recipe.title === "کوکو سبزی"),
     true,
@@ -612,8 +666,8 @@ test("new suggestions stay beside eaten dinners and do not clear them", () => {
   fire(view.doc, "ashpaz-recipes", {
     detail: { recipes: [dish("آبگوشت", ["لوبیا"], ["بپز"], 1000)], full: true },
   });
-  assert.equal(view.model.week()[0].used, true);
-  assert.equal(view.model.week()[0].recipe.title, "عدس‌پلو");
+  assert.equal(mealOf(view.model.week()[0], "dinner").used, true);
+  assert.equal(mealOf(view.model.week()[0], "dinner").recipe.title, "عدس‌پلو");
   assert.equal(view.doc.nodes["plan-status"].textContent, COPY.fullIdeas);
 });
 
@@ -622,7 +676,8 @@ test("recipe events are stored for a later plan action", () => {
   fire(view.doc, "ashpaz-recipes", { detail: { recipes: THREE } });
   assert.equal(view.model.recipes().length, 3);
   view.doc.nodes["build-plan"].listeners.click();
-  assert.equal(view.model.week()[0].recipe.title, "عدس‌پلو");
+  assert.equal(mealOf(view.model.week()[0], "breakfast").recipe.title, "عدس‌پلو");
+  assert.equal(mealOf(view.model.week()[0], "dinner").recipe.title, "ماست و خیار");
 });
 
 test("the page, stylesheet, and image wire the plan without an API key", () => {
@@ -670,23 +725,27 @@ test("the page, stylesheet, and image wire the plan without an API key", () => {
 
 test("share encode and decode round-trip the week and drop secrets", () => {
   const model = fresh();
-  model.assign("sat", THREE[0]);
-  model.assign("tue", dish("لوبیا پلو", ["برنج", "۲۰۰ گرم گوشت"], ["لوبیا را بپز"], 160000));
-  model.setUsed("sat", true);
+  model.assign("sat", THREE[0], "dinner");
+  model.assign("sat", THREE[2], "breakfast");
+  model.assign("tue", dish("لوبیا پلو", ["برنج", "۲۰۰ گرم گوشت"], ["لوبیا را بپز"], 160000), "lunch");
+  model.setUsed("sat", true, "dinner");
   const snapshot = model.snapshot();
   snapshot.local_user_id = "local-user-demo1";
   snapshot.env = { POSTGRES_PASSWORD: "hunter2" };
   snapshot.recipes[0].api_key = "sk-live-secret";
   snapshot.recipes[0].ingredients = snapshot.recipes[0].ingredients.concat(["GAP_CODE_API_KEY=sk-should-not-leak"]);
-
   const token = plan.encodeShare(snapshot);
   const packed = JSON.parse(Buffer.from(token, "base64url").toString("utf8"));
-  assert.equal(packed.v, 1);
+  assert.equal(packed.v, 2);
   assert.equal(packed.days[0].id, "sat");
-  assert.equal(packed.days[0].title, "عدس‌پلو");
-  assert.equal(packed.days[0].used, true);
-  assert.equal(packed.days[0].cost, 180000);
-  assert.deepEqual(packed.days[0].ingredients, ["برنج", "عدس"]);
+  const satDinner = packed.days[0].meals.find((meal) => meal.meal === "dinner");
+  const satBreakfast = packed.days[0].meals.find((meal) => meal.meal === "breakfast");
+  assert.equal(satDinner.title, "عدس‌پلو");
+  assert.equal(satDinner.used, true);
+  assert.equal(satDinner.cost, 180000);
+  assert.deepEqual(satDinner.ingredients, ["برنج", "عدس"]);
+  assert.equal(satBreakfast.title, "ماست و خیار");
+  assert.equal(satBreakfast.used, undefined);
   assert.equal(JSON.stringify(packed).includes("GAP_CODE"), false);
   assert.equal(JSON.stringify(packed).includes("hunter2"), false);
   assert.equal(JSON.stringify(packed).includes("sk-live"), false);
@@ -700,13 +759,15 @@ test("share encode and decode round-trip the week and drop secrets", () => {
   const applied = again.applyShare(token);
   assert.equal(applied.ok, true);
   assert.equal(applied.empty, false);
-  assert.equal(again.week()[0].recipe.title, "عدس‌پلو");
-  assert.equal(again.week()[0].used, true);
-  assert.deepEqual(again.week()[0].recipe.steps, ["پیاز را تفت بده", "عدس را بپز"]);
-  assert.equal(again.week()[3].recipe.title, "لوبیا پلو");
-  assert.equal(again.week()[3].recipe.ingredients[1], "۲۰۰ گرم گوشت");
+  assert.equal(mealOf(again.week()[0], "dinner").recipe.title, "عدس‌پلو");
+  assert.equal(mealOf(again.week()[0], "dinner").used, true);
+  assert.equal(mealOf(again.week()[0], "breakfast").recipe.title, "ماست و خیار");
+  assert.equal(mealOf(again.week()[0], "breakfast").used, false);
+  assert.deepEqual(mealOf(again.week()[0], "dinner").recipe.steps, ["پیاز را تفت بده", "عدس را بپز"]);
+  assert.equal(mealOf(again.week()[3], "lunch").recipe.title, "لوبیا پلو");
+  assert.equal(mealOf(again.week()[3], "lunch").recipe.ingredients[1], "۲۰۰ گرم گوشت");
   assert.equal(again.week()[3].label, "سه‌شنبه");
-  assert.equal(again.week()[1].recipe, null);
+  assert.equal(mealOf(again.week()[1], "dinner").recipe, null);
   const list = shop.buildShoppingList(["برنج"], again.week());
   assert.equal(
     list.categories.some((group) => group.items.some((item) => item.name === "گوشت")),
@@ -742,7 +803,7 @@ test("a secret inside the share payload is refused and an empty week still reope
   const refused = model.applyShare(bad);
   assert.equal(refused.ok, false);
   assert.equal(refused.reason, "secret");
-  assert.equal(model.week()[6].recipe.title, "ماست و خیار");
+  assert.equal(mealOf(model.week()[6]).recipe.title, "ماست و خیار");
   assert.equal(plan.decodeShare(bad).plan, undefined);
 
   const emptyToken = plan.encodeShare({ recipes: [], slots: {}, used: {} });
@@ -752,7 +813,7 @@ test("a secret inside the share payload is refused and an empty week still reope
   const opened = emptyModel.applyShare(emptyToken);
   assert.equal(opened.ok, true);
   assert.equal(opened.empty, true);
-  assert.equal(emptyModel.week().every((day) => day.recipe === null), true);
+  assert.equal(allEmpty(emptyModel.week()), true);
   const meta = JSON.parse(storage.getItem(plan.SYNC_META_KEY));
   assert.ok(meta.planRev > meta.planSyncedRev);
   assert.equal(plan.decodeShare("@@@").ok, false);
@@ -765,7 +826,8 @@ test("a secret inside the share payload is refused and an empty week still reope
   const renamedModel = fresh();
   assert.equal(renamedModel.applyShare(renamed).ok, true);
   assert.equal(renamedModel.week()[3].label, "سه‌شنبه");
-  assert.equal(renamedModel.week()[3].recipe.title, "عدس‌پلو");
+  assert.equal(mealOf(renamedModel.week()[3], "dinner").recipe.title, "عدس‌پلو");
+  assert.equal(mealOf(renamedModel.week()[3], "breakfast").recipe, null);
 });
 
 test("poster outline names روز and وعده, including an empty week", () => {
@@ -781,20 +843,28 @@ test("poster outline names روز and وعده, including an empty week", () => 
   );
   emptyPoster.days.forEach((day) => {
     assert.equal(day.dayRole, "روز");
-    assert.equal(day.mealRole, "وعده");
-    assert.equal(day.mealLabel, "شام");
-    assert.equal(day.title, "خالی");
-    assert.equal(day.empty, true);
+    assert.equal(day.meals.length, 3);
+    assert.deepEqual(
+      day.meals.map((meal) => meal.mealLabel),
+      ["صبحانه", "ناهار", "شام"],
+    );
+    day.meals.forEach((meal) => {
+      assert.equal(meal.mealRole, "وعده");
+      assert.equal(meal.title, "خالی");
+      assert.equal(meal.empty, true);
+    });
   });
 
-  model.assign("thu", THREE[1]);
-  model.setUsed("thu", true);
+  model.assign("thu", THREE[1], "breakfast");
+  model.setUsed("thu", true, "breakfast");
   const poster = plan.posterOutline(model.week());
   assert.equal(poster.empty, false);
+  assert.equal(poster.range, "صبحانه، ناهار و شام، از شنبه تا جمعه");
   assert.equal(poster.days[5].dayLabel, "پنجشنبه");
-  assert.equal(poster.days[5].title, "لوبیا پلو");
-  assert.equal(poster.days[5].eaten, true);
-  assert.equal(poster.days[0].title, "خالی");
+  assert.equal(poster.days[5].meals[0].title, "لوبیا پلو");
+  assert.equal(poster.days[5].meals[0].eaten, true);
+  assert.equal(poster.days[5].meals[2].title, "خالی");
+  assert.equal(poster.days[0].meals[2].title, "خالی");
 });
 
 test("کپی لینک copies a hash the page can reopen, and an empty plan says so", () => {
@@ -827,7 +897,7 @@ test("کپی لینک copies a hash the page can reopen, and an empty plan says 
   assert.equal(view.doc.nodes["plan-share-box"].hidden, false);
   assert.equal(view.doc.nodes["plan-share-url"].value, copied[0]);
   const printChoice = sheetChoices(view.doc).find((button) => button.dataset.choice === "print");
-  assert.match(printChoice.children[1].textContent, /روز و وعده/);
+  assert.match(printChoice.children[1].textContent, /روز و سه وعده/);
 
   const token = copied[0].split("#p=")[1];
   const other = fresh();
@@ -850,7 +920,7 @@ test("کپی لینک copies a hash the page can reopen, and an empty plan says 
   assert.equal(incoming.hash, "");
   assert.equal(doc.nodes["plan-status"].textContent, COPY.shareEmptyOpened);
   assert.equal(doc.nodes["plan-empty"].hidden, false);
-  assert.equal(other.week().every((day) => day.recipe === null), true);
+  assert.equal(allEmpty(other.week()), true);
 
   view.doc.nodes["build-plan"].listeners.click();
   assert.equal(view.doc.nodes["plan-empty"].hidden, true);
@@ -859,8 +929,9 @@ test("کپی لینک copies a hash the page can reopen, and an empty plan says 
   filled.push(copied[copied.length - 1]);
   const reopened = fresh();
   assert.equal(reopened.applyShare(filled[0].split("#p=")[1]).ok, true);
-  assert.equal(reopened.week()[0].recipe.title, "عدس‌پلو");
-  assert.equal(reopened.week()[6].recipe.title, "عدس‌پلو");
+  assert.equal(mealOf(reopened.week()[0], "breakfast").recipe.title, "عدس‌پلو");
+  assert.equal(mealOf(reopened.week()[0], "lunch").recipe.title, "لوبیا پلو");
+  assert.equal(mealOf(reopened.week()[6], "dinner").recipe.title, "ماست و خیار");
 });
 
 test("a failed copy leaves the share field selected, and a bad link keeps the week", () => {
@@ -889,7 +960,7 @@ test("a failed copy leaves the share field selected, and a bad link keeps the we
   assert.match(doc.nodes["plan-share-url"].value, /#p=/);
   click(doc, doc.nodes["plan-share-copy"]);
   assert.equal(doc.nodes["plan-sheet"].hidden, false);
-  assert.equal(view.model.week()[1].recipe.title, "لوبیا پلو");
+  assert.equal(mealOf(view.model.week()[1]).recipe.title, "لوبیا پلو");
 
   const kept = fresh();
   kept.assign("mon", THREE[0]);
@@ -904,6 +975,6 @@ test("a failed copy leaves the share field selected, and a bad link keeps the we
     },
   });
   assert.equal(badDoc.nodes["plan-status"].textContent, COPY.shareBad);
-  assert.equal(kept.week()[2].recipe.title, "عدس‌پلو");
-  assert.equal(kept.week()[0].recipe, null);
+  assert.equal(mealOf(kept.week()[2]).recipe.title, "عدس‌پلو");
+  assert.equal(mealOf(kept.week()[0]).recipe, null);
 });

@@ -13,6 +13,7 @@
   var DEBOUNCE_MS = 400;
   var RETRY_MS = 5000;
   var DAYS = ["sat", "sun", "mon", "tue", "wed", "thu", "fri"];
+  var MEALS = ["breakfast", "lunch", "dinner"];
 
   function validId(value) {
     return typeof value === "string" && USER_RE.test(value);
@@ -111,8 +112,27 @@
     var sourceSlots = (snapshot && snapshot.slots) || {};
     var sourceUsed = (snapshot && snapshot.used) || {};
     DAYS.forEach(function (day) {
-      slots[day] = typeof sourceSlots[day] === "string" ? sourceSlots[day] : null;
-      used[day] = sourceUsed[day] === true;
+      var rawSlot = sourceSlots[day];
+      var rawUsed = sourceUsed[day];
+      var nextSlot = { breakfast: null, lunch: null, dinner: null };
+      var nextUsed = { breakfast: false, lunch: false, dinner: false };
+      if (typeof rawSlot === "string" || rawSlot == null) {
+        nextSlot.dinner = typeof rawSlot === "string" ? rawSlot : null;
+        nextUsed.dinner = rawUsed === true;
+      } else if (typeof rawSlot === "object") {
+        MEALS.forEach(function (meal) {
+          nextSlot[meal] = typeof rawSlot[meal] === "string" ? rawSlot[meal] : null;
+        });
+        if (typeof rawUsed === "boolean") {
+          nextUsed.dinner = rawUsed === true;
+        } else if (rawUsed && typeof rawUsed === "object") {
+          MEALS.forEach(function (meal) {
+            nextUsed[meal] = rawUsed[meal] === true;
+          });
+        }
+      }
+      slots[day] = nextSlot;
+      used[day] = nextUsed;
     });
     return { recipes: recipes, slots: slots, used: used };
   }
@@ -130,7 +150,13 @@
     if (Array.isArray(snapshot.recipes) && snapshot.recipes.length) return true;
     var slots = snapshot.slots || {};
     for (var i = 0; i < DAYS.length; i += 1) {
-      if (slots[DAYS[i]]) return true;
+      var raw = slots[DAYS[i]];
+      if (typeof raw === "string" && raw) return true;
+      if (raw && typeof raw === "object") {
+        for (var m = 0; m < MEALS.length; m += 1) {
+          if (raw[MEALS[m]]) return true;
+        }
+      }
     }
     return false;
   }

@@ -1,8 +1,11 @@
 /* Shopping list for آشپزخونه (مواد خرید).
    Diffs pantry chips against ingredient lines stored on the 7-day plan.
+   Every planned meal counts: صبحانه، ناهار، and شام.
+   A flat { recipe } day is still accepted so an older dinner-only week
+   keeps building the same list.
    Pure client-side: no fetch, no GapGPT, no API key.
-   Recipe cards already keep ingredients. If a planned dinner has an empty
-   ingredient list, that day is named in the UI and left off the list.
+   Recipe cards already keep ingredients. If a planned meal has an empty
+   ingredient list, that slot is named in the UI and left off the list.
    A model call (gpt-5.6-luna through the shared GapGPT client) could
    invent those missing lines later; it is not wired, so a gap stays
    visible instead of being filled in with guessed items. */
@@ -11,7 +14,7 @@
 
   var COPY = {
     title: "مواد خرید",
-    hint: "آنچه برای شام این هفته در آشپزخانه نیست.",
+    hint: "آنچه برای وعده‌های این هفته در آشپزخانه نیست.",
     open: "مواد خرید",
     export: "چاپ / خروجی",
     print: "چاپ",
@@ -21,15 +24,15 @@
     exportHint:
       "چاپ، پس‌زمینه سفید و خط فارسی است و فقط مواد خرید را نشان می‌دهد. خروجی یک فایل مارک‌داون از همان فهرست است.",
     emptyPlanTitle: "برنامه هفته خالی است",
-    emptyPlanHelp: "اول شام شنبه تا جمعه را بچینید تا مواد خرید از روی همان برنامه ساخته شود.",
+    emptyPlanHelp: "اول صبحانه، ناهار یا شام شنبه تا جمعه را بچینید تا مواد خرید از روی همان برنامه ساخته شود.",
     emptyBothTitle: "برنامه و آشپزخانه خالی است",
-    emptyBothHelp: "مواد را به آشپزخانه اضافه کنید و شام روزها را بچینید. بعد، آنچه کم است اینجا می‌آید.",
+    emptyBothHelp: "مواد را به آشپزخانه اضافه کنید و وعده‌های روزها را بچینید. بعد، آنچه کم است اینجا می‌آید.",
     emptyPantryTitle: "آشپزخانه خالی است",
     emptyPantryHelp: "چون انباری نیست، همه مواد برنامه در فهرست خرید آمده‌اند.",
     coveredTitle: "چیزی برای خرید نمانده",
-    coveredHelp: "مواد شام این هفته در آشپزخانه هست.",
-    missingTitle: "مواد این شام‌ها در برنامه نیست",
-    missingHelp: "فهرست خرید از مواد ذخیره‌شده روی هر دستور ساخته می‌شود و برای این روزها چیزی ساخته نشد.",
+    coveredHelp: "مواد وعده‌های این هفته در آشپزخانه هست.",
+    missingTitle: "مواد این وعده‌ها در برنامه نیست",
+    missingHelp: "فهرست خرید از مواد ذخیره‌شده روی هر دستور ساخته می‌شود و برای این وعده‌ها چیزی ساخته نشد.",
     skipped: "مواد این غذاها در برنامه ذخیره نشده و به فهرست اضافه نشدند.",
     countSuffix: "ماده برای خرید",
   };
@@ -586,7 +589,7 @@
     var groups = [];
     var index = Object.create(null);
     for (var i = 0; i < days.length; i += 1) {
-      var title = titles[i] || "شام";
+      var title = titles[i] || "وعده";
       if (index[title] == null) {
         index[title] = groups.length;
         groups.push({ title: title, days: [] });
@@ -610,6 +613,29 @@
     return value;
   }
 
+  function plannedDishes(day) {
+    if (!day) return [];
+    if (Array.isArray(day.meals)) {
+      var rows = [];
+      day.meals.forEach(function (meal) {
+        if (!meal || !meal.recipe) return;
+        var dayLabel = day.label || "";
+        var mealLabel = meal.label || "";
+        var label = dayLabel && mealLabel ? dayLabel + " · " + mealLabel : dayLabel || mealLabel;
+        rows.push({
+          label: label,
+          recipe: meal.recipe,
+          fallbackTitle: mealLabel || "وعده",
+        });
+      });
+      return rows;
+    }
+    if (day.recipe) {
+      return [{ label: day.label || "", recipe: day.recipe, fallbackTitle: "شام" }];
+    }
+    return [];
+  }
+
   function buildShoppingList(pantryItems, week) {
     var pantryNames = [];
     var pantryKeys = [];
@@ -628,9 +654,9 @@
     var order = [];
 
     (Array.isArray(week) ? week : []).forEach(function (day) {
-      if (!day || !day.recipe) return;
+      plannedDishes(day).forEach(function (dish) {
       planEmpty = false;
-      var lines = ingredientSource(day.recipe);
+      var lines = ingredientSource(dish.recipe);
       var usable = [];
       if (lines) {
         lines.forEach(function (line) {
@@ -639,8 +665,8 @@
       }
       if (!usable.length) {
         skipped.push({
-          day: day.label || "",
-          title: displayName(day.recipe.title) || "شام",
+          day: dish.label || "",
+          title: displayName(dish.recipe.title) || dish.fallbackTitle,
         });
         return;
       }
@@ -677,8 +703,9 @@
         } else {
           bucket.bare += 1;
         }
-        bucket.days.push(day.label || "");
-        bucket.titles.push(displayName(day.recipe.title) || "شام");
+        bucket.days.push(dish.label || "");
+        bucket.titles.push(displayName(dish.recipe.title) || dish.fallbackTitle);
+      });
       });
     });
 

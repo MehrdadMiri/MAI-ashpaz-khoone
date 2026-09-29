@@ -15,6 +15,8 @@ Release gate for tag `v0.2.0`. `v0.1.0` is already tagged (pantry chips, one fri
 
 Do **not** create the `v0.2.0` tag or a GitHub Release from this checklist. SE tags after this path is green. Short notes for that tag are [RELEASE.md](RELEASE.md).
 
+Steps 5, 5b, 7, and 7b also cover the v0.3 week (صبحانه، ناهار، شام — ۲۱ slots). Do **not** create a `v0.3.0` tag from those checks.
+
 ## Repo and secrets
 
 The GitHub repository is public: https://github.com/MehrdadMiri/MAI-ashpaz-khoone
@@ -172,21 +174,24 @@ curl -sS -X POST http://localhost:8000/recipes/nutrition \
 
 Expected: HTTP 200, `"available": false`, and `null` for that recipe. With a real key in the gitignored `.env` only, the same call is HTTP 200, `"available": true`, and a `kcal` on each estimate the model could read. Do not echo the key.
 
-### 5. Seven-day plan
+### 5. Seven-day plan — صبحانه، ناهار، شام
 
-- The week is شنبه through جمعه. A day with no شام says «خالی» and offers «انتخاب».
-- «برنامه ۷ روزه» fills every empty day from the cards (repeating recipes when there are fewer than seven). Days you already filled stay as they are.
-- «افزودن به برنامه» on a card assigns that recipe to one day. «جایگزین» swaps a filled day. «خالی» on that sheet clears the day.
-- On a filled day, «خورده شد» toggles that شام. The day stays filled. Press again to undo. «جایگزین» or «خالی» clears the mark. The pantry chips do not change.
+This check is the v0.3 meal-slot slice (ticket #18). Do **not** create a `v0.3.0` tag from it.
+
+- The week is شنبه through جمعه. Each day shows سه وعده: صبحانه، ناهار، شام. An empty slot says «خالی» and offers «انتخاب».
+- «برنامه ۷ روزه» fills every empty slot from the cards. With more than one recipe, one day does not get the same dish for all three meals. A single recipe may fill every empty slot. Slots you already filled stay as they are.
+- «افزودن به برنامه» on a card assigns that recipe to one slot (۲۱ choices). «جایگزین» swaps that slot. «خالی» on that sheet clears that slot only.
+- On a filled slot, «خورده شد» toggles that meal. The other meals on the day stay as they are. Press again to undo. «جایگزین» or «خالی» on that slot clears its mark. The pantry chips do not change.
+- An older dinner-only week (one recipe id on the day) still shows that dish as شام. صبحانه and ناهار start «خالی».
 
 ### 5b. Leftover regenerate vs full regenerate
 
 Needs at least one filled day (step 5) and the sample chips (step 2). This step is part of the v0.2.0 gate. The tag itself is step 10.
 
-- Mark شنبه «خورده شد». The card shows the dinner is eaten. The other days and the chips stay.
-- Press «پیشنهاد دستور». The request uses the chips that dinner did not use, and it skips that dinner’s title. The week budget is still sent. At least three new cards replace the previous cards. شنبه stays the eaten dinner. The pantry chips are unchanged.
+- Mark one شام «خورده شد». That slot shows the meal is eaten. The other meals, the other days, and the chips stay. Marking صبحانه does not mark ناهار or شام.
+- Press «پیشنهاد دستور». The request uses the chips that eaten meal did not use, and it skips that meal’s title. The week budget is still sent. At least three new cards replace the previous cards. The eaten slot stays. The pantry chips are unchanged.
 - Press «بازتولید کامل». This call uses every chip, keeps the same budget, and does not skip the eaten title. The cards refresh. The chips and the eaten mark stay.
-- If the eaten dinners have used every chip, «پیشنهاد دستور» does not call the API. It asks you to add a chip or press «بازتولید کامل». «بازتولید کامل» still calls with the full chip list.
+- If the eaten meals have used every chip, «پیشنهاد دستور» does not call the API. It asks you to add a chip or press «بازتولید کامل». «بازتولید کامل» still calls with the full chip list.
 - Diet chips that are still on (step 4b) stay on for both buttons. The status line still names them.
 
 Shell, key missing or invalid (the body must not contain the key or a traceback):
@@ -219,25 +224,25 @@ Repeat the two curls. Leftover: HTTP 200, `"mode": "leftovers"`, three recipes, 
 ### 6. Edit the pantry — generate again
 
 - Remove one chip and add a different ingredient.
-- Press «پیشنهاد دستور» again. A new set of at least three cards replaces the previous set. The pantry chips you just edited are still there. The week keeps the dinners already assigned unless you change them.
+- Press «پیشنهاد دستور» again. A new set of at least three cards replaces the previous set. The pantry chips you just edited are still there. The week keeps the meals already assigned unless you change them.
 
 ### 7. Share and print the week
 
-- «چاپ / خروجی» → «چاپ». The preview is an A4 poster: white, Persian, right to left. Each day is one block («روز», weekday, «وعده», شام, title or «خالی») and is not split across pages. Pantry, recipe controls, and sheets are not in the preview. An empty week also shows «برنامه هفته خالی است».
-- «کپی لینک» copies a `#p=` link that reopens the same seven days, including an empty week. The link does not contain `local_user_id` or an API key. Opening it in this browser replaces the week; Postgres then stores that week under this browser’s own id.
-- «چاپ / خروجی» → «دانلود مارک‌داون» saves `برنامه-۷-روزه.md` with one line per day.
-- If the summed شام costs are over «بودجه هفته», the plan line says «بیشتر از بودجه هفته» and چاپ و خروجی are still allowed. Print and download still work. The warning does not block them.
+- «چاپ / خروجی» → «چاپ». The preview is an A4 poster: white, Persian, right to left. Each day is one block («روز», weekday, then «وعده» for صبحانه، ناهار، and شام, title or «خالی») and is not split across pages. Pantry, recipe controls, and sheets are not in the preview. An empty week also shows «برنامه هفته خالی است».
+- «کپی لینک» copies a `#p=` link that reopens the same seven days and all three meals, including an empty week. The link does not contain `local_user_id` or an API key. Opening it in this browser replaces the week; Postgres then stores that week under this browser’s own id. A `v: 1` link still opens as شام only.
+- «چاپ / خروجی» → «دانلود مارک‌داون» saves `برنامه-۷-روزه.md` with صبحانه، ناهار، and شام on every day.
+- If the summed meal costs are over «بودجه هفته», the plan line says «بیشتر از بودجه هفته» and چاپ و خروجی are still allowed. Print and download still work. The warning does not block them. The same dish on two slots counts twice.
 
 ### 7b. مواد خرید
 
-After the week has at least one شام (step 5) and the pantry has chips (step 2). This check does not call GapGPT. It is part of the v0.2.0 gate. The tag itself is step 10.
+After the week has at least one meal (step 5) and the pantry has chips (step 2). This check does not call GapGPT. Do **not** create a `v0.3.0` tag from it.
 
 - «مواد خرید» on the plan scrolls to the shopping list.
-- Rows are ingredients on the planned dinners that are not already chips. A chip covers the usual spelling variants (spacing, ZWNJ, Arabic/Persian letters).
+- Rows are ingredients on every planned meal (صبحانه، ناهار، شام) that are not already chips. A chip covers the usual spelling variants (spacing, ZWNJ, Arabic/Persian letters). Filling all ۲۱ slots still drops chips you already have and adds quantities across those slots.
 - If a stored line has a quantity, the row shows it. Rows are grouped (سبزی و صیفی، پروتئین، …).
 - «چاپ / خروجی» on that section → «چاپ» is a white RTL page of the list only. The week grid and the pantry are hidden.
 - «دانلود مارک‌داون» saves `مواد-خرید.md` with Persian headings.
-- With no شام left on the week, the section says «برنامه هفته خالی است».
+- With no meal left on the week, the section says «برنامه هفته خالی است».
 - With a filled week, «پاک کردن» says «آشپزخانه خالی است» and lists every planned ingredient.
 
 Without a key, the same list can be checked after «بارگذاری نمونه» by saving a plan in the browser and reloading. See the shopping-list section of the README for the `localStorage` snippet (`ashpaz-khoone.plan.v1`, Saturday slot `r:عدسپلو`). If this browser id already has a plan in Postgres, reload shows that row; the snippet applies when the api is down or `GET /plan` is `found: false`.
@@ -247,7 +252,7 @@ Without a key, the same list can be checked after «بارگذاری نمونه�
 With `db` and `api` healthy. No API key is required. This step is part of the v0.2.0 gate.
 
 - Add a chip and a week budget. Turn on one diet chip (step 4b). Reload http://localhost:8080. The chip, the budget, and that diet chip are still there.
-- Assign a شام and mark «خورده شد». Reload. The day and the mark are still there.
+- Assign a شام and a صبحانه, and mark «خورده شد» on one of them. Reload. Both meals and that mark are still there. The other meal is not marked eaten.
 - In this browser, `localStorage` holds `ashpaz-khoone.pantry.v1` (chips, budget, `filters`) and `ashpaz-khoone.plan.v1` (the week, including «خورده شد»). The browser id is `ashpaz-khoone.local-user.v1`. None of those values is `GAP_CODE_API_KEY`.
 - Stop the api container and reload. The same browser still shows that cached pantry and plan. Start api again and reload. The saved Postgres rows are back, including the diet filters.
 

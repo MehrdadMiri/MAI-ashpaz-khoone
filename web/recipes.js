@@ -1,7 +1,9 @@
 /* Recipe suggestions for آشپزخونه (US-05, US-10).
    Reads the active pantry (chips + week budget) and asks POST /api/recipes/generate.
-   «پیشنهاد دستور» is leftover-aware: remaining chips and eaten dinners.
-   «بازتولید کامل» sends the full pantry and does not skip those dinners.
+   «پیشنهاد دستور» is leftover-aware: remaining chips and eaten meals.
+   «بازتولید کامل» sends the full pantry and does not skip those meals.
+   خورده شد is per meal (صبحانه، ناهار، شام). Older dinner-only weeks
+   still skip that شام, because it loads as the dinner slot.
    Diet chips (گیاهی، بدون پیاز، مناسب دیابت) are toggles on the pantry.
    An active combination is sent as filters and kept with the pantry snapshot.
    After the cards render, POST /api/recipes/nutrition asks for a rough
@@ -18,7 +20,7 @@
     addToPlan: "افزودن به برنامه",
     ingredients: "مواد",
     steps: "مراحل",
-    leftoverNote: "از مواد باقی‌مانده، بدون تکرار شام‌های خورده‌شده.",
+    leftoverNote: "از مواد باقی‌مانده، بدون تکرار وعده‌های خورده‌شده.",
     fullNote: "بازتولید کامل، با همه مواد و همان بودجه هفته.",
     dietLead: "با محدودیت ",
     nutritionPending: "در حال برآورد کالری…",
@@ -28,7 +30,7 @@
   var ERROR_COPY = {
     empty_ingredients: "برای پیشنهاد دستور، حداقل یک ماده به آشپزخانه اضافه کنید.",
     no_remaining:
-      "بعد از شام‌های خورده‌شده ماده‌ای نمانده. یک ماده اضافه کنید یا «بازتولید کامل» را بزنید.",
+      "بعد از وعده‌های خورده‌شده ماده‌ای نمانده. یک ماده اضافه کنید یا «بازتولید کامل» را بزنید.",
     invalid_budget: "بودجه هفته درست نیست. یک عدد به تومان وارد کنید.",
     not_configured: "سرویس پیشنهاد دستور هنوز آماده نیست.",
     invalid_config: "سرویس پیشنهاد دستور هنوز آماده نیست.",
@@ -118,14 +120,20 @@
     var used = false;
     if (planApi && typeof planApi.week === "function") {
       planApi.week().forEach(function (day) {
-        if (!day || !day.used || !day.recipe || typeof day.recipe.title !== "string") return;
-        used = true;
-        var title = day.recipe.title.replace(/\s+/g, " ").trim();
-        if (!title) return;
-        var key = identityKey(title);
-        if (!key || seen[key]) return;
-        seen[key] = true;
-        skip.push(title);
+        var meals = day && Array.isArray(day.meals) ? day.meals : [];
+        if (!meals.length && day && day.recipe) {
+          meals = [{ recipe: day.recipe, used: day.used }];
+        }
+        meals.forEach(function (meal) {
+          if (!meal || !meal.used || !meal.recipe || typeof meal.recipe.title !== "string") return;
+          used = true;
+          var title = meal.recipe.title.replace(/\s+/g, " ").trim();
+          if (!title) return;
+          var key = identityKey(title);
+          if (!key || seen[key]) return;
+          seen[key] = true;
+          skip.push(title);
+        });
       });
     }
     var remaining = items.slice();
