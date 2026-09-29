@@ -12,7 +12,9 @@ Persian RTL AI meal and recipe demo (آشپزخونه).
 
 The web page is a Persian RTL pantry. You can add and remove ingredient chips, load a sample set of Iranian staples, and set a numeric week budget. The list and budget are stored in Postgres for a browser-local id, and cached in this browser (`localStorage`) when the api or database is unavailable. «پیشنهاد دستور» asks the shared GapGPT client (`api/gapgpt.py`) for at least three Persian recipes from those chips and the week budget. If a شام is marked «خورده شد», that call prefers the chips still left and asks the model not to repeat those dinners. «بازتولید کامل» uses every chip again and does not skip them. «عکس یخچال» sends one photo to the same client and shows candidate chips; nothing is added to the pantry until you confirm. «برنامه ۷ روزه» assigns those recipes to شنبه through جمعه and can print or download the week. The plan does not call GapGPT. «مواد خرید» diffs those planned dinners against the pantry chips and can print or download the missing items. That list does not call GapGPT either. After the recipe cards appear, the page asks the same client for a rough per-serving calorie estimate (and protein, carbohydrate, and fat when the model returns them). Each card says those numbers are an AI estimate. If that call fails, the cards stay without them. Product UI is Persian RTL. This scaffold’s docs and code comments are English.
 
-The GitHub repository is public.
+The GitHub repository is public: https://github.com/MehrdadMiri/MAI-ashpaz-khoone. `.env` is gitignored. `.env.example` has placeholders only, and `GAP_CODE_API_KEY` there is empty. Do not commit a real key.
+
+`v0.1.0` is the tagged MVP. `v0.2.0` is the next tag: shopping, leftover regenerate, fridge v2, Postgres persist, nutrition, share/print, diet filters, and a home-screen install. Notes for that tag are [docs/RELEASE.md](docs/RELEASE.md). The gate is [QA smoke](#qa-smoke). This repository does not create the tag here.
 
 ## Run
 
@@ -208,7 +210,7 @@ Without a key this is HTTP 200, `"available": false`, and the body does not cont
 
 ## Fridge photo
 
-«عکس یخچال» is on the pantry page. It does not add anything by itself. One confirm flow can take up to six photos. This slice does not create a `v0.2.0` tag.
+«عکس یخچال» is on the pantry page. It does not add anything by itself. One confirm flow can take up to six photos. Tagging `v0.2.0` waits for the release gate in [QA smoke](#qa-smoke).
 
 1. Open «عکس یخچال». «گرفتن عکس» calls `getUserMedia` with `facingMode: environment` (the back camera when the phone has one) and shows a preview. «انتخاب عکس» opens a file picker that accepts several photos (`multiple`).
 2. If the camera API is missing, «گرفتن عکس» uses a file input with `capture="environment"`.
@@ -301,7 +303,7 @@ node --test web/recipes.test.js web/plan.test.js
 cd api && python3 -m unittest tests.test_recipes tests.test_recipes_endpoint -v
 ```
 
-Live smoke, only with a real key in the host file `…/MAI/.env` (gitignored; never print it, never commit it). This repo’s `.env` is gitignored too. Load the variable without echoing it, recreate api, then call both shapes. Do not create a `v0.2.0` tag from this check.
+Live smoke, only with a real key in the host file `…/MAI/.env` (gitignored; never print it, never commit it). This repo’s `.env` is gitignored too. Load the variable without echoing it, recreate api, then call both shapes. Do not create a `v0.2.0` tag from this check; the gate is [QA smoke](#qa-smoke).
 
 ```bash
 set -a
@@ -395,17 +397,21 @@ With a key, the same checks work after «پیشنهاد دستور» and «بر�
 
 ## QA smoke
 
-The release smoke for this slice is [docs/QA-SMOKE.md](docs/QA-SMOKE.md). Run it with a real key only in the gitignored `.env` or the environment. Do not print the key. Do not tag `v0.1.0` from this work; that tag is ticket #8 after this path is green.
+The release gate for `v0.2.0` is [docs/QA-SMOKE.md](docs/QA-SMOKE.md). `v0.1.0` is already tagged. Run the gate with a real key only in the gitignored `.env` or the environment. Do not print the key. `.env.example` stays placeholders only (`GAP_CODE_API_KEY` empty, model `gpt-5.6-luna`). The repository is public. Do not create the `v0.2.0` tag or a GitHub Release from this checklist. SE tags after the path is green. The notes for that tag are [docs/RELEASE.md](docs/RELEASE.md).
 
 1. Compose up with the key set. The آشپزخونه page loads.
 2. «بارگذاری نمونه» shows at least eight chips.
-3. Fridge photo, then confirm, adds only the checked names.
+3. One fridge photo, then confirm, adds only the checked names. Several photos share one confirm sheet, with confidence and merged names.
 4. Set a week budget and «پیشنهاد دستور» returns at least three cards.
-5. «برنامه ۷ روزه» fills شنبه through جمعه. Empty days stay «خالی» until filled. «خورده شد» marks a day; «پیشنهاد دستور» then prefers remaining chips and skips that dinner, and «بازتولید کامل» does not.
-6. Edit the pantry and generate again.
-7. «چاپ / خروجی» prints and downloads Markdown. A soft over-budget line does not block export.
-8. Break or unset `GAP_CODE_API_KEY`, recreate api, and confirm a Persian error with «تلاش دوباره» and no key value. Restore the key and generate again.
-9. Leave tagging `v0.1.0` for ticket #8.
+5. Diet chips «گیاهی», «بدون پیاز», and «مناسب دیابت» can be combined, survive a reload, and are named on the status line.
+6. After the cards, a rough calorie line may appear. If that estimate fails, the cards stay and the recipe error is not used.
+7. «برنامه ۷ روزه» fills شنبه through جمعه. «خورده شد» marks a day; «پیشنهاد دستور» then prefers remaining chips and skips that dinner, and «بازتولید کامل» does not.
+8. Edit the pantry and generate again.
+9. «کپی لینک» copies a `#p=` link. «چاپ» is an A4 poster. A soft over-budget line does not block export. «مواد خرید» lists what the dinners need and the pantry does not have.
+10. Chips, budget, diet filters, and the week survive a reload in Postgres. With api stopped, the same browser still shows the `localStorage` copy (`ashpaz-khoone.pantry.v1`, `ashpaz-khoone.plan.v1`).
+11. Break or unset `GAP_CODE_API_KEY`, recreate api, and confirm a Persian error with «تلاش دوباره» and no key value. Nutrition without a usable key stays HTTP 200 with `"available": false`. Restore the key and generate again.
+12. The manifest and `/sw.js` are served for install. The footer says «افزودن به صفحهٔ اصلی». The worker caches the page shell only and does not call GapGPT. Chrome can install from http://localhost:8080; any other host needs HTTPS.
+13. Leave tagging `v0.2.0` for SE after this path is green.
 
 The longer [demo path](#demo-path-qa) below still covers a boot with no key.
 
@@ -491,7 +497,7 @@ The longer [demo path](#demo-path-qa) below still covers a boot with no key.
    docker compose up -d --build --force-recreate api web
    ```
 
-   Do not tag `v0.2.0`. Repeat the curl in step 7 with a real fridge photo instead of the tiny JPEG. For two photos, repeat the field in order (the page does the same):
+   Do not tag `v0.2.0` from this step; see [QA smoke](#qa-smoke). Repeat the curl in step 7 with a real fridge photo instead of the tiny JPEG. For two photos, repeat the field in order (the page does the same):
 
    ```bash
    curl -sS -X POST http://localhost:8000/vision/fridge \
