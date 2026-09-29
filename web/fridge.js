@@ -28,7 +28,18 @@
     image_too_large: "حجم عکس زیاد است. یک عکس کوچک‌تر انتخاب کنید.",
     invalid_request: "عکس فرستاده نشد. دوباره تلاش کنید.",
     network: "ارتباط با سرور برقرار نشد. دوباره تلاش کنید.",
+    internal_error: "تشخیص مواد انجام نشد. دوباره تلاش کنید.",
     default: "تشخیص مواد انجام نشد. دوباره تلاش کنید.",
+  };
+
+  // Shown with service failures. Names the env var; never a key value.
+  var SERVICE_HINT =
+    "اگر این خطا ماند، GAP_CODE_API_KEY را در محیط بررسی کنید و لاگ docker compose را ببینید. مقدار کلید اینجا نشان داده نمی‌شود.";
+
+  var LOCAL_ERRORS = {
+    invalid_image: true,
+    image_too_large: true,
+    invalid_request: true,
   };
 
   var ENDPOINT = "/api/vision/fridge";
@@ -106,12 +117,33 @@
     return COPY.noneChosen;
   }
 
+  function sanitizeDisplay(text) {
+    var value = String(text == null ? "" : text);
+    value = value.replace(/bearer\s+\S+/gi, "");
+    value = value.replace(/\bsk-[A-Za-z0-9_-]{6,}\b/g, "");
+    value = value.replace(/Traceback \(most recent call last\)[\s\S]*/g, "");
+    return value
+      .split("\n")
+      .filter(function (line) {
+        return !/^\s*at\s+\S+/.test(line) && !/File ".*", line \d+/.test(line);
+      })
+      .join("\n")
+      .trim();
+  }
+
   function messageForFailure(_status, body) {
+    // Mapped Persian copy only. body.message is ignored so a key or stack cannot surface.
     var code = body && typeof body.error === "string" ? body.error : "";
-    if (Object.prototype.hasOwnProperty.call(ERROR_COPY, code)) {
-      return ERROR_COPY[code];
-    }
-    return ERROR_COPY.default;
+    var message = Object.prototype.hasOwnProperty.call(ERROR_COPY, code)
+      ? ERROR_COPY[code]
+      : ERROR_COPY.default;
+    return sanitizeDisplay(message);
+  }
+
+  function hintForFailure(body) {
+    var code = body && typeof body.error === "string" ? body.error : "";
+    if (LOCAL_ERRORS[code]) return "";
+    return sanitizeDisplay(SERVICE_HINT);
   }
 
   function isCameraFailure(error) {
@@ -258,9 +290,14 @@
     var video = doc.getElementById("fridge-video");
     var shutter = doc.getElementById("fridge-shutter");
     var denied = doc.getElementById("fridge-denied");
+    var loadingPanel = doc.getElementById("fridge-loading-panel");
     var loading = doc.getElementById("fridge-loading");
+    var previewWrap = doc.getElementById("fridge-preview-wrap");
+    var previewImg = doc.getElementById("fridge-preview");
+    var loadingCancel = doc.getElementById("fridge-loading-cancel");
     var errorBox = doc.getElementById("fridge-error");
     var errorText = doc.getElementById("fridge-error-text");
+    var hintEl = doc.getElementById("fridge-error-hint");
     var retryBtn = doc.getElementById("fridge-retry");
     var confirmBox = doc.getElementById("fridge-confirm");
     var none = doc.getElementById("fridge-none");
@@ -301,6 +338,7 @@
     var generation = 0;
     var cameraToken = 0;
     var activeController = null;
+    var previewUrl = "";
 
     function setBusy(busy) {
       openBtn.disabled = busy;
@@ -309,9 +347,48 @@
       if (shutter) shutter.disabled = busy;
       if (retryBtn) retryBtn.disabled = busy;
       if (closeBtn) closeBtn.disabled = false;
+      if (loadingCancel) loadingCancel.disabled = false;
       sheet.setAttribute("aria-busy", busy ? "true" : "false");
       sheet.classList.toggle("is-busy", busy);
       syncApply();
+    }
+
+    function revokePreview() {
+      if (!previewUrl) return;
+      var urlApi = global.URL || global.webkitURL;
+      var current = previewUrl;
+      previewUrl = "";
+      if (urlApi && typeof urlApi.revokeObjectURL === "function") {
+        try {
+          urlApi.revokeObjectURL(current);
+        } catch (err) {
+          /* The preview is already dropped. */
+        }
+      }
+    }
+
+    function showPreview(blob) {
+      revokePreview();
+      if (!previewImg) return;
+      var urlApi = global.URL || global.webkitURL;
+      if (!blob || !urlApi || typeof urlApi.createObjectURL !== "function") {
+        if ("src" in previewImg) previewImg.src = "";
+        if (previewImg.removeAttribute) previewImg.removeAttribute("src");
+        if (previewWrap) previewWrap.hidden = true;
+        return;
+      }
+      try {
+        previewUrl = urlApi.createObjectURL(blob) || "";
+      } catch (err) {
+        previewUrl = "";
+      }
+      if (!previewUrl) {
+        if (previewWrap) previewWrap.hidden = true;
+        return;
+      }
+      previewImg.src = previewUrl;
+      if (previewImg.setAttribute) previewImg.setAttribute("alt", "پیش‌نمایش عکس یخچال");
+      if (previewWrap) previewWrap.hidden = false;
     }
 
     function hideStages() {
@@ -319,7 +396,12 @@
       if (cameraView) cameraView.hidden = true;
       if (denied) denied.hidden = true;
       loading.hidden = true;
+      if (loadingPanel) loadingPanel.hidden = true;
+      revokePreview();
+      if (previewWrap) previewWrap.hidden = true;
+      if (previewImg && previewImg.removeAttribute) previewImg.removeAttribute("src");
       errorBox.hidden = true;
+      if (hintEl) hintEl.hidden = true;
       confirmBox.hidden = true;
     }
 
@@ -347,18 +429,25 @@
       sheet.hidden = false;
     }
 
-    function showLoading() {
+    function showLoading(blob) {
       stopCamera();
       hideStages();
+      if (loadingPanel) loadingPanel.hidden = false;
       loading.hidden = false;
       loading.textContent = COPY.loading;
+      if (blob) showPreview(blob);
       sheet.hidden = false;
       sheet.classList.toggle("is-busy", true);
     }
 
-    function showError(message) {
+    function showError(message, hint) {
       hideStages();
-      errorText.textContent = message;
+      errorText.textContent = sanitizeDisplay(message);
+      var safeHint = sanitizeDisplay(hint || "");
+      if (hintEl) {
+        hintEl.textContent = safeHint;
+        hintEl.hidden = !safeHint;
+      }
       errorBox.hidden = false;
       sheet.hidden = false;
       sheet.classList.toggle("is-busy", false);
@@ -456,6 +545,7 @@
       }
       gate.end();
       stopCamera();
+      revokePreview();
       sheet.hidden = true;
       sheet.classList.toggle("is-busy", false);
       setBusy(false);
@@ -463,11 +553,11 @@
 
     function postImage(blob, ticket) {
       if (!request) {
-        showError(messageForFailure(0, { error: "network" }));
+        showError(messageForFailure(0, { error: "network" }), hintForFailure({ error: "network" }));
         gate.end();
         return;
       }
-      showLoading();
+      showLoading(blob);
       var controller = typeof global.AbortController !== "undefined" ? new global.AbortController() : null;
       activeController = controller;
       var timer = setTimeout(function () {
@@ -500,12 +590,16 @@
           if (!result.response.ok || !parsed || parsed.ok === false) {
             var code = parsed && parsed.error;
             if (result.response.status === 413 && !code) code = "image_too_large";
-            showError(messageForFailure(result.response.status, { error: code || "" }));
+            var failure = { error: code || "" };
+            showError(messageForFailure(result.response.status, failure), hintForFailure(failure));
             return;
           }
           var names = selectIngredients(parsed.ingredients);
           if (!names) {
-            showError(messageForFailure(502, { error: "bad_response" }));
+            showError(
+              messageForFailure(502, { error: "bad_response" }),
+              hintForFailure({ error: "bad_response" })
+            );
             return;
           }
           showConfirm(names);
@@ -513,7 +607,8 @@
         .catch(function (err) {
           if (ticket !== generation) return;
           var aborted = err && (err.name === "AbortError" || err.code === 20);
-          showError(messageForFailure(0, { error: aborted ? "timeout" : "network" }));
+          var code = aborted ? "timeout" : "network";
+          showError(messageForFailure(0, { error: code }), hintForFailure({ error: code }));
         })
         .then(function () {
           clearTimeout(timer);
@@ -528,7 +623,7 @@
       if (!file || !gate.begin()) return;
       var ticket = generation;
       setBusy(true);
-      showLoading();
+      showLoading(file);
       Promise.resolve()
         .then(function () {
           return prepareImage(file);
@@ -543,7 +638,7 @@
           if (ticket !== generation) return;
           var code = err && err.code;
           if (code !== "invalid_image" && code !== "image_too_large") code = "invalid_image";
-          showError(messageForFailure(0, { error: code }));
+          showError(messageForFailure(0, { error: code }), hintForFailure({ error: code }));
           gate.end();
           setBusy(false);
         });
@@ -618,7 +713,10 @@
             beginUpload(blob);
           })
           .catch(function () {
-            showError(messageForFailure(0, { error: "invalid_image" }));
+            showError(
+              messageForFailure(0, { error: "invalid_image" }),
+              hintForFailure({ error: "invalid_image" })
+            );
           });
       });
     }
@@ -629,6 +727,8 @@
         else showChooser();
       });
     }
+
+    if (loadingCancel) loadingCancel.addEventListener("click", closeSheet);
 
     if (extraForm) {
       extraForm.addEventListener("submit", function (event) {
@@ -699,7 +799,10 @@
   var api = {
     COPY: COPY,
     ERROR_COPY: ERROR_COPY,
+    SERVICE_HINT: SERVICE_HINT,
     ENDPOINT: ENDPOINT,
+    sanitizeDisplay: sanitizeDisplay,
+    hintForFailure: hintForFailure,
     selectIngredients: selectIngredients,
     mergeIntoPantry: mergeIntoPantry,
     summarizeMerge: summarizeMerge,

@@ -145,10 +145,17 @@ function fakeDocument() {
   register("fridge-video", "video");
   register("fridge-shutter", "button");
   register("fridge-denied", "p", true);
+  register("fridge-launch", "div");
+  register("fridge-loading-panel", "div", true);
+  register("fridge-preview-wrap", "div", true);
+  register("fridge-preview", "img");
   register("fridge-loading", "p", true);
+  register("fridge-loading-cancel", "button");
   register("fridge-error", "div", true);
   register("fridge-error-text", "p");
+  register("fridge-error-hint", "p", true);
   register("fridge-retry", "button");
+  register("empty-add", "label");
   register("fridge-confirm", "div", true);
   register("fridge-none", "p", true);
   register("fridge-candidates", "ul");
@@ -235,9 +242,13 @@ test("page wires capture, upload, and the confirm button", () => {
   assert.equal(html.includes('id="fridge-file"') && html.slice(html.indexOf('id="fridge-file"'), html.indexOf('id="fridge-file"') + 220).includes("capture="), false);
   assert.match(html, /تأیید و افزودن به انبار/);
   assert.match(html, /در حال تشخیص مواد…/);
+  assert.match(html, /id="fridge-preview"/);
+  assert.match(html, /id="fridge-loading-cancel"/);
+  assert.match(html, /id="fridge-loading-panel"/);
   assert.match(html, /fridge\.js/);
   assert.equal(html.includes("GAP_CODE_API_KEY"), false);
-  assert.equal(script.includes("GAP_CODE_API_KEY"), false);
+  assert.match(script, /GAP_CODE_API_KEY/);
+  assert.equal(script.includes(["unit", "test", "key"].join("-")), false);
   assert.equal(script.includes("getUserMedia"), true);
 });
 
@@ -253,8 +264,17 @@ test("candidate names are normalized and nothing merges until asked", () => {
   assert.deepEqual(merged.duplicate, ["کرفس"]);
   assert.deepEqual(store.items(), ["کرفس", "ماست"]);
   assert.equal(fridge.summarizeMerge(merged), "۱ ماده به انبار اضافه شد. ۱ ماده از قبل بود.");
-  assert.equal(fridge.messageForFailure(502, { error: "unauthorized", message: "unit-test-key" }), ERROR_COPY.unauthorized);
-  assert.equal(fridge.messageForFailure(502, { error: "unauthorized", message: "unit-test-key" }).includes("unit-test-key"), false);
+  const secret = ["unit", "test", "key"].join("-");
+  assert.equal(fridge.messageForFailure(502, { error: "unauthorized", message: secret }), ERROR_COPY.unauthorized);
+  assert.equal(fridge.messageForFailure(502, { error: "unauthorized", message: secret }).includes(secret), false);
+  assert.equal(fridge.hintForFailure({ error: "invalid_image", message: secret }), "");
+  assert.equal(fridge.hintForFailure({ error: "image_too_large" }), "");
+  const hint = fridge.hintForFailure({ error: "not_configured", message: `Bearer ${secret}` });
+  assert.equal(hint, fridge.SERVICE_HINT);
+  assert.match(hint, /GAP_CODE_API_KEY/);
+  assert.match(hint, /docker compose/);
+  assert.equal(hint.includes(secret), false);
+  assert.equal(fridge.SERVICE_HINT, require("./recipes.js").SERVICE_HINT);
 });
 
 test("vision results stay out of the pantry until confirm", async () => {
@@ -275,6 +295,8 @@ test("vision results stay out of the pantry until confirm", async () => {
   assert.ok(calls[0].init.body.get("image"));
   assert.equal(doc.nodes["fridge-loading"].hidden, false);
   assert.equal(doc.nodes["fridge-loading"].textContent, COPY.loading);
+  assert.equal(doc.nodes["fridge-loading-panel"].hidden, false);
+  assert.equal(doc.nodes["fridge-loading-cancel"].disabled, false);
   assert.deepEqual(store.items(), []);
 
   doc.nodes["fridge-file"].listeners.change();
@@ -371,6 +393,10 @@ test("errors are Persian, retry resends, and secrets stay hidden", async () => {
   assert.equal(doc.nodes["fridge-error"].hidden, false);
   assert.equal(doc.nodes["fridge-error-text"].textContent, ERROR_COPY.unauthorized);
   assert.equal(doc.nodes["fridge-error-text"].textContent.includes(secret), false);
+  assert.equal(doc.nodes["fridge-error-hint"].hidden, false);
+  assert.equal(doc.nodes["fridge-error-hint"].textContent, fridge.SERVICE_HINT);
+  assert.equal(doc.nodes["fridge-error-hint"].textContent.includes(secret), false);
+  assert.equal(doc.nodes["fridge-preview-wrap"].hidden, true);
   assert.equal(doc.nodes["fridge-confirm"].hidden, true);
   assert.deepEqual(store.items(), []);
 
@@ -381,6 +407,62 @@ test("errors are Persian, retry resends, and secrets stay hidden", async () => {
   await settle();
   assert.equal(doc.nodes["fridge-confirm"].hidden, false);
   assert.deepEqual(store.items(), []);
+});
+
+test("empty pantry keeps seed and the fridge photo in the empty actions", () => {
+  const ctx = mountFridge({ withPantry: true });
+  const { doc } = ctx;
+  assert.equal(doc.nodes.seed.parent, doc.nodes["empty-actions"]);
+  assert.equal(doc.nodes["fridge-open"].parent, doc.nodes["empty-actions"]);
+  assert.equal(doc.nodes["empty-add"].parent, doc.nodes["empty-actions"]);
+  doc.nodes.ingredient.value = "برنج";
+  doc.nodes["add-form"].listeners.submit({ preventDefault() {} });
+  assert.equal(doc.nodes["empty"].hidden, true);
+  assert.equal(doc.nodes.seed.parent, doc.nodes.actions);
+  assert.equal(doc.nodes["fridge-open"].parent, doc.nodes["fridge-launch"]);
+  doc.nodes.clear.listeners.click();
+  assert.equal(doc.nodes["empty"].hidden, false);
+  assert.equal(doc.nodes["fridge-open"].parent, doc.nodes["empty-actions"]);
+});
+
+test("vision loading shows a preview and cancel leaves the pantry", async () => {
+  const created = [];
+  const revoked = [];
+  const previous = global.URL;
+  global.URL = {
+    createObjectURL(blob) {
+      created.push(blob);
+      return "blob:fridge-preview";
+    },
+    revokeObjectURL(url) {
+      revoked.push(url);
+    },
+  };
+  try {
+    const ctx = mountFridge({});
+    const { doc, store } = ctx;
+    doc.nodes["fridge-open"].listeners.click();
+    pickFile(doc, "fridge-file");
+    await flush();
+    assert.equal(doc.nodes["fridge-loading-panel"].hidden, false);
+    assert.equal(doc.nodes["fridge-preview-wrap"].hidden, false);
+    assert.equal(doc.nodes["fridge-preview"].src, "blob:fridge-preview");
+    assert.equal(created.length > 0, true);
+    assert.deepEqual(store.items(), []);
+
+    doc.nodes["fridge-loading-cancel"].listeners.click();
+    assert.equal(doc.nodes["fridge-sheet"].hidden, true);
+    assert.equal(doc.nodes["fridge-error"].hidden, true);
+    ctx.resolveFetch()(jsonResponse(200, { ok: true, ingredients: ["شیر"] }));
+    await settle();
+    assert.equal(doc.nodes["fridge-sheet"].hidden, true);
+    assert.equal(doc.nodes["fridge-confirm"].hidden, true);
+    assert.equal(doc.nodes["fridge-error"].hidden, true);
+    assert.deepEqual(store.items(), []);
+    assert.equal(revoked.includes("blob:fridge-preview"), true);
+  } finally {
+    global.URL = previous;
+  }
 });
 
 test("camera denial falls back to file upload without calling the API", async () => {

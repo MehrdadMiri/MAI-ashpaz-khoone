@@ -289,6 +289,7 @@ test("markdown lists every day and the budget line stays soft", () => {
   const over = plan.budgetLine(2000000, 1500000);
   assert.equal(over.over, true);
   assert.match(over.text, /بیشتر از بودجه هفته/);
+  assert.match(over.text, /چاپ و خروجی همچنان ممکن است/);
 
   const text = model.markdown(1500000);
   assert.match(text, /^# برنامه ۷ روزه/);

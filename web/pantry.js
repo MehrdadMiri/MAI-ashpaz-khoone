@@ -209,6 +209,9 @@
     var actions = doc.getElementById("actions");
     var hint = doc.getElementById("chip-hint");
     var count = doc.getElementById("count");
+    var emptyAdd = doc.getElementById("empty-add");
+    var fridgeBtn = doc.getElementById("fridge-open");
+    var fridgeHome = doc.getElementById("fridge-launch");
 
     if (!form || !input || !chips || !empty || !status || !budgetInput || !seedBtn || !clearBtn) {
       return;
@@ -261,9 +264,20 @@
 
       var isEmpty = items.length === 0;
       if (isEmpty && emptyActions) {
-        emptyActions.append(seedBtn);
+        [seedBtn, emptyAdd, fridgeBtn].forEach(function (node) {
+          if (node) emptyActions.append(node);
+        });
       } else if (actions) {
         actions.insertBefore(seedBtn, clearBtn);
+        if (fridgeBtn && fridgeHome && (fridgeBtn.parentNode || fridgeBtn.parent) !== fridgeHome) {
+          var fridgeHint = doc.getElementById("fridge-hint");
+          var hintParent = fridgeHint && (fridgeHint.parentNode || fridgeHint.parent);
+          if (fridgeHint && hintParent === fridgeHome && fridgeHome.insertBefore) {
+            fridgeHome.insertBefore(fridgeBtn, fridgeHint);
+          } else if (fridgeHome.append) {
+            fridgeHome.append(fridgeBtn);
+          }
+        }
       }
       seedBtn.classList.toggle("is-emphasis", isEmpty);
       if (actions) actions.hidden = isEmpty;

@@ -170,7 +170,7 @@
     var over = !!(hasBudget && spent > budget);
     var text = "جمع شام‌ها " + formatApprox(spent);
     if (hasBudget) text += " از بودجه " + formatToman(budget);
-    if (over) text += " — بیشتر از بودجه هفته";
+    if (over) text += " — بیشتر از بودجه هفته. چاپ و خروجی همچنان ممکن است";
     return { text: text, over: over };
   }
 

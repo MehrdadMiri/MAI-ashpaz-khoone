@@ -25,7 +25,18 @@
     upstream_error: "الان نمی‌توانیم دستور پیشنهاد کنیم. دوباره تلاش کنید.",
     invalid_request: "درخواست پیشنهاد دستور درست نبود. دوباره تلاش کنید.",
     network: "ارتباط با سرور برقرار نشد. دوباره تلاش کنید.",
+    internal_error: "پیشنهاد دستور انجام نشد. دوباره تلاش کنید.",
     default: "پیشنهاد دستور انجام نشد. دوباره تلاش کنید.",
+  };
+
+  // Shown with service failures. Names the env var; never a key value.
+  var SERVICE_HINT =
+    "اگر این خطا ماند، GAP_CODE_API_KEY را در محیط بررسی کنید و لاگ docker compose را ببینید. مقدار کلید اینجا نشان داده نمی‌شود.";
+
+  var LOCAL_ERRORS = {
+    empty_ingredients: true,
+    invalid_budget: true,
+    invalid_request: true,
   };
 
   var REQUEST_TIMEOUT_MS = 100000;
@@ -69,12 +80,33 @@
     return { ingredients: items, budget: budget };
   }
 
+  function sanitizeDisplay(text) {
+    var value = String(text == null ? "" : text);
+    value = value.replace(/bearer\s+\S+/gi, "");
+    value = value.replace(/\bsk-[A-Za-z0-9_-]{6,}\b/g, "");
+    value = value.replace(/Traceback \(most recent call last\)[\s\S]*/g, "");
+    return value
+      .split("\n")
+      .filter(function (line) {
+        return !/^\s*at\s+\S+/.test(line) && !/File ".*", line \d+/.test(line);
+      })
+      .join("\n")
+      .trim();
+  }
+
   function messageForFailure(_status, body) {
+    // Mapped Persian copy only. body.message is ignored so a key or stack cannot surface.
     var code = body && typeof body.error === "string" ? body.error : "";
-    if (Object.prototype.hasOwnProperty.call(ERROR_COPY, code)) {
-      return ERROR_COPY[code];
-    }
-    return ERROR_COPY.default;
+    var message = Object.prototype.hasOwnProperty.call(ERROR_COPY, code)
+      ? ERROR_COPY[code]
+      : ERROR_COPY.default;
+    return sanitizeDisplay(message);
+  }
+
+  function hintForFailure(body) {
+    var code = body && typeof body.error === "string" ? body.error : "";
+    if (LOCAL_ERRORS[code]) return "";
+    return sanitizeDisplay(SERVICE_HINT);
   }
 
   function formatCostToman(value) {
@@ -212,6 +244,9 @@
     var status = doc.getElementById("recipe-status");
     var errorBox = doc.getElementById("recipe-error");
     var errorText = doc.getElementById("recipe-error-text");
+    var hintEl = doc.getElementById("recipe-error-hint");
+    var emptyBox = doc.getElementById("recipe-empty");
+    var skeleton = doc.getElementById("recipe-skeleton");
     var grid = doc.getElementById("recipe-grid");
     var panel = doc.getElementById("recipes");
     if (!suggestBtn || !status || !errorBox || !errorText || !grid || !pantry) return;
@@ -227,16 +262,29 @@
       if (panel) panel.classList.toggle("is-busy", busy);
     }
 
-    function showError(message) {
+    function setHint(hint) {
+      if (!hintEl) return;
+      var safe = sanitizeDisplay(hint || "");
+      hintEl.textContent = safe;
+      hintEl.hidden = !safe;
+    }
+
+    function showError(message, hint) {
       status.textContent = "";
-      errorText.textContent = message;
+      errorText.textContent = sanitizeDisplay(message);
       errorBox.hidden = false;
+      setHint(hint);
+      if (emptyBox) emptyBox.hidden = true;
+      if (skeleton) skeleton.hidden = true;
       grid.hidden = true;
       grid.replaceChildren();
     }
 
     function showLoading() {
       errorBox.hidden = true;
+      setHint("");
+      if (emptyBox) emptyBox.hidden = true;
+      if (skeleton) skeleton.hidden = false;
       grid.hidden = true;
       grid.replaceChildren();
       status.textContent = COPY.loading;
@@ -244,10 +292,22 @@
 
     function showRecipes(recipes) {
       errorBox.hidden = true;
+      setHint("");
       status.textContent = "";
+      if (emptyBox) emptyBox.hidden = true;
+      if (skeleton) skeleton.hidden = true;
       renderRecipeGrid(doc, grid, recipes);
       publishRecipes(doc, recipes);
       grid.hidden = false;
+    }
+
+    function showIdle() {
+      errorBox.hidden = true;
+      setHint("");
+      if (skeleton) skeleton.hidden = true;
+      if (emptyBox) emptyBox.hidden = false;
+      grid.hidden = true;
+      status.textContent = "";
     }
 
     function finish(timer) {
@@ -261,12 +321,15 @@
       var payload = buildGeneratePayload(pantry);
       if (!payload.ingredients.length) {
         gate.end();
-        showError(messageForFailure(400, { error: "empty_ingredients" }));
+        showError(
+          messageForFailure(400, { error: "empty_ingredients" }),
+          hintForFailure({ error: "empty_ingredients" })
+        );
         return;
       }
       if (!request) {
         gate.end();
-        showError(messageForFailure(0, { error: "network" }));
+        showError(messageForFailure(0, { error: "network" }), hintForFailure({ error: "network" }));
         return;
       }
 
@@ -301,19 +364,23 @@
             body = null;
           }
           if (!result.response.ok || !body || body.ok === false) {
-            showError(messageForFailure(result.response.status, body));
+            showError(messageForFailure(result.response.status, body), hintForFailure(body));
             return;
           }
           var recipes = selectRecipes(body.recipes);
           if (!recipes) {
-            showError(messageForFailure(502, { error: "bad_response" }));
+            showError(
+              messageForFailure(502, { error: "bad_response" }),
+              hintForFailure({ error: "bad_response" })
+            );
             return;
           }
           showRecipes(recipes);
         })
         .catch(function (err) {
           var aborted = err && (err.name === "AbortError" || err.code === 20);
-          showError(messageForFailure(0, { error: aborted ? "timeout" : "network" }));
+          var code = aborted ? "timeout" : "network";
+          showError(messageForFailure(0, { error: code }), hintForFailure({ error: code }));
         })
         .then(function () {
           finish(timer);
@@ -322,6 +389,7 @@
 
     suggestBtn.addEventListener("click", run);
     if (retryBtn) retryBtn.addEventListener("click", run);
+    showIdle();
   }
 
   function boot() {
@@ -334,9 +402,12 @@
   var api = {
     COPY: COPY,
     ERROR_COPY: ERROR_COPY,
+    SERVICE_HINT: SERVICE_HINT,
     ENDPOINT: ENDPOINT,
     buildGeneratePayload: buildGeneratePayload,
+    sanitizeDisplay: sanitizeDisplay,
     messageForFailure: messageForFailure,
+    hintForFailure: hintForFailure,
     formatCostToman: formatCostToman,
     selectRecipes: selectRecipes,
     createSubmitGate: createSubmitGate,

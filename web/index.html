@@ -45,12 +45,23 @@
           </div>
 
           <div id="empty" class="empty" data-testid="empty-state">
+            <div class="empty-art" aria-hidden="true">
+              <svg viewBox="0 0 80 80" width="80" height="80" focusable="false">
+                <rect x="16" y="30" width="48" height="28" rx="10" fill="#fff4e2" stroke="#c9842a" stroke-width="2" />
+                <path d="M26 30c1-10 27-10 28 0" fill="none" stroke="#9f3d24" stroke-width="2" />
+                <rect x="34" y="16" width="12" height="8" rx="3" fill="#9f3d24" />
+                <circle cx="32" cy="44" r="2.2" fill="#c9842a" />
+                <circle cx="40" cy="48" r="2.2" fill="#9f3d24" />
+                <circle cx="49" cy="43" r="2.2" fill="#c9842a" />
+              </svg>
+            </div>
             <p class="empty-title">هنوز چیزی در آشپزخانه نیست</p>
-            <p class="empty-help">یک ماده اضافه کنید یا نمونه را بارگذاری کنید.</p>
+            <p class="empty-help">نمونه را بارگذاری کنید، یک ماده بنویسید، یا با عکس یخچال شروع کنید.</p>
             <div id="empty-actions" class="empty-actions">
               <button type="button" id="seed" class="is-emphasis" data-testid="seed-button">
                 بارگذاری نمونه
               </button>
+              <label for="ingredient" id="empty-add" class="empty-cta" data-testid="empty-add">افزودن ماده</label>
             </div>
           </div>
 
@@ -77,7 +88,7 @@
             <button type="submit" data-testid="add-button">افزودن</button>
           </form>
 
-          <div class="fridge-launch">
+          <div class="fridge-launch" id="fridge-launch">
             <button
               type="button"
               id="fridge-open"
@@ -128,8 +139,18 @@
             </div>
           </div>
           <p id="recipe-status" class="status" role="status" aria-live="polite" data-testid="recipe-status"></p>
+          <div id="recipe-empty" class="empty recipe-empty" data-testid="recipe-empty">
+            <p class="empty-title">هنوز دستوری پیشنهاد نشده</p>
+            <p class="empty-help">بودجه هفته را وارد کنید و «پیشنهاد دستور» را بزنید.</p>
+          </div>
+          <div id="recipe-skeleton" class="recipe-skeleton" hidden data-testid="recipe-skeleton" aria-hidden="true">
+            <div class="skeleton-card"><span></span><span></span><span></span></div>
+            <div class="skeleton-card"><span></span><span></span><span></span></div>
+            <div class="skeleton-card"><span></span><span></span><span></span></div>
+          </div>
           <div id="recipe-error" class="recipe-error" role="alert" hidden data-testid="recipe-error">
             <p id="recipe-error-text" data-testid="recipe-error-text"></p>
+            <p id="recipe-error-hint" class="error-hint" hidden data-testid="recipe-error-hint"></p>
             <button type="button" id="recipe-retry" data-testid="recipe-retry">تلاش دوباره</button>
           </div>
           <div id="recipe-grid" class="recipe-grid" data-testid="recipe-grid" hidden></div>
@@ -197,10 +218,19 @@
 
         <p id="fridge-denied" class="fridge-note" hidden data-testid="fridge-denied"></p>
 
-        <p id="fridge-loading" class="status" role="status" aria-live="polite" hidden data-testid="fridge-loading">در حال تشخیص مواد…</p>
+        <div id="fridge-loading-panel" hidden data-testid="fridge-loading-panel">
+          <div id="fridge-preview-wrap" class="fridge-preview-wrap" hidden data-testid="fridge-preview-wrap">
+            <img id="fridge-preview" class="fridge-preview" alt="پیش‌نمایش عکس یخچال" data-testid="fridge-preview" />
+          </div>
+          <p id="fridge-loading" class="status" role="status" aria-live="polite" data-testid="fridge-loading">در حال تشخیص مواد…</p>
+          <div class="sheet-actions">
+            <button type="button" id="fridge-loading-cancel" data-testid="fridge-loading-cancel">انصراف</button>
+          </div>
+        </div>
 
         <div id="fridge-error" class="recipe-error" role="alert" hidden data-testid="fridge-error">
           <p id="fridge-error-text" data-testid="fridge-error-text"></p>
+          <p id="fridge-error-hint" class="error-hint" hidden data-testid="fridge-error-hint"></p>
           <button type="button" id="fridge-retry" data-testid="fridge-retry">تلاش دوباره</button>
         </div>
 

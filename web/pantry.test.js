@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const pantry = require("./pantry.js");
 
 const { SEED_STAPLES, STORAGE_KEY, createPantry, createMemoryStorage, identityKey } = pantry;
@@ -144,4 +146,17 @@ test("storage failures stay in memory", () => {
   const store = createPantry({ storage });
   assert.equal(store.add("روغن").ok, true);
   assert.deepEqual(store.items(), ["روغن"]);
+});
+
+test("empty pantry copy offers seed, a chip, and a fridge photo", () => {
+  const html = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+  assert.match(html, /هنوز چیزی در آشپزخانه نیست/);
+  assert.match(html, /empty-art/);
+  assert.match(html, /id="empty-add"/);
+  assert.match(html, /for="ingredient"/);
+  assert.match(html, /افزودن ماده/);
+  assert.match(html, /id="fridge-launch"/);
+  assert.match(html, /id="seed"/);
+  assert.match(html, /عکس یخچال/);
+  assert.equal(html.includes(["GAP", "CODE", "API", "KEY"].join("_")), false);
 });
