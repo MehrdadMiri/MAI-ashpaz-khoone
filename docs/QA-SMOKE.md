@@ -1,18 +1,47 @@
-# QA smoke — آشپزخونه
+# QA smoke — آشپزخونه v0.2.0
 
-Release check for the Persian RTL meal demo after empty, loading, and error states are in place (US-08, Designs §4), plus leftover-aware regenerate (remaining chips / skip eaten dinners).
+Release gate for tag `v0.2.0`. `v0.1.0` is already tagged (pantry chips, one fridge photo, recipe cards, the 7-day plan, and the empty, loading, and error polish). This checklist is the full path that must be green before that next tag. It keeps the v0.1 path and adds the v0.2 theme:
 
-Do **not** create the `v0.1.0` tag from this checklist. Tagging is ticket #8, and only after this path is green.
+| v0.2 feature | Step |
+| --- | --- |
+| Shopping list (مواد خرید) | 7b |
+| Leftover-aware regenerate | 5b |
+| Multi-photo fridge vision | 3b |
+| Postgres pantry/plan persist + localStorage fallback | 7c |
+| Nutrition on cards (soft-fail) | 4c |
+| Share/print week (`#p=` + A4 poster) | 7 |
+| Diet filters (گیاهی / بدون پیاز / مناسب دیابت) | 4b |
+| PWA install (manifest, service worker shell-only, install note) | 9 |
 
-Do **not** create a `v0.2.0` tag from the leftover checks below. Those checks are the smoke for this slice only.
+Do **not** create the `v0.2.0` tag or a GitHub Release from this checklist. SE tags after this path is green. Short notes for that tag are [RELEASE.md](RELEASE.md).
 
-The key never goes in git, the shell history, a screenshot, or a log paste. Put `GAP_CODE_API_KEY` only in the gitignored `.env` or the environment. Confirm it without printing it:
+## Repo and secrets
+
+The GitHub repository is public: https://github.com/MehrdadMiri/MAI-ashpaz-khoone
+
+- `.gitignore` ignores `.env` and `.env.*`, and keeps `.env.example`.
+- `.env.example` is placeholders only. `GAP_CODE_API_KEY=` is empty. `GAPGPT_MODEL` is `gpt-5.6-luna`. `POSTGRES_PASSWORD` is the local placeholder `change-me`.
+- No real `GAP_CODE_API_KEY` belongs in git, the shell history, a screenshot, or a log paste. Put the key only in the gitignored `.env` or the environment.
+
+Confirm before the rest of the gate. The last command should print nothing (exit 1): the example key line has no value.
+
+```bash
+git check-ignore -v .env
+git grep -n '^GAP_CODE_API_KEY=' -- .env.example
+git grep -n '^GAP_CODE_API_KEY=.' -- .env.example
+```
+
+Expected: `.gitignore` matches `.env`, and `.env.example` shows `GAP_CODE_API_KEY=` with nothing after the equals sign.
+
+Confirm a loaded key without printing it:
 
 ```bash
 test -n "$GAP_CODE_API_KEY" && echo "GAP_CODE_API_KEY is set (value hidden)"
 ```
 
-Automated checks (no key, no network):
+## Automated checks
+
+No key and no network:
 
 ```bash
 node --test web/pantry.test.js web/recipes.test.js web/fridge.test.js web/plan.test.js web/shop.test.js web/persist.test.js web/pwa.test.js
@@ -21,7 +50,7 @@ cd api && python3 -m unittest discover -s tests -v
 
 `LiveSmokeTest` stays skipped unless `GAPGPT_LIVE_SMOKE=1`.
 
-Installability is `web/pwa.test.js` plus the footer line «افزودن به صفحهٔ اصلی». Chrome can install from http://localhost:8080; any other host needs HTTPS. The service worker caches the page shell only and does not call GapGPT.
+Installability is `web/pwa.test.js` plus the footer line «افزودن به صفحهٔ اصلی» (step 9). Chrome can install from http://localhost:8080; any other host needs HTTPS. The service worker caches the page shell only and does not call GapGPT.
 
 ## Checklist
 
@@ -39,7 +68,7 @@ Wait until `web`, `api`, and `db` are healthy (`docker compose ps`).
 
 - Open http://localhost:8080. The page is Persian, right to left, title آشپزخونه.
 - `curl -fsS http://localhost:8080/health` returns `ok`.
-- `curl -fsS http://localhost:8000/health` is JSON with `"status": "ok"` and `"gapgpt": {"configured": true, ...}`. The body must not contain the key.
+- `curl -fsS http://localhost:8000/health` is JSON with `"status": "ok"` and `"gapgpt": {"configured": true, ...}`. The body must not contain the key. `model` is `gpt-5.6-luna` unless `GAPGPT_MODEL` was changed.
 
 ### 2. Seed — at least eight chips
 
@@ -58,7 +87,7 @@ On a fresh browser profile (or after «پاک کردن»):
 
 ### 3b. Several fridge photos — confidence and merged names
 
-This check does not create a `v0.2.0` tag. Up to six photos share one confirm flow.
+Up to six photos share one confirm flow. This step is part of the v0.2.0 gate. The tag itself is step 10.
 
 - Add at least two photos before detection: multi-select in «انتخاب عکس», or «ثبت این عکس» twice, or one of each plus «عکس دیگر». The tray lists them in that order. «حذف» drops one and keeps the rest in order.
 - «تشخیص مواد» sends one request. The sheet shows those photos and «در حال تشخیص مواد…». Cancel still adds nothing.
@@ -82,7 +111,7 @@ curl -sS -X POST http://localhost:8000/vision/fridge \
 
 Missing key: HTTP 503, `"error": "not_configured"`. Invalid key: HTTP 502, `"error": "unauthorized"`.
 
-Live smoke with a real key only in the host file `…/MAI/.env` (or this repo’s gitignored `.env`). Do not echo the value. Do not tag `v0.2.0`.
+Live smoke with a real key only in the host file `…/MAI/.env` (or this repo’s gitignored `.env`). Do not echo the value. Do not tag `v0.2.0` from this step.
 
 ```bash
 set -a
@@ -100,9 +129,48 @@ Repeat the two-photo curl with real fridge JPEGs instead of the tiny file. Expec
 - Set «بودجه هفته» to a number such as `1500000`.
 - Before the first success, the recipe panel asks you to set the budget and press «پیشنهاد دستور».
 - Press «پیشنهاد دستور» once. The status is «در حال پختن ایده‌ها…», skeleton cards show, and the button does not send a second request while the first is in flight.
-- Three chips, «گیاهی», «بدون پیاز», and «مناسب دیابت», sit under the recipe actions. Toggle any combination. Reload the page; the same chips stay on. Generate still returns at least three cards. The status line names the chips that were on. Turning a chip off and generating again is allowed.
 - At least three Persian cards appear. Each has a title, ingredient tags, and steps. Spot-check them against the pantry names. A تومان badge appears when the model returned a cost.
-- After the cards appear, each one may show «حدود … کیلوکالری در هر وعده», and protein, carbohydrate, and fat when those numbers came back. The card says «این عددها برآورد هوش مصنوعی هستند، نه مقدار دقیق غذا.» If the estimate call fails, the cards stay and that block is absent. It does not use the recipe error or «تلاش دوباره».
+- Continue with 4b and 4c before leaving these cards.
+
+### 4b. Diet filters
+
+Three chips sit under the recipe actions: «گیاهی», «بدون پیاز», and «مناسب دیابت». The group label is «محدودیت غذایی».
+
+- Each chip toggles on its own. Any combination is allowed, including all three and none.
+- Turn on «گیاهی» and «مناسب دیابت». Leave «بدون پیاز» off. Press «پیشنهاد دستور». At least three cards still appear. The status line includes «با محدودیت گیاهی، مناسب دیابت.» and does not name «بدون پیاز».
+- Reload http://localhost:8080. The same chips stay on. They are stored with the pantry (`filters` on `ashpaz-khoone.pantry.v1` and on the Postgres pantry row).
+- Turn every chip off and generate again. That call is allowed, and the status line does not say «با محدودیت».
+- «پاک کردن» empties the pantry chips and leaves the diet chips as they are.
+
+Shell, key missing or invalid (the body must not contain the key or a traceback):
+
+```bash
+curl -sS -X POST http://localhost:8000/recipes/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"ingredients":["برنج","عدس","ماست"],"budget":1500000,"filters":{"vegetarian":true,"no_onion":true,"diabetic":false}}'
+```
+
+Missing key: HTTP 503, `"error": "not_configured"`. Invalid key: HTTP 502, `"error": "unauthorized"`. A filter value that is not `true` or `false` is HTTP 400, `"error": "invalid_request"`, and the message does not echo that value.
+
+Live smoke uses the same key file as step 3b. Do not echo the value. Expected HTTP 200, `"ok": true`, and three recipes. The body must not contain the key.
+
+### 4c. Nutrition on the cards (soft-fail)
+
+After the cards from step 4 are on the page, the browser calls `POST /api/recipes/nutrition`. That call can fail without removing the cards.
+
+- While the estimate runs, each card may show «در حال برآورد کالری…».
+- When numbers come back, the card shows «حدود … کیلوکالری در هر وعده», and protein, carbohydrate, and fat when those numbers came back. The card says «این عددها برآورد هوش مصنوعی هستند، نه مقدار دقیق غذا.»
+- If the estimate call fails, the cards stay and that block is absent. It does not use the recipe error or «تلاش دوباره». A generate failure is separate and still uses that error.
+
+Without a key, nutrition is HTTP 200 and does not fail the recipe route. The body must not contain the key:
+
+```bash
+curl -sS -X POST http://localhost:8000/recipes/nutrition \
+  -H 'Content-Type: application/json' \
+  -d '{"recipes":[{"title":"عدس‌پلو","ingredients":["برنج","عدس"],"steps":["عدس را بپز","برنج را دم کن","سرو کن"]}]}'
+```
+
+Expected: HTTP 200, `"available": false`, and `null` for that recipe. With a real key in the gitignored `.env` only, the same call is HTTP 200, `"available": true`, and a `kcal` on each estimate the model could read. Do not echo the key.
 
 ### 5. Seven-day plan
 
@@ -113,12 +181,13 @@ Repeat the two-photo curl with real fridge JPEGs instead of the tiny file. Expec
 
 ### 5b. Leftover regenerate vs full regenerate
 
-Needs at least one filled day (step 5) and the sample chips (step 2). This check does not create a `v0.2.0` tag.
+Needs at least one filled day (step 5) and the sample chips (step 2). This step is part of the v0.2.0 gate. The tag itself is step 10.
 
 - Mark شنبه «خورده شد». The card shows the dinner is eaten. The other days and the chips stay.
 - Press «پیشنهاد دستور». The request uses the chips that dinner did not use, and it skips that dinner’s title. The week budget is still sent. At least three new cards replace the previous cards. شنبه stays the eaten dinner. The pantry chips are unchanged.
 - Press «بازتولید کامل». This call uses every chip, keeps the same budget, and does not skip the eaten title. The cards refresh. The chips and the eaten mark stay.
 - If the eaten dinners have used every chip, «پیشنهاد دستور» does not call the API. It asks you to add a chip or press «بازتولید کامل». «بازتولید کامل» still calls with the full chip list.
+- Diet chips that are still on (step 4b) stay on for both buttons. The status line still names them.
 
 Shell, key missing or invalid (the body must not contain the key or a traceback):
 
@@ -134,7 +203,7 @@ curl -sS -X POST http://localhost:8000/recipes/generate \
 
 Missing key: HTTP 503, `"error": "not_configured"`. Invalid key: HTTP 502, `"error": "unauthorized"`. Empty `remaining` without `"full": true` is HTTP 400, `"error": "no_remaining"`, and does not call GapGPT.
 
-Live smoke with a real key only in the host file `…/MAI/.env` (or this repo’s gitignored `.env`). Do not echo the value. Do not tag `v0.2.0`.
+Live smoke with a real key only in the host file `…/MAI/.env` (or this repo’s gitignored `.env`). Do not echo the value. Do not tag `v0.2.0` from this step.
 
 ```bash
 set -a
@@ -152,16 +221,16 @@ Repeat the two curls. Leftover: HTTP 200, `"mode": "leftovers"`, three recipes, 
 - Remove one chip and add a different ingredient.
 - Press «پیشنهاد دستور» again. A new set of at least three cards replaces the previous set. The pantry chips you just edited are still there. The week keeps the dinners already assigned unless you change them.
 
-### 7. Export and print
+### 7. Share and print the week
 
 - «چاپ / خروجی» → «چاپ». The preview is an A4 poster: white, Persian, right to left. Each day is one block («روز», weekday, «وعده», شام, title or «خالی») and is not split across pages. Pantry, recipe controls, and sheets are not in the preview. An empty week also shows «برنامه هفته خالی است».
-- «کپی لینک» copies a `#p=` link that reopens the same seven days, including an empty week. The link does not contain `local_user_id` or an API key.
+- «کپی لینک» copies a `#p=` link that reopens the same seven days, including an empty week. The link does not contain `local_user_id` or an API key. Opening it in this browser replaces the week; Postgres then stores that week under this browser’s own id.
 - «چاپ / خروجی» → «دانلود مارک‌داون» saves `برنامه-۷-روزه.md` with one line per day.
-- If the summed شام costs are over «بودجه هفته», the plan line says «بیشتر از بودجه هفته» and that چاپ و خروجی are still allowed. Print and download still work. The warning does not block them.
+- If the summed شام costs are over «بودجه هفته», the plan line says «بیشتر از بودجه هفته» and چاپ و خروجی are still allowed. Print and download still work. The warning does not block them.
 
 ### 7b. مواد خرید
 
-After the week has at least one شام (step 5) and the pantry has chips (step 2). This check does not call GapGPT and does not create a `v0.2.0` tag.
+After the week has at least one شام (step 5) and the pantry has chips (step 2). This check does not call GapGPT. It is part of the v0.2.0 gate. The tag itself is step 10.
 
 - «مواد خرید» on the plan scrolls to the shopping list.
 - Rows are ingredients on the planned dinners that are not already chips. A chip covers the usual spelling variants (spacing, ZWNJ, Arabic/Persian letters).
@@ -175,11 +244,18 @@ Without a key, the same list can be checked after «بارگذاری نمونه�
 
 ### 7c. Pantry and plan survive refresh
 
-With `db` and `api` healthy. No API key. This check does not create a release tag.
+With `db` and `api` healthy. No API key is required. This step is part of the v0.2.0 gate.
 
-- Add a chip and a week budget. Reload http://localhost:8080. The chip and the budget are still there.
+- Add a chip and a week budget. Turn on one diet chip (step 4b). Reload http://localhost:8080. The chip, the budget, and that diet chip are still there.
 - Assign a شام and mark «خورده شد». Reload. The day and the mark are still there.
-- Stop the api container and reload. The same browser still shows the cached chips and plan. Start api again and reload. The saved rows are back.
+- In this browser, `localStorage` holds `ashpaz-khoone.pantry.v1` (chips, budget, `filters`) and `ashpaz-khoone.plan.v1` (the week, including «خورده شد»). The browser id is `ashpaz-khoone.local-user.v1`. None of those values is `GAP_CODE_API_KEY`.
+- Stop the api container and reload. The same browser still shows that cached pantry and plan. Start api again and reload. The saved Postgres rows are back, including the diet filters.
+
+```bash
+docker compose stop api
+# Reload http://localhost:8080 and confirm the cached chips and week.
+docker compose start api
+```
 
 ### 8. Break the key — Persian error and retry — restore
 
@@ -192,7 +268,8 @@ docker compose up -d --force-recreate api
 - «پیشنهاد دستور» shows «در حال پختن ایده‌ها…», then a short Persian error and «تلاش دوباره». The hint may name `GAP_CODE_API_KEY` and docker compose logs. It must not show the key value, a stack trace, or the raw server body. The pantry chips stay.
 - «عکس یخچال» with one or two JPEGs, then «تشخیص مواد», does the same for vision: Persian error, «تلاش دوباره», preview only while the request was running, pantry unchanged.
 - «تلاش دوباره» sends the request again and shows the same friendly error while the key is still bad. The page does not crash.
-- Put the real key back in `.env` only, recreate api, and repeat steps 4 and 3. Generate returns at least three cards. A fridge photo can be confirmed into the pantry again.
+- Repeat the nutrition curl in step 4c. It stays HTTP 200 with `"available": false`. It does not use the recipe error.
+- Put the real key back in `.env` only, recreate api, and repeat steps 4 and 3. Generate returns at least three cards. A fridge photo can be confirmed into the pantry again. Step 4c can show a calorie line again.
 
 Shell spot-check while the key is missing or invalid (the body must not contain the key or a traceback):
 
@@ -204,6 +281,26 @@ curl -sS -X POST http://localhost:8000/recipes/generate \
 
 Missing key: HTTP 503, `"error": "not_configured"`. Invalid key: HTTP 502, `"error": "unauthorized"`.
 
-### 9. Tag is the next ticket
+### 9. Install to the home screen
 
-When steps 1–8 pass, stop. `v0.1.0` is ticket #8. This checklist does not create that tag.
+No API key. The footer install note on http://localhost:8080 is: برای نصب برنامه، در منوی مرورگر «افزودن به صفحهٔ اصلی» را بزنید.
+
+Manifest and service worker (the worker body must not contain `GAP_CODE_API_KEY`):
+
+```bash
+curl -sSI http://localhost:8080/manifest.webmanifest
+curl -fsS http://localhost:8080/manifest.webmanifest
+curl -sSI http://localhost:8080/sw.js
+curl -fsS http://localhost:8080/sw.js
+```
+
+- The manifest is `Content-Type: application/manifest+json; charset=utf-8` and `Cache-Control: no-cache`. `name` and `short_name` are آشپزخونه, `lang` is `fa`, `dir` is `rtl`, `start_url` and `scope` are `/`, `display` is `standalone`. Icons include 192 and 512, both `any` and `maskable`. The file has no API key.
+- `/sw.js` is `Content-Type: application/javascript; charset=utf-8` and `Cache-Control: no-cache`. It is the worker, not the pantry HTML. It caches the page shell (`/`, CSS, scripts, fonts, manifest, icons) and does not intercept `/api/` or `/health`.
+- Chrome can install from http://localhost:8080. Any other host needs HTTPS. After install, the app opens standalone on `/`.
+- With the worker active, recipe generation, fridge photos, and the key still go to the api. The worker does not call GapGPT. Stopping the network still serves the cached shell; `/api/` does not come from that cache.
+
+`node --test web/pwa.test.js` covers the same manifest, icon, worker, and install-note checks without a browser.
+
+### 10. Tag is SE, after this gate
+
+When every step above is green, stop. Do not create tag `v0.2.0` and do not publish a GitHub Release. SE tags `v0.2.0` after this checklist is green. The release notes for that tag are [RELEASE.md](RELEASE.md).
