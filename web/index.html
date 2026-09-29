@@ -164,12 +164,14 @@
         <section class="panel plan-panel" id="plan" aria-labelledby="plan-title">
           <div class="panel-head plan-head">
             <div>
-              <p class="print-only">آشپزخونه</p>
+              <p class="print-only plan-poster-brand">آشپزخونه</p>
               <h2 id="plan-title">برنامه ۷ روزه</h2>
-              <p class="hint">شام هر روز، از شنبه تا جمعه.</p>
+              <p class="hint plan-screen-hint">شام هر روز، از شنبه تا جمعه.</p>
+              <p class="print-only plan-poster-range">هفت وعده شام، از شنبه تا جمعه</p>
             </div>
             <div class="plan-toolbar">
               <button type="button" id="shop-open" data-testid="shop-open">مواد خرید</button>
+              <button type="button" id="plan-share" data-testid="plan-share">کپی لینک</button>
               <button
                 type="button"
                 id="plan-export"
@@ -183,6 +185,12 @@
           </div>
           <p id="plan-budget" class="budget-strip" data-testid="plan-budget" hidden></p>
           <p id="plan-status" class="status" role="status" aria-live="polite" data-testid="plan-status"></p>
+          <div id="plan-empty" class="empty plan-empty" data-testid="plan-empty">
+            <p class="empty-title">برنامه هفته خالی است</p>
+            <p class="empty-help">
+              هنوز شامی برای شنبه تا جمعه چیده نشده. لینک اشتراک و چاپ پوستر برای همین برنامه خالی هم کار می‌کنند.
+            </p>
+          </div>
           <div id="week-grid" class="week-grid" data-testid="week-grid" aria-label="برنامه ۷ روزه"></div>
         </section>
 
@@ -348,6 +356,20 @@
           <button type="button" id="plan-sheet-close" data-testid="plan-sheet-close" aria-label="بستن">×</button>
         </div>
         <p id="plan-sheet-hint" class="hint" data-testid="plan-sheet-hint"></p>
+        <div id="plan-share-box" class="plan-share" hidden data-testid="plan-share-box">
+          <label class="plan-share-label" for="plan-share-url">لینک برنامه</label>
+          <input
+            id="plan-share-url"
+            class="plan-share-url"
+            type="text"
+            readonly
+            dir="ltr"
+            spellcheck="false"
+            autocomplete="off"
+            data-testid="plan-share-url"
+          />
+          <button type="button" id="plan-share-copy" data-testid="plan-share-copy">کپی لینک</button>
+        </div>
         <ul id="plan-sheet-list" class="confirm-list plan-choice-list" data-testid="plan-sheet-list"></ul>
         <div class="sheet-actions">
           <button type="button" id="plan-sheet-cancel" data-testid="plan-sheet-cancel">انصراف</button>

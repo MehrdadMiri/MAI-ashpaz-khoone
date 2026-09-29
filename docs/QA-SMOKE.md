@@ -151,7 +151,8 @@ Repeat the two curls. Leftover: HTTP 200, `"mode": "leftovers"`, three recipes, 
 
 ### 7. Export and print
 
-- «چاپ / خروجی» → «چاپ». The preview is white, Persian, and shows the seven days (title or «خالی»). Pantry, recipe controls, and sheets are not in the preview.
+- «چاپ / خروجی» → «چاپ». The preview is an A4 poster: white, Persian, right to left. Each day is one block («روز», weekday, «وعده», شام, title or «خالی») and is not split across pages. Pantry, recipe controls, and sheets are not in the preview. An empty week also shows «برنامه هفته خالی است».
+- «کپی لینک» copies a `#p=` link that reopens the same seven days, including an empty week. The link does not contain `local_user_id` or an API key.
 - «چاپ / خروجی» → «دانلود مارک‌داون» saves `برنامه-۷-روزه.md` with one line per day.
 - If the summed شام costs are over «بودجه هفته», the plan line says «بیشتر از بودجه هفته» and that چاپ و خروجی are still allowed. Print and download still work. The warning does not block them.
 

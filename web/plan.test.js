@@ -6,7 +6,7 @@ const path = require("node:path");
 require("./pantry.js");
 const recipes = require("./recipes.js");
 const plan = require("./plan.js");
-require("./shop.js");
+const shop = require("./shop.js");
 
 const { COPY, DAYS, STORAGE_KEY, MAX_RECIPES } = plan;
 
@@ -88,8 +88,13 @@ function fakeDocument() {
   }
   register("build-plan", "button");
   register("plan-export", "button");
+  register("plan-share", "button");
   register("plan-status", "p");
   register("plan-budget", "p", true);
+  register("plan-empty", "div");
+  register("plan-share-box", "div", true);
+  register("plan-share-url", "input");
+  register("plan-share-copy", "button");
   nodes["plan-budget"].className = "budget-strip";
   register("week-grid", "div");
   register("plan", "section");
@@ -612,10 +617,15 @@ test("the page, stylesheet, and image wire the plan without an API key", () => {
   const docker = fs.readFileSync(path.join(__dirname, "Dockerfile"), "utf8");
   assert.match(html, /id="build-plan"/);
   assert.match(html, /id="plan-export"/);
+  assert.match(html, /id="plan-share"/);
+  assert.match(html, /id="plan-share-url"/);
+  assert.match(html, /id="plan-empty"/);
   assert.match(html, /id="week-grid"/);
   assert.match(html, /id="plan-sheet"/);
   assert.match(html, />برنامه ۷ روزه</);
   assert.match(html, /چاپ \/ خروجی/);
+  assert.match(html, /کپی لینک/);
+  assert.match(html, /برنامه هفته خالی است/);
   assert.ok(html.indexOf("recipes.js") < html.indexOf("plan.js"));
   assert.equal(html.includes("GAP_CODE_API_KEY"), false);
   assert.equal(script.includes("GAP_CODE_API_KEY"), false);
@@ -632,5 +642,252 @@ test("the page, stylesheet, and image wire the plan without an API key", () => {
   assert.match(printCss, /\.day-eaten/);
   assert.match(printCss, /#fff/);
   assert.match(printCss, /Vazirmatn/);
+  assert.match(printCss, /A4/);
+  assert.match(printCss, /direction:\s*rtl/);
+  assert.match(printCss, /page-break-inside:\s*avoid/);
+  assert.match(printCss, /break-inside:\s*avoid/);
+  assert.match(printCss, /content:\s*"روز"/);
+  assert.match(printCss, /content:\s*"وعده"/);
+  assert.match(printCss, /#plan-empty\[hidden\]/);
   assert.equal(printCss.includes("#week-grid"), false);
+});
+
+test("share encode and decode round-trip the week and drop secrets", () => {
+  const model = fresh();
+  model.assign("sat", THREE[0]);
+  model.assign("tue", dish("لوبیا پلو", ["برنج", "۲۰۰ گرم گوشت"], ["لوبیا را بپز"], 160000));
+  model.setUsed("sat", true);
+  const snapshot = model.snapshot();
+  snapshot.local_user_id = "local-user-demo1";
+  snapshot.env = { POSTGRES_PASSWORD: "hunter2" };
+  snapshot.recipes[0].api_key = "sk-live-secret";
+  snapshot.recipes[0].ingredients = snapshot.recipes[0].ingredients.concat(["GAP_CODE_API_KEY=sk-should-not-leak"]);
+
+  const token = plan.encodeShare(snapshot);
+  const packed = JSON.parse(Buffer.from(token, "base64url").toString("utf8"));
+  assert.equal(packed.v, 1);
+  assert.equal(packed.days[0].id, "sat");
+  assert.equal(packed.days[0].title, "عدس‌پلو");
+  assert.equal(packed.days[0].used, true);
+  assert.equal(packed.days[0].cost, 180000);
+  assert.deepEqual(packed.days[0].ingredients, ["برنج", "عدس"]);
+  assert.equal(JSON.stringify(packed).includes("GAP_CODE"), false);
+  assert.equal(JSON.stringify(packed).includes("hunter2"), false);
+  assert.equal(JSON.stringify(packed).includes("sk-live"), false);
+  assert.equal(JSON.stringify(packed).includes("local_user"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(packed, "local_user_id"), false);
+
+  const decoded = plan.decodeShare(token);
+  assert.equal(decoded.ok, true);
+  assert.equal(decoded.empty, false);
+  const again = fresh();
+  const applied = again.applyShare(token);
+  assert.equal(applied.ok, true);
+  assert.equal(applied.empty, false);
+  assert.equal(again.week()[0].recipe.title, "عدس‌پلو");
+  assert.equal(again.week()[0].used, true);
+  assert.deepEqual(again.week()[0].recipe.steps, ["پیاز را تفت بده", "عدس را بپز"]);
+  assert.equal(again.week()[3].recipe.title, "لوبیا پلو");
+  assert.equal(again.week()[3].recipe.ingredients[1], "۲۰۰ گرم گوشت");
+  assert.equal(again.week()[3].label, "سه‌شنبه");
+  assert.equal(again.week()[1].recipe, null);
+  const list = shop.buildShoppingList(["برنج"], again.week());
+  assert.equal(
+    list.categories.some((group) => group.items.some((item) => item.name === "گوشت")),
+    true,
+  );
+
+  const href = plan.shareHref(
+    {
+      origin: "http://localhost:8080",
+      pathname: "/",
+      search: "?local_user_id=local-user-demo1&GAP_CODE_API_KEY=nope",
+      hash: "",
+    },
+    token,
+  );
+  assert.equal(href, "http://localhost:8080/#p=" + token);
+  assert.equal(href.includes("local_user_id"), false);
+  assert.equal(href.includes("GAP_CODE"), false);
+  assert.equal(plan.shareTokenFromLocation({ hash: "#p=" + token }), token);
+});
+
+test("a secret inside the share payload is refused and an empty week still reopens", () => {
+  const model = fresh();
+  model.assign("fri", THREE[2]);
+  const bad = Buffer.from(
+    JSON.stringify({
+      v: 1,
+      days: [{ id: "sat", title: "عدس‌پلو", GAP_CODE_API_KEY: "sk-test" }],
+      local_user_id: "local-user-demo1",
+    }),
+    "utf8",
+  ).toString("base64url");
+  const refused = model.applyShare(bad);
+  assert.equal(refused.ok, false);
+  assert.equal(refused.reason, "secret");
+  assert.equal(model.week()[6].recipe.title, "ماست و خیار");
+  assert.equal(plan.decodeShare(bad).plan, undefined);
+
+  const emptyToken = plan.encodeShare({ recipes: [], slots: {}, used: {} });
+  const storage = plan.createMemoryStorage();
+  const emptyModel = plan.createPlan({ storage });
+  emptyModel.assign("sat", THREE[0]);
+  const opened = emptyModel.applyShare(emptyToken);
+  assert.equal(opened.ok, true);
+  assert.equal(opened.empty, true);
+  assert.equal(emptyModel.week().every((day) => day.recipe === null), true);
+  const meta = JSON.parse(storage.getItem(plan.SYNC_META_KEY));
+  assert.ok(meta.planRev > meta.planSyncedRev);
+  assert.equal(plan.decodeShare("@@@").ok, false);
+  assert.equal(plan.decodeShare("a".repeat(24001)).reason, "size");
+
+  const renamed = Buffer.from(
+    JSON.stringify({ v: 1, days: [{ id: "tue", title: "عدس‌پلو", label: "Monday" }] }),
+    "utf8",
+  ).toString("base64url");
+  const renamedModel = fresh();
+  assert.equal(renamedModel.applyShare(renamed).ok, true);
+  assert.equal(renamedModel.week()[3].label, "سه‌شنبه");
+  assert.equal(renamedModel.week()[3].recipe.title, "عدس‌پلو");
+});
+
+test("poster outline names روز and وعده, including an empty week", () => {
+  const model = fresh();
+  const emptyPoster = plan.posterOutline(model.week());
+  assert.equal(emptyPoster.empty, true);
+  assert.equal(emptyPoster.emptyTitle, COPY.emptyPlanTitle);
+  assert.equal(emptyPoster.brand, "آشپزخونه");
+  assert.equal(emptyPoster.days.length, 7);
+  assert.deepEqual(
+    emptyPoster.days.map((day) => day.dayLabel),
+    ["شنبه", "یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه"],
+  );
+  emptyPoster.days.forEach((day) => {
+    assert.equal(day.dayRole, "روز");
+    assert.equal(day.mealRole, "وعده");
+    assert.equal(day.mealLabel, "شام");
+    assert.equal(day.title, "خالی");
+    assert.equal(day.empty, true);
+  });
+
+  model.assign("thu", THREE[1]);
+  model.setUsed("thu", true);
+  const poster = plan.posterOutline(model.week());
+  assert.equal(poster.empty, false);
+  assert.equal(poster.days[5].dayLabel, "پنجشنبه");
+  assert.equal(poster.days[5].title, "لوبیا پلو");
+  assert.equal(poster.days[5].eaten, true);
+  assert.equal(poster.days[0].title, "خالی");
+});
+
+test("کپی لینک copies a hash the page can reopen, and an empty plan says so", () => {
+  const copied = [];
+  const view = mountPlan({ latest: THREE, budget: null });
+  view.doc.nodes["plan-share"] = view.doc.nodes["plan-share"];
+  assert.equal(view.doc.nodes["plan-empty"].hidden, false);
+  const loc = { origin: "http://localhost:8080", pathname: "/app/", search: "?local_user_id=abc", hash: "" };
+  plan.mount(view.doc, view.model, {
+    latest() {
+      return THREE;
+    },
+    budget() {
+      return null;
+    },
+    location: loc,
+    copy(text) {
+      copied.push(text);
+    },
+    print() {},
+    download() {},
+  });
+  view.doc.nodes["plan-share"].listeners.click();
+  assert.equal(copied.length, 1);
+  assert.match(copied[0], /^http:\/\/localhost:8080\/app\/#p=[A-Za-z0-9_-]+$/);
+  assert.equal(copied[0].includes("?"), false);
+  assert.equal(view.doc.nodes["plan-status"].textContent, COPY.shareCopied);
+
+  view.doc.nodes["plan-export"].listeners.click();
+  assert.equal(view.doc.nodes["plan-share-box"].hidden, false);
+  assert.equal(view.doc.nodes["plan-share-url"].value, copied[0]);
+  const printChoice = sheetChoices(view.doc).find((button) => button.dataset.choice === "print");
+  assert.match(printChoice.children[1].textContent, /روز و وعده/);
+
+  const token = copied[0].split("#p=")[1];
+  const other = fresh();
+  const incoming = {
+    origin: "http://localhost:8080",
+    pathname: "/",
+    search: "",
+    hash: "#p=" + token,
+  };
+  const doc = fakeDocument();
+  plan.mount(doc, other, {
+    location: incoming,
+    latest() {
+      return [];
+    },
+    budget() {
+      return null;
+    },
+  });
+  assert.equal(incoming.hash, "");
+  assert.equal(doc.nodes["plan-status"].textContent, COPY.shareEmptyOpened);
+  assert.equal(doc.nodes["plan-empty"].hidden, false);
+  assert.equal(other.week().every((day) => day.recipe === null), true);
+
+  view.doc.nodes["build-plan"].listeners.click();
+  assert.equal(view.doc.nodes["plan-empty"].hidden, true);
+  const filled = [];
+  view.doc.nodes["plan-share"].listeners.click();
+  filled.push(copied[copied.length - 1]);
+  const reopened = fresh();
+  assert.equal(reopened.applyShare(filled[0].split("#p=")[1]).ok, true);
+  assert.equal(reopened.week()[0].recipe.title, "عدس‌پلو");
+  assert.equal(reopened.week()[6].recipe.title, "عدس‌پلو");
+});
+
+test("a failed copy leaves the share field selected, and a bad link keeps the week", () => {
+  const view = mountPlan({});
+  view.model.assign("sun", THREE[1]);
+  const doc = view.doc;
+  plan.mount(doc, view.model, {
+    latest() {
+      return [];
+    },
+    budget() {
+      return null;
+    },
+    copy() {
+      return false;
+    },
+  });
+  doc.nodes["plan-share-url"].select = function () {
+    doc.nodes["plan-share-url"].selected = true;
+  };
+  doc.nodes["plan-share"].listeners.click();
+  assert.equal(doc.nodes["plan-status"].textContent, COPY.shareReady);
+  assert.equal(doc.nodes["plan-sheet"].hidden, false);
+  assert.equal(doc.nodes["plan-share-box"].hidden, false);
+  assert.equal(doc.nodes["plan-share-url"].selected, true);
+  assert.match(doc.nodes["plan-share-url"].value, /#p=/);
+  click(doc, doc.nodes["plan-share-copy"]);
+  assert.equal(doc.nodes["plan-sheet"].hidden, false);
+  assert.equal(view.model.week()[1].recipe.title, "لوبیا پلو");
+
+  const kept = fresh();
+  kept.assign("mon", THREE[0]);
+  const badDoc = fakeDocument();
+  plan.mount(badDoc, kept, {
+    location: { origin: "http://localhost:8080", pathname: "/", hash: "#p=not-a-plan", search: "" },
+    latest() {
+      return [];
+    },
+    budget() {
+      return null;
+    },
+  });
+  assert.equal(badDoc.nodes["plan-status"].textContent, COPY.shareBad);
+  assert.equal(kept.week()[2].recipe.title, "عدس‌پلو");
+  assert.equal(kept.week()[0].recipe, null);
 });

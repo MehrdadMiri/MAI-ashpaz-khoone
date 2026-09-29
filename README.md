@@ -225,9 +225,10 @@ The week is شنبه through جمعه, one شام per day. An empty day shows «
 - On a filled day, «جایگزین» opens that list, plus «خالی» to clear the day.
 - «خورده شد» on a filled day marks that شام as eaten. Press it again to undo. Replacing or clearing the day clears the mark. The mark is stored on the plan (`used`), in Postgres and in `ashpaz-khoone.plan.v1`, and is what leftover regenerate skips. Print and Markdown add «خورده شد» on that day. Empty days have no toggle.
 - If the week budget is set and a recipe has a تومان cost, a line under the title sums the شام costs. When the sum is over the budget the line says so and adds that چاپ و خروجی are still allowed. You can still assign, swap, print, and download.
-- «چاپ / خروجی» opens a sheet with «چاپ» and «دانلود مارک‌داون».
+- «کپی لینک» copies a link that reopens this week. The link is only a `#p=` hash on this page: day, شام title, cost, «خورده شد», ingredients, and steps. It does not include the browser's local user id, `GAP_CODE_API_KEY`, or other environment values. Opening it replaces the plan in this browser; Postgres then stores that week under the reader's own id. An empty week still copies, and opening that link shows «برنامه هفته خالی است».
+- «چاپ / خروجی» opens a sheet with «چاپ» and «دانلود مارک‌داون», and shows the same share link so it can be copied from the field.
 
-Print uses `@media print` in `web/pantry.css`. To print once: open http://localhost:8080, click «چاپ / خروجی», then «چاپ». The print stylesheet sets a white background, keeps Vazirmatn, and hides the pantry, recipe cards, fridge sheet, footer, and buttons. The page that remains is the seven days and the recipe title on each day, or «خالی».
+Print uses `@media print` in `web/pantry.css` (`A4`, RTL, Vazirmatn). To print once: open http://localhost:8080, click «چاپ / خروجی», then «چاپ». The poster is a white page. Each day is one block that does not split across pages: «روز» and the Iranian weekday, then «وعده» and شام, then the recipe title or «خالی». The pantry, recipe cards, fridge sheet, footer, and buttons stay hidden.
 
 «دانلود مارک‌داون» saves `برنامه-۷-روزه.md`: a heading and one line per day, with the Persian day name and the recipe title (or «خالی»).
 
@@ -239,10 +240,11 @@ node --test web/plan.test.js
 
 QA on http://localhost:8080, still with no key:
 
-1. Confirm seven days, شنبه first and جمعه last. Each shows «خالی» and «انتخاب».
-2. Click «چاپ / خروجی», then «چاپ». The preview is white, in Persian, and does not show the pantry or the recipe controls. Close the preview.
-3. Click «چاپ / خروجی», then «دانلود مارک‌داون». The file lists all seven days as خالی.
-4. After «پیشنهاد دستور» (that call needs a key), «افزودن به برنامه» chooses a day, «جایگزین» swaps it, and «برنامه ۷ روزه» fills any day that is still «خالی». «خورده شد» on a filled day does not need a key.
+1. Confirm seven days, شنبه first and جمعه last. Each shows «خالی» and «انتخاب». The plan says «برنامه هفته خالی است».
+2. Click «چاپ / خروجی», then «چاپ». The preview is an A4 poster: white, Persian, right to left. Each day shows «روز» and «وعده», and «خالی» when nothing is assigned. The pantry and the recipe controls are not in the preview. Close the preview.
+3. Click «کپی لینک». The copied address ends with `#p=` and does not contain `local_user_id` or an API key. Open it in a new tab. The week is still the seven empty days, and the page says the shared plan is empty. The hash is then removed so a later edit is not reset on reload. With a filled week, the same link restores those شام titles.
+4. Click «چاپ / خروجی», then «دانلود مارک‌داون». The file lists all seven days as خالی.
+5. After «پیشنهاد دستور» (that call needs a key), «افزودن به برنامه» chooses a day, «جایگزین» swaps it, and «برنامه ۷ روزه» fills any day that is still «خالی». «خورده شد» on a filled day does not need a key. Copy the link again and open it: those titles come back, still without a key in the address.
 
 ## Leftover regenerate
 
