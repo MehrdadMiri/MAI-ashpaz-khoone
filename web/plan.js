@@ -17,6 +17,7 @@
   "use strict";
 
   var STORAGE_KEY = "ashpaz-khoone.plan.v1";
+  var USER_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
   var MAX_RECIPES = 24;
   var MAX_TITLE = 120;
 
@@ -732,11 +733,45 @@
     }
   }
 
+  function scopedStorageKey(base, userId) {
+    return typeof userId === "string" && USER_ID_RE.test(userId) ? base + "." + userId : base;
+  }
+
+  function storedUserId(storage) {
+    if (!storage || typeof storage.getItem !== "function") return "";
+    try {
+      var raw = storage.getItem("ashpaz-khoone.local-user.v1");
+      return typeof raw === "string" && USER_ID_RE.test(raw) ? raw : "";
+    } catch (err) {
+      return "";
+    }
+  }
+
+  function readScopedRaw(storage, base, userId) {
+    if (global.AshpazPantry && typeof global.AshpazPantry.readScopedRaw === "function") {
+      return global.AshpazPantry.readScopedRaw(storage, base, userId);
+    }
+    if (!storage || typeof storage.getItem !== "function") return null;
+    var key = scopedStorageKey(base, userId);
+    try {
+      if (key !== base) {
+        var scoped = storage.getItem(key);
+        if (scoped) return scoped;
+        var owner = storage.getItem("ashpaz-khoone.legacy-owner.v1") || "";
+        if (owner && owner !== userId) return null;
+      }
+      return storage.getItem(base);
+    } catch (err) {
+      return null;
+    }
+  }
+
   function markPlanAhead(storage) {
     if (!storage || typeof storage.getItem !== "function" || typeof storage.setItem !== "function") return;
+    var metaKey = scopedStorageKey(SYNC_META_KEY, storedUserId(storage));
     var meta = { pantryRev: 0, pantrySyncedRev: 0, planRev: 0, planSyncedRev: 0 };
     try {
-      var raw = storage.getItem(SYNC_META_KEY);
+      var raw = storage.getItem(metaKey);
       if (raw) {
         var parsed = JSON.parse(raw);
         if (parsed && typeof parsed === "object") {
@@ -751,7 +786,7 @@
     }
     meta.planRev = Math.max(meta.planRev, meta.planSyncedRev) + 1;
     try {
-      storage.setItem(SYNC_META_KEY, JSON.stringify(meta));
+      storage.setItem(metaKey, JSON.stringify(meta));
     } catch (err2) {
       /* The week is in the plan key. A later edit can sync it. */
     }
@@ -800,11 +835,14 @@
       storage = createMemoryStorage();
     }
 
+    var boundUser =
+      options && typeof options.userId === "string" && USER_ID_RE.test(options.userId) ? options.userId : "";
+    var activeKey = scopedStorageKey(STORAGE_KEY, boundUser);
     var state = load();
 
     function load() {
       try {
-        var raw = storage.getItem(STORAGE_KEY);
+        var raw = readScopedRaw(storage, STORAGE_KEY, boundUser);
         if (!raw) return { recipes: [], slots: emptySlots(), used: emptyUsed() };
         return sanitize(JSON.parse(raw));
       } catch (err) {
@@ -822,7 +860,7 @@
 
     function writeLocal() {
       try {
-        storage.setItem(STORAGE_KEY, JSON.stringify(planSnapshot()));
+        storage.setItem(activeKey, JSON.stringify(planSnapshot()));
       } catch (err) {
         /* Quota or privacy mode: keep the in-memory plan for this visit. */
       }
@@ -1113,6 +1151,12 @@
       replace: function (parsed) {
         state = sanitize(parsed);
         writeLocal();
+        return planSnapshot();
+      },
+      bindUser: function (userId) {
+        boundUser = typeof userId === "string" && USER_ID_RE.test(userId) ? userId : "";
+        activeKey = scopedStorageKey(STORAGE_KEY, boundUser);
+        state = load();
         return planSnapshot();
       },
       applyShare: function (token) {
@@ -1840,7 +1884,7 @@
 
     doc.addEventListener("ashpaz-plan-changed", function (event) {
       var detail = (event && event.detail) || {};
-      if (detail.source !== "remote" && detail.source !== "share") return;
+      if (detail.source !== "remote" && detail.source !== "share" && detail.source !== "session") return;
       render();
       if (!detail.shared) return;
       if (detail.shared.ok && detail.shared.empty) setStatus(COPY.shareEmptyOpened);
@@ -1908,7 +1952,8 @@
     } catch (err) {
       storage = createMemoryStorage();
     }
-    var plan = createPlan({ storage: storage });
+    var knownUser = storedUserId(storage);
+    var plan = createPlan({ storage: storage, userId: knownUser });
     var loc = null;
     try {
       loc = global.location;

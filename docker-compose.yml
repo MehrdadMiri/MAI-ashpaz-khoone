@@ -73,6 +73,7 @@ services:
       - ./api/migrations/001_kitchen_state.sql:/docker-entrypoint-initdb.d/001_kitchen_state.sql:ro
       - ./api/migrations/002_okala_prices.sql:/docker-entrypoint-initdb.d/002_okala_prices.sql:ro
       - ./api/migrations/003_shopping_state.sql:/docker-entrypoint-initdb.d/003_shopping_state.sql:ro
+      - ./api/migrations/004_session_users.sql:/docker-entrypoint-initdb.d/004_session_users.sql:ro
     ports:
       - "5432:5432"
     healthcheck:

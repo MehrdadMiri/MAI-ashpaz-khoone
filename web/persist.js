@@ -1,15 +1,26 @@
 /* Server persistence for pantry chips, the 7-day plan, and shopping extras.
    The browser keeps a random local user id in localStorage and a cookie.
-   That id is not an account. Saves go to PUT /api/pantry, PUT /api/plan,
-   and PUT /api/shopping. localStorage remains the copy used when the api
-   or database is down. This file does not call GapGPT and never sees an API key. */
+   That id is not an account. Pantry, plan, shopping, and the price cache
+   for that id stay apart from every other id. Saves go to PUT /api/pantry,
+   PUT /api/plan, and PUT /api/shopping. localStorage remains the copy used
+   when the api or database is down. «کاربر جدید» starts a fresh id.
+   This file does not call GapGPT and never sees an API key. */
 (function (global) {
   "use strict";
 
   var USER_KEY = "ashpaz-khoone.local-user.v1";
   var META_KEY = "ashpaz-khoone.sync.v1";
   var COOKIE_NAME = "ashpaz_local_user";
+  var LEGACY_OWNER_KEY = "ashpaz-khoone.legacy-owner.v1";
+  var NEW_USER_FLAG = "ashpaz-khoone.new-user-notice";
   var USER_RE = /^[A-Za-z0-9_-]{8,64}$/;
+  var LEGACY_BASES = [
+    "ashpaz-khoone.pantry.v1",
+    "ashpaz-khoone.plan.v1",
+    "ashpaz-khoone.shopping.v1",
+    "ashpaz-khoone.sync.v1",
+    "ashpaz-khoone.okala-prices.v1",
+  ];
   var DEBOUNCE_MS = 400;
   var RETRY_MS = 5000;
   var DAYS = ["sat", "sun", "mon", "tue", "wed", "thu", "fri"];
@@ -269,16 +280,49 @@
       };
     }
 
-    var meta = loadMeta();
     var userId = resolveUserId();
+    claimLegacy(userId);
+    var meta = loadMeta();
     var pantryEdits = 0;
     var planEdits = 0;
     var shoppingEdits = 0;
 
+    function metaStorageKey() {
+      return META_KEY + "." + userId;
+    }
+
+    function claimLegacy(id) {
+      if (!validId(id)) return;
+      var owner = "";
+      try {
+        owner = storage.getItem(LEGACY_OWNER_KEY) || "";
+      } catch (err) {
+        owner = "";
+      }
+      if (owner && owner !== id) return;
+      LEGACY_BASES.forEach(function (base) {
+        var scoped = base + "." + id;
+        try {
+          if (storage.getItem(scoped)) return;
+          var legacy = storage.getItem(base);
+          if (legacy) storage.setItem(scoped, legacy);
+        } catch (err2) {
+          /* The scoped row is still what this user reads. */
+        }
+      });
+      if (!owner) {
+        try {
+          storage.setItem(LEGACY_OWNER_KEY, id);
+        } catch (err3) {
+          /* The copy already landed when the writes above worked. */
+        }
+      }
+    }
+
     function loadMeta() {
       var empty = emptyMeta();
       try {
-        var raw = storage.getItem(META_KEY);
+        var raw = storage.getItem(metaStorageKey());
         if (!raw) return empty;
         var parsed = JSON.parse(raw);
         if (!parsed || typeof parsed !== "object") return empty;
@@ -294,7 +338,7 @@
 
     function writeMeta() {
       try {
-        storage.setItem(META_KEY, JSON.stringify(meta));
+        storage.setItem(metaStorageKey(), JSON.stringify(meta));
       } catch (err) {
         /* The pantry key is still the local copy. */
       }
@@ -399,17 +443,18 @@
         });
     }
 
-    function putJson(path, payload) {
+    function putJson(path, payload, sessionId) {
       var fetchFn = resolveFetch();
       if (!fetchFn) return Promise.reject(new Error("unavailable"));
-      var body = JSON.stringify(Object.assign({ local_user_id: userId }, payload));
+      var id = validId(sessionId) ? sessionId : userId;
+      var body = JSON.stringify(Object.assign({ local_user_id: id }, payload));
       var init = {
         method: "PUT",
         cache: "no-store",
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
-          "X-Local-User-Id": userId,
+          "X-Local-User-Id": id,
         },
         body: body,
       };
@@ -431,6 +476,7 @@
       var pending = null;
       var sending = false;
       var inFlight = Promise.resolve();
+      var generation = 0;
 
       function clearTimers() {
         if (timer) {
@@ -447,15 +493,18 @@
         if (sending) return inFlight;
         if (!pending) return Promise.resolve();
         var job = pending;
+        var gen = generation;
         pending = null;
         sending = true;
         inFlight = send(job)
           .then(function () {
             sending = false;
+            if (gen !== generation) return undefined;
             return kick();
           })
           .catch(function (err) {
             sending = false;
+            if (gen !== generation) return undefined;
             if (!pending) pending = job;
             retry = later(function () {
               retry = null;
@@ -468,6 +517,7 @@
 
       return {
         push: function (job) {
+          job.userId = validId(job.userId) ? job.userId : userId;
           pending = job;
           clearTimers();
           timer = later(function () {
@@ -481,11 +531,17 @@
             /* Keep the local copy. The next flush or page load tries again. */
           });
         },
+        cancel: function () {
+          generation += 1;
+          pending = null;
+          clearTimers();
+        },
       };
     }
 
     var pantryQueue = createQueue(function (job) {
-      return putJson("/pantry", { pantry: job.snapshot }).then(function () {
+      return putJson("/pantry", { pantry: job.snapshot }, job.userId).then(function () {
+        if (job.userId && job.userId !== userId) return;
         var rev = meta.pantryRev || 0;
         if (rev <= job.rev) meta.pantrySyncedRev = rev;
         else if ((meta.pantrySyncedRev || 0) < job.rev) meta.pantrySyncedRev = job.rev;
@@ -494,7 +550,8 @@
     });
 
     var planQueue = createQueue(function (job) {
-      return putJson("/plan", { plan: job.snapshot }).then(function () {
+      return putJson("/plan", { plan: job.snapshot }, job.userId).then(function () {
+        if (job.userId && job.userId !== userId) return;
         var rev = meta.planRev || 0;
         if (rev <= job.rev) meta.planSyncedRev = rev;
         else if ((meta.planSyncedRev || 0) < job.rev) meta.planSyncedRev = job.rev;
@@ -503,7 +560,8 @@
     });
 
     var shoppingQueue = createQueue(function (job) {
-      return putJson("/shopping", { shopping: job.snapshot }).then(function () {
+      return putJson("/shopping", { shopping: job.snapshot }, job.userId).then(function () {
+        if (job.userId && job.userId !== userId) return;
         var rev = meta.shoppingRev || 0;
         if (rev <= job.rev) meta.shoppingSyncedRev = rev;
         else if ((meta.shoppingSyncedRev || 0) < job.rev) meta.shoppingSyncedRev = job.rev;
@@ -515,33 +573,33 @@
       pantryEdits += 1;
       meta.pantryRev = (meta.pantryRev || 0) + 1;
       writeMeta();
-      pantryQueue.push({ snapshot: copyPantry(snapshot), rev: meta.pantryRev });
+      pantryQueue.push({ snapshot: copyPantry(snapshot), rev: meta.pantryRev, userId: userId });
     }
 
     function savePlan(snapshot) {
       planEdits += 1;
       meta.planRev = (meta.planRev || 0) + 1;
       writeMeta();
-      planQueue.push({ snapshot: copyPlan(snapshot), rev: meta.planRev });
+      planQueue.push({ snapshot: copyPlan(snapshot), rev: meta.planRev, userId: userId });
     }
 
     function saveShopping(snapshot) {
       shoppingEdits += 1;
       meta.shoppingRev = (meta.shoppingRev || 0) + 1;
       writeMeta();
-      shoppingQueue.push({ snapshot: copyShopping(snapshot), rev: meta.shoppingRev });
+      shoppingQueue.push({ snapshot: copyShopping(snapshot), rev: meta.shoppingRev, userId: userId });
     }
 
     function queuePantry(snapshot) {
-      pantryQueue.push({ snapshot: copyPantry(snapshot), rev: meta.pantryRev || 0 });
+      pantryQueue.push({ snapshot: copyPantry(snapshot), rev: meta.pantryRev || 0, userId: userId });
     }
 
     function queuePlan(snapshot) {
-      planQueue.push({ snapshot: copyPlan(snapshot), rev: meta.planRev || 0 });
+      planQueue.push({ snapshot: copyPlan(snapshot), rev: meta.planRev || 0, userId: userId });
     }
 
     function queueShopping(snapshot) {
-      shoppingQueue.push({ snapshot: copyShopping(snapshot), rev: meta.shoppingRev || 0 });
+      shoppingQueue.push({ snapshot: copyShopping(snapshot), rev: meta.shoppingRev || 0, userId: userId });
     }
 
     function alignPantry() {
@@ -647,10 +705,54 @@
       return Promise.all([pantryQueue.flush(), planQueue.flush(), shoppingQueue.flush()]);
     }
 
+    function mintUserId() {
+      var makeId = typeof options.random === "function" ? options.random : defaultRandomId;
+      var created = "";
+      for (var i = 0; i < 5; i += 1) {
+        created = makeId();
+        if (validId(created) && created !== userId) return created;
+      }
+      created = defaultRandomId();
+      if (!validId(created) || created === userId) created = defaultRandomId();
+      return created;
+    }
+
+    function bindModel(model, method) {
+      if (model && typeof model[method] === "function") model[method](userId);
+    }
+
+    function startNewUser(models) {
+      return flush().then(function () {
+        pantryQueue.cancel();
+        planQueue.cancel();
+        shoppingQueue.cancel();
+        userId = mintUserId();
+        writeStoredId(userId);
+        writeCookie(userId);
+        meta = emptyMeta();
+        writeMeta();
+        pantryEdits = 0;
+        planEdits = 0;
+        shoppingEdits = 0;
+        if (models) {
+          bindModel(models.pantry, "bindUser");
+          bindModel(models.plan, "bindUser");
+          bindModel(models.shop, "bindUser");
+        }
+        var pricesApi = global.AshpazPrices;
+        if (pricesApi && typeof pricesApi.bindUser === "function") pricesApi.bindUser(userId);
+        notify("ashpaz-pantry-changed", { source: "session" });
+        notify("ashpaz-plan-changed", { source: "session" });
+        notify("ashpaz-shopping-changed", { source: "session" });
+        return userId;
+      });
+    }
+
     return {
       userId: function () {
         return userId;
       },
+      startNewUser: startNewUser,
       savePantry: savePantry,
       savePlan: savePlan,
       saveShopping: saveShopping,
@@ -729,14 +831,77 @@
     var pantryApi = global.AshpazPantry;
     var planApi = global.AshpazPlan;
     var shopApi = global.AshpazShop;
+    var pricesApi = global.AshpazPrices;
+    var current = session.userId();
+    if (pantryApi && pantryApi.active && typeof pantryApi.active.bindUser === "function") {
+      pantryApi.active.bindUser(current);
+    }
+    if (planApi && planApi.active && typeof planApi.active.bindUser === "function") {
+      planApi.active.bindUser(current);
+    }
+    if (shopApi && shopApi.active && typeof shopApi.active.bindUser === "function") {
+      shopApi.active.bindUser(current);
+    }
+    if (pricesApi && typeof pricesApi.bindUser === "function") pricesApi.bindUser(current);
+    if (typeof document !== "undefined") {
+      try {
+        if (global.sessionStorage && global.sessionStorage.getItem(NEW_USER_FLAG) === "1") {
+          global.sessionStorage.removeItem(NEW_USER_FLAG);
+          var note = document.getElementById("session-status");
+          if (note) note.textContent = "کاربر تازه شروع شد. انبار، برنامه و مواد خرید این کاربر جدا است.";
+        }
+      } catch (err) {
+        /* The empty pantry is still this user's own store. */
+      }
+    }
     session.hydrate(pantryApi && pantryApi.active, planApi && planApi.active, shopApi && shopApi.active);
     watchUnload(session);
+    wireNewUser(session);
+  }
+
+  function wireNewUser(session) {
+    if (typeof document === "undefined" || !document.getElementById) return;
+    var button = document.getElementById("new-user");
+    if (!button || button.getAttribute("data-wired") === "1") return;
+    button.setAttribute("data-wired", "1");
+    button.addEventListener("click", function () {
+      button.disabled = true;
+      var status = document.getElementById("session-status");
+      if (status) status.textContent = "در حال شروع کاربر تازه…";
+      var pantryApi = global.AshpazPantry;
+      var planApi = global.AshpazPlan;
+      var shopApi = global.AshpazShop;
+      session
+        .startNewUser({
+          pantry: pantryApi && pantryApi.active,
+          plan: planApi && planApi.active,
+          shop: shopApi && shopApi.active,
+        })
+        .then(function () {
+          try {
+            if (global.sessionStorage) global.sessionStorage.setItem(NEW_USER_FLAG, "1");
+          } catch (err) {
+            /* Reload still opens the new id from the cookie. */
+          }
+          if (global.location && typeof global.location.reload === "function") {
+            global.location.reload();
+            return;
+          }
+          button.disabled = false;
+        })
+        .catch(function () {
+          button.disabled = false;
+          if (status) status.textContent = "کاربر تازه شروع نشد. دوباره بزنید.";
+        });
+    });
   }
 
   var api = {
     USER_KEY: USER_KEY,
     META_KEY: META_KEY,
     COOKIE_NAME: COOKIE_NAME,
+    LEGACY_OWNER_KEY: LEGACY_OWNER_KEY,
+    NEW_USER_FLAG: NEW_USER_FLAG,
     createPersist: createPersist,
     onPantry: null,
     onPlan: null,

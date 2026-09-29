@@ -361,9 +361,26 @@ def vision_fridge():
     )
 
 
+def _pin_session(response, user_id: str):
+    response.set_cookie(
+        store.COOKIE_NAME,
+        user_id,
+        max_age=31536000,
+        path="/",
+        samesite="Lax",
+        secure=bool(request.is_secure),
+        httponly=False,
+    )
+    return response
+
+
 def _state_response(fn):
     try:
-        return jsonify(fn())
+        payload, user_id = fn()
+        response = jsonify(payload)
+        if isinstance(user_id, str) and user_id:
+            _pin_session(response, user_id)
+        return response
     except store.StoreError as exc:
         return jsonify(exc.to_dict()), exc.http_status
     except Exception as exc:
@@ -397,7 +414,7 @@ def _method_not_allowed(message):
 def pantry_get():
     def run():
         user_id = store.user_id_from_request(request)
-        return store.get_store().load_pantry(user_id)
+        return store.get_store().load_pantry(user_id), user_id
 
     return _state_response(run)
 
@@ -409,7 +426,7 @@ def pantry_put():
         user_id = store.user_id_from_request(request, body)
         if "pantry" not in body:
             raise store.StoreError("invalid_pantry", "JSON body must include pantry", 400)
-        return store.get_store().save_pantry(user_id, body.get("pantry"))
+        return store.get_store().save_pantry(user_id, body.get("pantry")), user_id
 
     return _state_response(run)
 
@@ -423,7 +440,7 @@ def pantry_post():
 def plan_get():
     def run():
         user_id = store.user_id_from_request(request)
-        return store.get_store().load_plan(user_id)
+        return store.get_store().load_plan(user_id), user_id
 
     return _state_response(run)
 
@@ -435,7 +452,7 @@ def plan_put():
         user_id = store.user_id_from_request(request, body)
         if "plan" not in body:
             raise store.StoreError("invalid_plan", "JSON body must include plan", 400)
-        return store.get_store().save_plan(user_id, body.get("plan"))
+        return store.get_store().save_plan(user_id, body.get("plan")), user_id
 
     return _state_response(run)
 
@@ -449,7 +466,7 @@ def plan_post():
 def shopping_get():
     def run():
         user_id = store.user_id_from_request(request)
-        return store.get_store().load_shopping(user_id)
+        return store.get_store().load_shopping(user_id), user_id
 
     return _state_response(run)
 
@@ -461,7 +478,7 @@ def shopping_put():
         user_id = store.user_id_from_request(request, body)
         if "shopping" not in body:
             raise store.StoreError("invalid_shopping", "JSON body must include shopping", 400)
-        return store.get_store().save_shopping(user_id, body.get("shopping"))
+        return store.get_store().save_shopping(user_id, body.get("shopping")), user_id
 
     return _state_response(run)
 

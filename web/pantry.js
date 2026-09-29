@@ -12,6 +12,9 @@
   "use strict";
 
   var STORAGE_KEY = "ashpaz-khoone.pantry.v1";
+  var USER_STORAGE_KEY = "ashpaz-khoone.local-user.v1";
+  var LEGACY_OWNER_KEY = "ashpaz-khoone.legacy-owner.v1";
+  var USER_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
   var MAX_NAME_LENGTH = 40;
   var MAX_BUDGET = 1000000000000;
   var DEFAULT_HOUSEHOLD = 4;
@@ -29,6 +32,40 @@
     "ماست",
     "روغن",
   ]);
+
+  function validUserId(value) {
+    return typeof value === "string" && USER_ID_RE.test(value);
+  }
+
+  function scopedStorageKey(base, userId) {
+    return validUserId(userId) ? base + "." + userId : base;
+  }
+
+  function storedUserId(storage) {
+    if (!storage || typeof storage.getItem !== "function") return "";
+    try {
+      var raw = storage.getItem(USER_STORAGE_KEY);
+      return validUserId(raw) ? raw : "";
+    } catch (err) {
+      return "";
+    }
+  }
+
+  function readScopedRaw(storage, base, userId) {
+    if (!storage || typeof storage.getItem !== "function") return null;
+    var key = scopedStorageKey(base, userId);
+    try {
+      if (key !== base) {
+        var scoped = storage.getItem(key);
+        if (scoped) return scoped;
+        var owner = storage.getItem(LEGACY_OWNER_KEY) || "";
+        if (owner && owner !== userId) return null;
+      }
+      return storage.getItem(base);
+    } catch (err) {
+      return null;
+    }
+  }
 
   function createMemoryStorage() {
     var data = Object.create(null);
@@ -152,11 +189,13 @@
       storage = createMemoryStorage();
     }
 
+    var boundUser = validUserId(options && options.userId) ? options.userId : "";
+    var activeKey = scopedStorageKey(STORAGE_KEY, boundUser);
     var state = load();
 
     function load() {
       try {
-        var raw = storage.getItem(STORAGE_KEY);
+        var raw = readScopedRaw(storage, STORAGE_KEY, boundUser);
         if (!raw) return emptyState();
         return sanitizeState(JSON.parse(raw));
       } catch (err) {
@@ -166,7 +205,7 @@
 
     function writeLocal() {
       try {
-        storage.setItem(STORAGE_KEY, JSON.stringify(state));
+        storage.setItem(activeKey, JSON.stringify(state));
       } catch (err) {
         /* Quota or privacy mode: keep the in-memory list for this visit. */
       }
@@ -290,6 +329,12 @@
       replace: function (parsed) {
         state = sanitizeState(parsed);
         writeLocal();
+        return snapshot();
+      },
+      bindUser: function (userId) {
+        boundUser = validUserId(userId) ? userId : "";
+        activeKey = scopedStorageKey(STORAGE_KEY, boundUser);
+        state = load();
         return snapshot();
       },
     };
@@ -560,14 +605,19 @@
     } catch (err) {
       storage = createMemoryStorage();
     }
-    var pantry = createPantry({ storage: storage });
+    var pantry = createPantry({ storage: storage, userId: storedUserId(storage) });
     api.active = pantry;
     mount(document, pantry);
   }
 
   var api = {
     STORAGE_KEY: STORAGE_KEY,
+    USER_STORAGE_KEY: USER_STORAGE_KEY,
+    LEGACY_OWNER_KEY: LEGACY_OWNER_KEY,
     SEED_STAPLES: SEED_STAPLES,
+    scopedStorageKey: scopedStorageKey,
+    storedUserId: storedUserId,
+    readScopedRaw: readScopedRaw,
     createPantry: createPantry,
     createMemoryStorage: createMemoryStorage,
     identityKey: identityKey,
