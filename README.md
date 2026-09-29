@@ -10,7 +10,7 @@ Persian RTL AI meal and recipe demo (آشپزخونه).
 | api | Python (Flask + Gunicorn) | http://localhost:8000 |
 | db | Postgres 16 | localhost:5432 |
 
-The web page is a Persian RTL pantry. You can add and remove ingredient chips, load a sample set of Iranian staples, set a numeric week budget, and set تعداد نفرات (how many people the amounts and prices are for). The list and budget are stored in Postgres for a browser-local id, and cached in this browser (`localStorage`) when the api or database is unavailable. «پیشنهاد دستور» asks the shared GapGPT client (`api/gapgpt.py`) for at least three Persian recipes from those chips and the week budget. If a meal is marked «خورده شد», that call prefers the chips still left and asks the model not to repeat those meals. «بازتولید کامل» uses every chip again and does not skip them. «عکس یخچال» sends one photo to the same client and shows candidate chips; nothing is added to the pantry until you confirm. «برنامه ۷ روزه» assigns those recipes to صبحانه، ناهار، and شام from شنبه through جمعه and can print or download the week. The plan does not call GapGPT. «مواد خرید» diffs every planned meal against the pantry chips and can print or download the missing items. That list does not call GapGPT either. After the recipe cards appear, the page asks the same client for a rough per-serving calorie estimate (and protein, carbohydrate, and fat when the model returns them). Each card says those numbers are an AI estimate. If that call fails, the cards stay without them. Product UI is Persian RTL. This scaffold’s docs and code comments are English.
+The web page is a Persian RTL pantry. You can add and remove ingredient chips, load a sample set of Iranian staples, set a numeric week budget, and set تعداد نفرات (how many people the amounts and prices are for). «به‌روزرسانی قیمت‌ها» stores Okala unit prices (تومان) and the recipe, week, and shopping costs prefer those prices. «سبد اُکالا» on مواد خرید copies the list and opens Okala; it does not check out. The list and budget are stored in Postgres for a browser-local id, and cached in this browser (`localStorage`) when the api or database is unavailable. «پیشنهاد دستور» asks the shared GapGPT client (`api/gapgpt.py`) for at least three Persian recipes from those chips and the week budget. If a meal is marked «خورده شد», that call prefers the chips still left and asks the model not to repeat those meals. «بازتولید کامل» uses every chip again and does not skip them. «عکس یخچال» sends one photo to the same client and shows candidate chips; nothing is added to the pantry until you confirm. «برنامه ۷ روزه» assigns those recipes to صبحانه، ناهار، and شام from شنبه through جمعه and can print or download the week. The plan does not call GapGPT. «مواد خرید» diffs every planned meal against the pantry chips and can print or download the missing items. That list does not call GapGPT either. After the recipe cards appear, the page asks the same client for a rough per-serving calorie estimate (and protein, carbohydrate, and fat when the model returns them). Each card says those numbers are an AI estimate. If that call fails, the cards stay without them. Product UI is Persian RTL. This scaffold’s docs and code comments are English.
 
 The GitHub repository is public: https://github.com/MehrdadMiri/MAI-ashpaz-khoone. `.env` is gitignored. `.env.example` has placeholders only, and `GAP_CODE_API_KEY` there is empty. Do not commit a real key.
 
@@ -53,8 +53,15 @@ node --test web/pwa.test.js
 | `POSTGRES_USER` | No | `ashpaz` |
 | `POSTGRES_PASSWORD` | No | `change-me` |
 | `POSTGRES_DB` | No | `ashpaz` |
+| `OKALA_LIVE` | No | `1` |
+| `OKALA_CACHE_TTL_SECONDS` | No | `86400` |
+| `OKALA_MIN_INTERVAL_SECONDS` | No | `60` |
+| `OKALA_REQUEST_DELAY_SECONDS` | No | `1.5` |
+| `OKALA_TIMEOUT_SECONDS` | No | `8` |
+| `OKALA_STORE_ID` | No | `2319` |
+| `OKALA_REFRESH_INTERVAL_SECONDS` | No | `0` |
 
-`.env.example` has placeholders only. `.gitignore` excludes `.env`. Do not commit `GAP_CODE_API_KEY` or any real key. Put the key only in the environment or the gitignored `.env`. Do not put it in URLs, command lines, or logs.
+`.env.example` has placeholders only. `.gitignore` excludes `.env`. Do not commit `GAP_CODE_API_KEY` or any real key. The Okala settings are not secrets. Put the GapGPT key only in the environment or the gitignored `.env`. Do not put it in URLs, command lines, or logs.
 
 ## Saved pantry and week plan
 
@@ -153,7 +160,7 @@ The request JSON is `{ "ingredients": ["برنج"], "budget": 1500000, "househol
 
 Stored recipe lines and `cost_toman` are for that recipe's `servings` people. Older recipes with no `servings` are treated as **4 people**, the same default. The page multiplies displayed amounts and costs by `تعداد نفرات / servings`. A line with no number, such as «برنج», stays as written. Steps are not rewritten. The calorie line stays «در هر وعده» and is not multiplied.
 
-Recipe cards show «برای … نفر», the scaled ingredient tags, and the scaled تومان badge. The week plan's meal costs and the budget comparison use the scaled costs. The same dish on two slots still counts twice. «مواد خرید» scales each planned line by that meal's servings before it adds quantities. Generate and «بازتولید کامل» both send the current headcount.
+Recipe cards show «برای … نفر», the scaled ingredient tags, and the scaled تومان badge. The week plan's meal costs and the budget comparison use the scaled costs. The same dish on two slots still counts twice. «مواد خرید» scales each planned line by that meal's servings before it adds quantities. When a fresh Okala unit price matches a line, the shown cost is that unit price times the scaled quantity. It is not scaled a second time. A missing or stale Okala row keeps the scaled GapGPT `cost_toman`. Generate and «بازتولید کامل» both send the current headcount.
 
 ```bash
 curl -sS -X POST http://localhost:8000/recipes/generate \
@@ -358,6 +365,7 @@ On http://localhost:8080 with the same key: mark one filled slot «خورده ش
 
 - A chip covers a recipe line after the pantry's usual cleanup (spacing, ZWNJ, Arabic and Persian letters). A pantry name also covers a longer line when the extra words are only size or prep, so پیاز covers «۲ عدد پیاز متوسط». «روغن» does not cover «روغن زیتون».
 - A quantity on the stored line is kept (`۲۰۰ گرم`, `نصف پیمانه`, `۳ عدد`, `یک و نیم پیمانه`) and then scaled by `تعداد نفرات / servings` (4 when the recipe has no servings). The same item and unit are added across the meals that need it. Different units stay side by side. With no quantity, a repeated item says how many meals need it. The section says the amounts were counted for that headcount.
+- A fresh Okala match shows the line total («… تومان · اُکالا») when the unit converts (گرم and کیلو to کیلوگرم, میلی‌لیتر to لیتر, عدد to عدد). A piece count against a weighed pack shows «هر کیلوگرم … تومان · اُکالا» instead of a guessed total. A stale row is labeled «کهنه». See [Okala prices](#okala-prices).
 - Rows are grouped with a small built-in map: سبزی و صیفی، میوه، پروتئین، لبنیات، حبوبات و غلات، نان و آرد، چاشنی و ادویه، خشکبار. Anything else is «سایر».
 - «چاپ / خروجی» on this section prints only the list (white page, Vazirmatn, RTL) or downloads `مواد-خرید.md`. Printing the week still hides this section.
 
@@ -413,6 +421,49 @@ The slot id is `r:` plus the title with spaces and ZWNJ removed. A legacy string
 
 With a key, the same checks work after «پیشنهاد دستور» and «برنامه ۷ روزه» instead of the `localStorage` snippet. The page still does not send the list to GapGPT.
 
+«سبد اُکالا» on the same section does not fill Okala's basket and does not take payment. It copies up to ten names (one per line, for Okala's list search) and can open https://www.okala.com/ or a `https://www.okala.com/product/<id>` page when a price row has that id. See [Okala prices](#okala-prices).
+
+## Okala prices
+
+«به‌روزرسانی قیمت‌ها» on the pantry is the way prices update. The page sends the eight staples plus the current chips and shopping names to `POST /api/prices/refresh`. Nothing is scraped on a timer unless you set one. `/health` does not call Okala.
+
+The api reads the public catalog JSON at `https://apigateway.okala.com` (one page for groceries, produce, dairy, and proteins, store `OKALA_STORE_ID`, default `2319`). It does not request the HTML paths disallowed by https://www.okala.com/robots.txt: `/search`, `/cart`, `/checkout`, `/store`, and `/shopping-assistant`. There is no Okala session and no bearer token in this repo. The catalog `price` / `okPrice` fields are rial; the row stores toman (`round(rial / 10)`, half up). The pack size is parsed from the product title. The stock `quantity` field is not a pack size. Among in-stock title matches, the lowest unit price is kept. An out-of-stock shelf price is kept only when nothing in stock matches. Names that do not match are listed under the button («در اُکالا پیدا نشد»).
+
+Matching is the pantry's Persian cleanup plus token prefix: «برنج» matches «برنج عنبربو …» and does not match «آرد برنج». «پیاز» does not match «پیازچه». «شیر» does not match «شیرین».
+
+Rows live in Postgres table `okala_price` (shared catalog, not a user). The browser also keeps `ashpaz-khoone.okala-prices.v1` so a later api miss can still show the last prices.
+
+| Knob | Default | Behavior |
+| --- | --- | --- |
+| Cache TTL | 24h (`OKALA_CACHE_TTL_SECONDS`) | After this, recipe and week totals fall back to the GapGPT estimate. The shopping line can still show the last unit price marked «کهنه». |
+| Minimum gap | 60s (`OKALA_MIN_INTERVAL_SECONDS`) | A second press inside this window does not call Okala again. |
+| Delay | 1.5s (`OKALA_REQUEST_DELAY_SECONDS`) | Pause between category pages. A 429 stops the rest of that refresh. |
+| Live | `OKALA_LIVE=1` | `0` never calls out and loads `api/fixtures/okala_catalog.json` (snapshot `2026-09-29`). |
+| Periodic | `OKALA_REFRESH_INTERVAL_SECONDS=0` | Off. A positive value is raised to at least 3600 seconds and refreshes only when rows are stale. |
+
+If the live catalog fails and a row is already stored, that row stays and the page says اُکالا did not answer. If nothing is stored yet, the bundled snapshot is saved and marked degraded. Recipe cards, the week sum, and مواد خرید keep working: fresh Okala when the unit converts, «بخشی از اُکالا» when only some lines convert, otherwise «حدود … تومان» from `cost_toman` scaled by تعداد نفرات. A line with no number, or a پیمانه, is not converted into a weight.
+
+Okala does not offer a public prefilled basket. `POST /prices/cart` returns `prefill: false` and `checkout: false`, a homepage link, a ten-line copy text, and product links only under `/product/<id>`. Paying or completing the order stays on Okala.
+
+```bash
+curl -sS -X POST http://localhost:8000/prices/refresh \
+  -H 'Content-Type: application/json' \
+  -d '{"force":true,"names":["زعفران"]}'
+curl -sS -X POST http://localhost:8000/prices/quote \
+  -H 'Content-Type: application/json' \
+  -d '{"ingredients":["۲۰۰ گرم برنج"],"household":8,"servings":4,"estimate_toman":10000}'
+curl -sS -X POST http://localhost:8000/prices/cart \
+  -H 'Content-Type: application/json' \
+  -d '{"items":[{"name":"برنج","quantity_label":"۴۰۰ گرم"}]}'
+```
+
+With `OKALA_LIVE=0` the first curl stores the fixture and does not use the network. A quote for ۲۰۰ گرم برنج at ۸ نفر is `165000` toman from the snapshot (the 4-person line is half of that). `OKALA_LIVE_SMOKE=1` is an optional one-page live check and is skipped in CI.
+
+```bash
+node --test web/prices.test.js
+cd api && python3 -m unittest tests.test_okala tests.test_okala_endpoint -v
+```
+
 ## QA smoke
 
 The release gate for `v0.2.0` is [docs/QA-SMOKE.md](docs/QA-SMOKE.md). `v0.1.0` is already tagged. Run the gate with a real key only in the gitignored `.env` or the environment. Do not print the key. `.env.example` stays placeholders only (`GAP_CODE_API_KEY` empty, model `gpt-5.6-luna`). The repository is public. Do not create the `v0.2.0` tag or a GitHub Release from this checklist. SE tags after the path is green. The notes for that tag are [docs/RELEASE.md](docs/RELEASE.md).
@@ -426,10 +477,11 @@ The release gate for `v0.2.0` is [docs/QA-SMOKE.md](docs/QA-SMOKE.md). `v0.1.0` 
 7. «برنامه ۷ روزه» fills شنبه through جمعه. «خورده شد» marks a day; «پیشنهاد دستور» then prefers remaining chips and skips that dinner, and «بازتولید کامل» does not.
 8. Edit the pantry and generate again.
 9. «کپی لینک» copies a `#p=` link. «چاپ» is an A4 poster. A soft over-budget line does not block export. «مواد خرید» lists what the dinners need and the pantry does not have.
-10. Chips, budget, diet filters, and the week survive a reload in Postgres. With api stopped, the same browser still shows the `localStorage` copy (`ashpaz-khoone.pantry.v1`, `ashpaz-khoone.plan.v1`).
-11. Break or unset `GAP_CODE_API_KEY`, recreate api, and confirm a Persian error with «تلاش دوباره» and no key value. Nutrition without a usable key stays HTTP 200 with `"available": false`. Restore the key and generate again.
-12. The manifest and `/sw.js` are served for install. The footer says «افزودن به صفحهٔ اصلی». The worker caches the page shell only and does not call GapGPT. Chrome can install from http://localhost:8080; any other host needs HTTPS.
-13. Leave tagging `v0.2.0` for SE after this path is green.
+10. «به‌روزرسانی قیمت‌ها» stores Okala unit prices (fixture when `OKALA_LIVE=0`). Cards, the week, and shopping rows say اُکالا when that price is used, «بخشی از اُکالا» when only some lines match, and «حدود» for the GapGPT estimate. A failed refresh keeps the last price or that estimate. «سبد اُکالا» copies at most ten names and opens the store; it does not prefill a basket or take payment. Headcount still scales each quantity once.
+11. Chips, budget, diet filters, and the week survive a reload in Postgres. With api stopped, the same browser still shows the `localStorage` copy (`ashpaz-khoone.pantry.v1`, `ashpaz-khoone.plan.v1`).
+12. Break or unset `GAP_CODE_API_KEY`, recreate api, and confirm a Persian error with «تلاش دوباره» and no key value. Nutrition without a usable key stays HTTP 200 with `"available": false`. Restore the key and generate again.
+13. The manifest and `/sw.js` are served for install. The footer says «افزودن به صفحهٔ اصلی». The worker caches the page shell only and does not call GapGPT. Chrome can install from http://localhost:8080; any other host needs HTTPS.
+14. Leave tagging `v0.2.0` for SE after this path is green. Do not tag `v0.3.0` from the Okala check.
 
 The longer [demo path](#demo-path-qa) below still covers a boot with no key.
 
@@ -542,7 +594,7 @@ python3 -m venv .venv
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Expected: every test OK, with `LiveSmokeTest` skipped. Postgres persistence tests skip unless a database is reachable at `127.0.0.1:5432` (or `ASHPAZ_TEST_POSTGRES_HOST` / `ASHPAZ_TEST_POSTGRES_PORT`). From the repo root, `node --test web/household.test.js web/pantry.test.js web/recipes.test.js web/fridge.test.js web/plan.test.js web/shop.test.js web/persist.test.js web/pwa.test.js` covers household scaling, the pantry, the recipe page, the fridge confirm sheet, the meal plan, the shopping list, server persistence, and the installable web app.
+Expected: every test OK, with `LiveSmokeTest` and the optional Okala live catalog check skipped. Postgres persistence tests skip unless a database is reachable at `127.0.0.1:5432` (or `ASHPAZ_TEST_POSTGRES_HOST` / `ASHPAZ_TEST_POSTGRES_PORT`). From the repo root, `node --test web/household.test.js web/pantry.test.js web/recipes.test.js web/fridge.test.js web/plan.test.js web/shop.test.js web/persist.test.js web/pwa.test.js web/prices.test.js` covers household scaling, the pantry, the recipe page, the fridge confirm sheet, the meal plan, the shopping list, server persistence, the installable web app, and Okala price labels.
 
 Smoke check without a key (controlled error, no stack trace). The stack from the demo path can already be running:
 

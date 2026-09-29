@@ -1,0 +1,99 @@
+{
+  "captured_at": "2026-09-29",
+  "store_id": 2319,
+  "currency": "IRR",
+  "note": "Trimmed public catalog snapshot from apigateway.okala.com. price is rial.",
+  "success": true,
+  "data": [
+    {
+      "id": 190868,
+      "name": "برنج عنبربو آذوقه 10 کیلوگرمی",
+      "price": 41250000,
+      "okPrice": 41250000,
+      "hasQuantity": true,
+      "storeId": 2319,
+      "quantity": 7
+    },
+    {
+      "id": 30295,
+      "name": "آرد برنج ترخینه 200 گرمی",
+      "price": 2685000.0,
+      "okPrice": 2685000.0,
+      "hasQuantity": true,
+      "storeId": 2319,
+      "quantity": 3
+    },
+    {
+      "id": 13689,
+      "name": "عدس آذوقه 900 گرمی",
+      "price": 2890000.0,
+      "okPrice": 2890000.0,
+      "hasQuantity": true,
+      "storeId": 2319,
+      "quantity": 6
+    },
+    {
+      "id": 13690,
+      "name": "لوبیا چیتی آذوقه 900 گرمی",
+      "price": 6490000.0,
+      "okPrice": 6490000.0,
+      "hasQuantity": true,
+      "storeId": 2319,
+      "quantity": 9
+    },
+    {
+      "id": 8694,
+      "name": "روغن سرخ کردنی بدون پالم اویلا 810 گرمی",
+      "price": 3612730.0,
+      "okPrice": 3612730.0,
+      "hasQuantity": true,
+      "storeId": 2319,
+      "quantity": 122
+    },
+    {
+      "id": 1000762,
+      "name": "پیاز سفید جانزی 2 کیلوگرمی",
+      "price": 2359500.0,
+      "okPrice": 1769625.0,
+      "hasQuantity": false,
+      "storeId": 2319,
+      "quantity": 0
+    },
+    {
+      "id": 1000752,
+      "name": "سیب زمینی جانزی 2 کیلوگرمی",
+      "price": 3003000.0,
+      "okPrice": 2252250.0,
+      "hasQuantity": false,
+      "storeId": 2319,
+      "quantity": 0
+    },
+    {
+      "id": 982997,
+      "name": "گوجه فرنگی جانزی 1 کیلوگرمی",
+      "price": 1601600.0,
+      "okPrice": 1201200.0,
+      "hasQuantity": false,
+      "storeId": 2319,
+      "quantity": 0
+    },
+    {
+      "id": 228084,
+      "name": "ماست موسیر پاکبان 250 گرمی",
+      "price": 820000.0,
+      "okPrice": 615000.0,
+      "hasQuantity": true,
+      "storeId": 2319,
+      "quantity": 1
+    },
+    {
+      "id": 1297,
+      "name": "شیر پر چرب 3.2% چربی میهن 1 لیتری ",
+      "price": 1690000.0,
+      "okPrice": 1590459.0,
+      "hasQuantity": true,
+      "storeId": 2319,
+      "quantity": 68
+    }
+  ]
+}

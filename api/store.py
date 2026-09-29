@@ -21,7 +21,8 @@ from psycopg.types.json import Jsonb
 
 logger = logging.getLogger(__name__)
 
-MIGRATION_PATH = Path(__file__).resolve().parent / "migrations" / "001_kitchen_state.sql"
+MIGRATION_DIR = Path(__file__).resolve().parent / "migrations"
+MIGRATION_PATH = MIGRATION_DIR / "001_kitchen_state.sql"
 
 DAYS = ("sat", "sun", "mon", "tue", "wed", "thu", "fri")
 MEALS = ("breakfast", "lunch", "dinner")
@@ -549,14 +550,19 @@ def mark_schema_ready() -> None:
         _schema_ready = True
 
 
+def migration_files() -> list[Path]:
+    return sorted(MIGRATION_DIR.glob("*.sql"))
+
+
 def ensure_schema(conn: Any) -> None:
     if _schema_ready:
         return
     with _schema_lock:
         if _schema_ready:
             return
-        for statement in _statements(MIGRATION_PATH.read_text(encoding="utf-8")):
-            conn.execute(statement)
+        for path in migration_files():
+            for statement in _statements(path.read_text(encoding="utf-8")):
+                conn.execute(statement)
 
 
 def ping() -> bool:

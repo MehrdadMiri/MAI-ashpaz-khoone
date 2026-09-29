@@ -13,6 +13,8 @@ client's vision call and returns candidate ingredient names with confidence.
 It does not store them.
 GET and PUT /pantry and /plan store pantry chips and the 7-day plan in
 Postgres for a browser-local id. They do not call GapGPT.
+GET /prices and POST /prices/refresh read a cached Okala catalog. The
+refresh is user-triggered. It does not call GapGPT and does not open a cart.
 """
 
 import json
@@ -34,6 +36,7 @@ from recipes import (
     generate_recipes,
     parse_generate_body,
 )
+import okala
 import store
 from vision import (
     VISION_CLIENT_TIMEOUT,
@@ -218,6 +221,10 @@ def root():
             "vision_fridge": "/vision/fridge",
             "pantry": "/pantry",
             "plan": "/plan",
+            "prices": "/prices",
+            "prices_refresh": "/prices/refresh",
+            "prices_quote": "/prices/quote",
+            "prices_cart": "/prices/cart",
         }
     )
 
@@ -434,3 +441,97 @@ def plan_put():
 @app.post("/plan")
 def plan_post():
     return _method_not_allowed("Use GET or PUT /plan")
+
+
+def _optional_object():
+    data = request.get_json(silent=True)
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise okala.PriceError("invalid_request", "Request must be a JSON object", 400)
+    store.reject_secret(data)
+    return data
+
+
+def _price_response(fn):
+    try:
+        return jsonify(fn())
+    except okala.PriceError as exc:
+        return jsonify(exc.to_dict()), exc.http_status
+    except store.StoreError as exc:
+        return jsonify(exc.to_dict()), exc.http_status
+    except Exception as exc:
+        app.logger.warning("price request failed: %s", exc.__class__.__name__)
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": "internal_error",
+                    "message": "Request failed",
+                }
+            ),
+            500,
+        )
+
+
+@app.get("/prices")
+def prices_get():
+    def run():
+        raw = request.args.get("names")
+        if raw:
+            names = [part.strip() for part in raw.split(",") if part.strip()]
+            store.reject_secret(names)
+            payload = okala.load_prices()
+            wanted = {store.identity_key(name) for name in names}
+            payload["items"] = [
+                item for item in payload["items"] if item.get("name_key") in wanted
+            ]
+            payload["unmatched"] = [
+                name for name in payload["unmatched"] if store.identity_key(name) in wanted
+            ]
+            return payload
+        return okala.load_prices()
+
+    return _price_response(run)
+
+
+@app.post("/prices/refresh")
+def prices_refresh():
+    def run():
+        body = _optional_object()
+        force = body.get("force") is True
+        names = body.get("names") if "names" in body else None
+        return okala.refresh_prices(names, force=force)
+
+    return _price_response(run)
+
+
+@app.get("/prices/refresh")
+def prices_refresh_get():
+    return _method_not_allowed("Use POST /prices/refresh")
+
+
+@app.post("/prices/quote")
+def prices_quote():
+    def run():
+        body = _optional_object()
+        return okala.quote_recipe(
+            body.get("ingredients"),
+            household=body.get("household"),
+            servings=body.get("servings"),
+            estimate_toman=body.get("estimate_toman"),
+        )
+
+    return _price_response(run)
+
+
+@app.post("/prices/cart")
+def prices_cart():
+    def run():
+        body = _optional_object()
+        return okala.cart_assist(body.get("items"))
+
+    return _price_response(run)
+
+
+okala.start_scheduler()

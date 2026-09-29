@@ -163,6 +163,12 @@
             />
           </div>
 
+          <div class="price-bar" id="price-bar">
+            <button type="button" id="price-refresh" data-testid="price-refresh">به‌روزرسانی قیمت‌ها</button>
+            <p id="price-status" class="status" role="status" aria-live="polite" data-testid="price-status"></p>
+            <p id="price-unmatched" class="hint" data-testid="price-unmatched" hidden></p>
+          </div>
+
           <div class="actions" id="actions" hidden>
             <button type="button" id="clear" data-testid="clear-button" disabled>پاک کردن</button>
           </div>
@@ -288,6 +294,7 @@
               <p id="shop-scale" class="hint" data-testid="shop-scale"></p>
             </div>
             <div class="shop-toolbar">
+              <button type="button" id="shop-okala" data-testid="shop-okala">سبد اُکالا</button>
               <button
                 type="button"
                 id="shop-export"
@@ -489,6 +496,7 @@
     </noscript>
     <script src="household.js"></script>
     <script src="pantry.js"></script>
+    <script src="prices.js"></script>
     <script src="fridge.js"></script>
     <script src="recipes.js"></script>
     <script src="plan.js"></script>

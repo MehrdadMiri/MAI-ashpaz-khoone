@@ -33,6 +33,15 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-ashpaz}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
       POSTGRES_DB: ${POSTGRES_DB:-ashpaz}
+      # Okala prices. The refresh button is the normal path. OKALA_LIVE=0
+      # stays on the bundled snapshot. The periodic timer stays off.
+      OKALA_LIVE: ${OKALA_LIVE:-1}
+      OKALA_CACHE_TTL_SECONDS: ${OKALA_CACHE_TTL_SECONDS:-86400}
+      OKALA_MIN_INTERVAL_SECONDS: ${OKALA_MIN_INTERVAL_SECONDS:-60}
+      OKALA_REQUEST_DELAY_SECONDS: ${OKALA_REQUEST_DELAY_SECONDS:-1.5}
+      OKALA_TIMEOUT_SECONDS: ${OKALA_TIMEOUT_SECONDS:-8}
+      OKALA_STORE_ID: ${OKALA_STORE_ID:-2319}
+      OKALA_REFRESH_INTERVAL_SECONDS: ${OKALA_REFRESH_INTERVAL_SECONDS:-0}
     ports:
       - "8000:8000"
     depends_on:
@@ -62,6 +71,7 @@ services:
       # Applied only when pgdata is first created. The api also runs this
       # file on startup so an existing volume still gets the tables.
       - ./api/migrations/001_kitchen_state.sql:/docker-entrypoint-initdb.d/001_kitchen_state.sql:ro
+      - ./api/migrations/002_okala_prices.sql:/docker-entrypoint-initdb.d/002_okala_prices.sql:ro
     ports:
       - "5432:5432"
     healthcheck:

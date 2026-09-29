@@ -522,6 +522,17 @@
     doc.dispatchEvent(event);
   }
 
+  function presentCost(card, people) {
+    var prices = global.AshpazPrices;
+    if (prices && typeof prices.quoteRecipe === "function") {
+      var quote = prices.quoteRecipe(card, people);
+      if (quote && quote.label) return quote;
+    }
+    var label = formatCostToman(scaleCardCost(card.cost_toman, people, card.servings));
+    if (!label) return null;
+    return { source: "estimate", label: label, stale: false };
+  }
+
   function renderRecipeGrid(doc, grid, recipes, household) {
     api.latestRecipes = recipes;
     var people =
@@ -541,12 +552,14 @@
       title.textContent = card.title;
 
       head.append(title);
-      var costLabel = formatCostToman(scaleCardCost(card.cost_toman, people, card.servings));
-      if (costLabel) {
+      var quote = presentCost(card, people);
+      if (quote && quote.label) {
         var badge = doc.createElement("span");
-        badge.className = "cost-badge";
+        badge.className =
+          "cost-badge" + (quote.source === "okala" || quote.source === "partial" ? " is-okala" : "");
         badge.dataset.testid = "recipe-cost";
-        badge.textContent = costLabel;
+        badge.dataset.source = quote.source;
+        badge.textContent = quote.label;
         head.append(badge);
       }
       var phrase = peoplePhrase(people);
@@ -556,6 +569,13 @@
         peopleEl.dataset.testid = "recipe-people";
         peopleEl.textContent = phrase;
         head.append(peopleEl);
+      }
+      if (quote && quote.stale && quote.source === "estimate") {
+        var staleNote = doc.createElement("p");
+        staleNote.className = "recipe-price-note";
+        staleNote.dataset.testid = "recipe-price-note";
+        staleNote.textContent = "قیمت اُکالا کهنه است";
+        head.append(staleNote);
       }
 
       var ingredientLabel = doc.createElement("p");
@@ -774,6 +794,12 @@
       if (typeof doc.addEventListener === "function") {
         doc.addEventListener("ashpaz-pantry-changed", function () {
           paintDietChips();
+          if (grid && !grid.hidden && api.latestRecipes && api.latestRecipes.length) {
+            renderRecipeGrid(doc, grid, api.latestRecipes);
+            applyNutrition(grid, rememberedEstimates(api.latestRecipes));
+          }
+        });
+        doc.addEventListener("ashpaz-prices-changed", function () {
           if (grid && !grid.hidden && api.latestRecipes && api.latestRecipes.length) {
             renderRecipeGrid(doc, grid, api.latestRecipes);
             applyNutrition(grid, rememberedEstimates(api.latestRecipes));

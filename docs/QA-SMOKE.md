@@ -12,11 +12,12 @@ Release gate for tag `v0.2.0`. `v0.1.0` is already tagged (pantry chips, one fri
 | Share/print week (`#p=` + A4 poster) | 7 |
 | Diet filters (گیاهی / بدون پیاز / مناسب دیابت) | 4b |
 | Household size (تعداد نفرات scales amounts and cost) | 4d |
+| Okala prices and assisted cart (ticket #20) | 7d |
 | PWA install (manifest, service worker shell-only, install note) | 9 |
 
 Do **not** create the `v0.2.0` tag or a GitHub Release from this checklist. SE tags after this path is green. Short notes for that tag are [RELEASE.md](RELEASE.md).
 
-Steps 5, 5b, 7, and 7b also cover the v0.3 week (صبحانه، ناهار، شام — ۲۱ slots). Do **not** create a `v0.3.0` tag from those checks.
+Steps 5, 5b, 7, and 7b also cover the v0.3 week (صبحانه، ناهار، شام — ۲۱ slots). Step 7d covers v0.3 Okala prices. Do **not** create a `v0.3.0` tag from those checks.
 
 ## Repo and secrets
 
@@ -47,11 +48,11 @@ test -n "$GAP_CODE_API_KEY" && echo "GAP_CODE_API_KEY is set (value hidden)"
 No key and no network:
 
 ```bash
-node --test web/household.test.js web/pantry.test.js web/recipes.test.js web/fridge.test.js web/plan.test.js web/shop.test.js web/persist.test.js web/pwa.test.js
+node --test web/household.test.js web/pantry.test.js web/recipes.test.js web/fridge.test.js web/plan.test.js web/shop.test.js web/persist.test.js web/pwa.test.js web/prices.test.js
 cd api && python3 -m unittest discover -s tests -v
 ```
 
-`LiveSmokeTest` stays skipped unless `GAPGPT_LIVE_SMOKE=1`.
+`LiveSmokeTest` stays skipped unless `GAPGPT_LIVE_SMOKE=1`. `test_live_smoke_one_catalog_page` stays skipped unless `OKALA_LIVE_SMOKE=1`. The default suite uses `api/fixtures/okala_catalog.json` and does not call okala.com.
 
 Installability is `web/pwa.test.js` plus the footer line «افزودن به صفحهٔ اصلی» (step 9). Chrome can install from http://localhost:8080; any other host needs HTTPS. The service worker caches the page shell only and does not call GapGPT.
 
@@ -293,6 +294,43 @@ With `db` and `api` healthy. No API key is required. This step is part of the v0
 docker compose stop api
 # Reload http://localhost:8080 and confirm the cached chips and week.
 docker compose start api
+```
+
+### 7d. Okala prices and assisted cart
+
+This check is the v0.3 price slice (ticket #20). Do **not** create a `v0.3.0` tag from it. It does not need `GAP_CODE_API_KEY`. `/health` does not call Okala.
+
+The pantry button «به‌روزرسانی قیمت‌ها» is the primary refresh. It posts the pantry and shopping names to `POST /api/prices/refresh`. The page does not scrape on its own.
+
+With `OKALA_LIVE=0` (or when the live catalog fails and the price book is empty) the api stores the bundled fixture. A live failure that already has rows keeps those rows and says the last stored price remains. A quote that is missing or older than the cache TTL falls back to the scaled GapGPT `cost_toman` and the card says «قیمت اُکالا کهنه است».
+
+- After refresh, a matched staple such as برنج shows an اُکالا badge on the recipe card, the week budget, and the shopping row. A recipe that mixes matched and unmatched lines says «بخشی از اُکالا». A line with no Okala price still says «حدود».
+- Unmatched names appear under the button in Persian («در اُکالا پیدا نشد»).
+- «تعداد نفرات» scales the quantity once. Okala unit price times that quantity is the line cost. Doubling headcount doubles that line; it is not scaled again.
+- On «مواد خرید», each matched row shows the Okala line total. A stale row keeps the last unit price and says «کهنه».
+- «سبد اُکالا» copies up to ten names for Okala’s list search, and can open the store homepage or a product page. The basket is not prefilled here. Payment is not completed here. The status line stays Persian.
+
+Shell, no live network when `OKALA_LIVE=0`:
+
+```bash
+curl -sS -X POST http://localhost:8000/prices/refresh \
+  -H 'Content-Type: application/json' \
+  -d '{"force":true,"names":["برنج"]}'
+curl -sS -X POST http://localhost:8000/prices/quote \
+  -H 'Content-Type: application/json' \
+  -d '{"ingredients":["۲۰۰ گرم برنج"],"household":8,"servings":4,"estimate_toman":10000}'
+curl -sS -X POST http://localhost:8000/prices/cart \
+  -H 'Content-Type: application/json' \
+  -d '{"items":[{"name":"برنج","quantity_label":"۴۰۰ گرم"}]}'
+```
+
+The quote for ۲۰۰ گرم برنج at ۸ نفر is `165000` toman from the fixture. The cart body has `"prefill": false` and `"checkout": false`, and `open_url` is the Okala homepage.
+
+Automated checks, no key and no live Okala:
+
+```bash
+node --test web/prices.test.js
+cd api && python3 -m unittest tests.test_okala tests.test_okala_endpoint -v
 ```
 
 ### 8. Break the key — Persian error and retry — restore
