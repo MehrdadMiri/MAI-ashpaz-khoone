@@ -15,11 +15,13 @@ test -n "$GAP_CODE_API_KEY" && echo "GAP_CODE_API_KEY is set (value hidden)"
 Automated checks (no key, no network):
 
 ```bash
-node --test web/pantry.test.js web/recipes.test.js web/fridge.test.js web/plan.test.js web/shop.test.js web/persist.test.js
+node --test web/pantry.test.js web/recipes.test.js web/fridge.test.js web/plan.test.js web/shop.test.js web/persist.test.js web/pwa.test.js
 cd api && python3 -m unittest discover -s tests -v
 ```
 
 `LiveSmokeTest` stays skipped unless `GAPGPT_LIVE_SMOKE=1`.
+
+Installability is `web/pwa.test.js` plus the footer line «افزودن به صفحهٔ اصلی». Chrome can install from http://localhost:8080; any other host needs HTTPS. The service worker caches the page shell only and does not call GapGPT.
 
 ## Checklist
 

@@ -6,6 +6,7 @@ name: ashpaz-khoone
 
 services:
   web:
+    # Serves the installable shell: /manifest.webmanifest as application/manifest+json, and /sw.js.
     build:
       context: ./web
     ports:
