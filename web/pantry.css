@@ -1572,7 +1572,10 @@ h2 {
   }
 
   .week-grid {
-    display: block !important;
+    display: grid !important;
+    grid-template-columns: 1fr 1fr;
+    gap: 3.5mm;
+    align-items: stretch;
   }
 
   .plan-head,
@@ -1604,8 +1607,8 @@ h2 {
 
   .day-card {
     display: block !important;
-    margin: 0 0 3mm !important;
-    padding: 2.5mm 3.5mm !important;
+    margin: 0 !important;
+    padding: 2.5mm 3mm !important;
     break-inside: avoid;
     page-break-inside: avoid;
     border: 1px solid #1a1a1a !important;
@@ -1613,16 +1616,6 @@ h2 {
     border-radius: 0 !important;
     background: #fff !important;
     box-shadow: none !important;
-  }
-
-  .day-card:last-child {
-    margin-bottom: 0 !important;
-  }
-
-  .day-name,
-  .day-kicker {
-    break-after: avoid;
-    page-break-after: avoid;
   }
 
   .day-name {
