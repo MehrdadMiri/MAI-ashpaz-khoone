@@ -1,6 +1,9 @@
 /* Client-side pantry for آشپزخونه (US-02 chips, US-04 week budget).
-   State stays in localStorage. Recipe generation reads the active pantry.
-   Fridge vision asks the user to confirm, then merges with the same add rules.
+   Every change is written to localStorage. When AshpazPersist is loaded, the
+   same snapshot is also sent to Postgres. If that api is down, this cache
+   is what the page keeps using.
+   Recipe generation reads the active pantry. Fridge vision asks the user to
+   confirm, then merges with the same add rules.
    Listeners on this document for "ashpaz-pantry-changed" refresh the chips. */
 (function (global) {
   "use strict";
@@ -117,12 +120,27 @@
       }
     }
 
-    function persist() {
+    function writeLocal() {
       try {
         storage.setItem(STORAGE_KEY, JSON.stringify(state));
       } catch (err) {
         /* Quota or privacy mode: keep the in-memory list for this visit. */
       }
+    }
+
+    function notifyRemote() {
+      var remote = global.AshpazPersist;
+      if (!remote || typeof remote.onPantry !== "function") return;
+      try {
+        remote.onPantry({ items: state.items.slice(), budget: state.budget });
+      } catch (err) {
+        /* The local list is already saved. A later load can try the api again. */
+      }
+    }
+
+    function persist() {
+      writeLocal();
+      notifyRemote();
     }
 
     function findIndex(name) {
@@ -192,6 +210,14 @@
         state.budget = String(value);
         persist();
         return { ok: true, budget: state.budget };
+      },
+      snapshot: function () {
+        return { items: state.items.slice(), budget: state.budget };
+      },
+      replace: function (parsed) {
+        state = sanitizeState(parsed);
+        writeLocal();
+        return { items: state.items.slice(), budget: state.budget };
       },
     };
   }
@@ -369,6 +395,7 @@
     doc.addEventListener("ashpaz-pantry-changed", function (event) {
       var detail = (event && event.detail) || {};
       if (detail.source === "pantry") return;
+      if (budgetInput.value !== pantry.budget()) budgetInput.value = pantry.budget();
       if (detail.message) setStatus(detail.message);
       render(detail.flash || "");
     });

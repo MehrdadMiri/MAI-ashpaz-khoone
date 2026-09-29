@@ -2,6 +2,8 @@
    Recipes already on the page can be assigned to شنبه–جمعه.
    A day can be marked خورده شد. That flag stays in localStorage with the
    plan and is how leftover regenerate knows which dinners to skip.
+   When AshpazPersist is loaded, the same snapshot is also stored in Postgres.
+   If that api is down, the localStorage copy is what the page keeps using.
    Print and Markdown export are client-side. This file does not call
    GapGPT and never sees the API key. */
 (function (global) {
@@ -235,15 +237,35 @@
       }
     }
 
-    function persist() {
+    function planSnapshot() {
+      return {
+        recipes: state.recipes.map(copyRecipe),
+        slots: Object.assign({}, state.slots),
+        used: Object.assign({}, state.used),
+      };
+    }
+
+    function writeLocal() {
       try {
-        storage.setItem(
-          STORAGE_KEY,
-          JSON.stringify({ recipes: state.recipes, slots: state.slots, used: state.used })
-        );
+        storage.setItem(STORAGE_KEY, JSON.stringify(planSnapshot()));
       } catch (err) {
         /* Quota or privacy mode: keep the in-memory plan for this visit. */
       }
+    }
+
+    function notifyRemote() {
+      var remote = global.AshpazPersist;
+      if (!remote || typeof remote.onPlan !== "function") return;
+      try {
+        remote.onPlan(planSnapshot());
+      } catch (err) {
+        /* The local plan is already saved. A later load can try the api again. */
+      }
+    }
+
+    function persist() {
+      writeLocal();
+      notifyRemote();
     }
 
     function find(id) {
@@ -435,6 +457,14 @@
           titles.push(day.recipe.title);
         });
         return titles;
+      },
+      snapshot: function () {
+        return planSnapshot();
+      },
+      replace: function (parsed) {
+        state = sanitize(parsed);
+        writeLocal();
+        return planSnapshot();
       },
       remainingChips: function (pantryItems) {
         var items = Array.isArray(pantryItems) ? pantryItems.slice() : [];
@@ -952,6 +982,12 @@
       var handler = onChoice;
       closeSheet();
       if (handler && id) handler(id);
+    });
+
+    doc.addEventListener("ashpaz-plan-changed", function (event) {
+      var detail = (event && event.detail) || {};
+      if (detail.source !== "remote") return;
+      render();
     });
 
     render();

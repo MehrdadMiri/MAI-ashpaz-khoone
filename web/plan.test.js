@@ -237,6 +237,44 @@ test("building the week fills only empty days, repeating recipes", () => {
   assert.equal(model.spend(), 180000 + 160000 + 70000 + 180000 + 160000 + 70000 + 70000);
 });
 
+test("replace restores recipes, slots, and eaten days without a remote write", () => {
+  const storage = plan.createMemoryStorage();
+  const model = plan.createPlan({ storage });
+  let calls = 0;
+  global.AshpazPersist = {
+    onPlan() {
+      calls += 1;
+    },
+  };
+  try {
+    model.replace({
+      recipes: [dish("عدس‌پلو", ["برنج"], ["بپز"], 10)],
+      slots: { sat: "r:عدسپلو" },
+      used: { sat: true },
+    });
+    assert.equal(calls, 0);
+    assert.equal(model.week()[0].recipe.title, "عدس‌پلو");
+    assert.equal(model.week()[0].used, true);
+    const again = plan.createPlan({ storage });
+    assert.equal(again.week()[0].used, true);
+    assert.equal(again.snapshot().slots.sat, "r:عدسپلو");
+  } finally {
+    delete global.AshpazPersist;
+  }
+});
+
+test("a remote plan event redraws the week", () => {
+  const view = mountPlan({});
+  view.model.replace({
+    recipes: [dish("عدس‌پلو", ["برنج"], ["بپز"], 10)],
+    slots: { sat: "r:عدسپلو" },
+    used: { sat: true },
+  });
+  fire(view.doc, "ashpaz-plan-changed", { detail: { source: "remote" } });
+  const meal = dayCards(view.doc)[0].children.find((node) => node.dataset.testid === "day-meal");
+  assert.equal(meal.textContent, "عدس‌پلو — خورده شد");
+});
+
 test("the plan is remembered in localStorage and ignores a broken save", () => {
   const storage = plan.createMemoryStorage();
   const first = plan.createPlan({ storage });

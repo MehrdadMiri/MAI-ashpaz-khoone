@@ -15,7 +15,7 @@ test -n "$GAP_CODE_API_KEY" && echo "GAP_CODE_API_KEY is set (value hidden)"
 Automated checks (no key, no network):
 
 ```bash
-node --test web/pantry.test.js web/recipes.test.js web/fridge.test.js web/plan.test.js web/shop.test.js
+node --test web/pantry.test.js web/recipes.test.js web/fridge.test.js web/plan.test.js web/shop.test.js web/persist.test.js
 cd api && python3 -m unittest discover -s tests -v
 ```
 
@@ -166,7 +166,15 @@ After the week has at least one شام (step 5) and the pantry has chips (step 2
 - With no شام left on the week, the section says «برنامه هفته خالی است».
 - With a filled week, «پاک کردن» says «آشپزخانه خالی است» and lists every planned ingredient.
 
-Without a key, the same list can be checked after «بارگذاری نمونه» by saving a plan in the browser and reloading. See the shopping-list section of the README for the `localStorage` snippet (`ashpaz-khoone.plan.v1`, Saturday slot `r:عدسپلو`).
+Without a key, the same list can be checked after «بارگذاری نمونه» by saving a plan in the browser and reloading. See the shopping-list section of the README for the `localStorage` snippet (`ashpaz-khoone.plan.v1`, Saturday slot `r:عدسپلو`). If this browser id already has a plan in Postgres, reload shows that row; the snippet applies when the api is down or `GET /plan` is `found: false`.
+
+### 7c. Pantry and plan survive refresh
+
+With `db` and `api` healthy. No API key. This check does not create a release tag.
+
+- Add a chip and a week budget. Reload http://localhost:8080. The chip and the budget are still there.
+- Assign a شام and mark «خورده شد». Reload. The day and the mark are still there.
+- Stop the api container and reload. The same browser still shows the cached chips and plan. Start api again and reload. The saved rows are back.
 
 ### 8. Break the key — Persian error and retry — restore
 

@@ -148,6 +148,91 @@ test("storage failures stay in memory", () => {
   assert.deepEqual(store.items(), ["روغن"]);
 });
 
+test("replace loads a saved pantry without notifying a remote hook", () => {
+  const storage = createMemoryStorage();
+  const store = createPantry({ storage });
+  store.add("پیاز");
+  let calls = 0;
+  global.AshpazPersist = {
+    onPantry() {
+      calls += 1;
+    },
+  };
+  try {
+    store.replace({ items: ["برنج", "كرفس"], budget: "20" });
+    assert.deepEqual(store.items(), ["برنج", "کرفس"]);
+    assert.equal(store.budget(), "20");
+    assert.equal(calls, 0);
+    const again = createPantry({ storage });
+    assert.deepEqual(again.snapshot(), { items: ["برنج", "کرفس"], budget: "20" });
+  } finally {
+    delete global.AshpazPersist;
+  }
+});
+
+test("a remote hook error still keeps the chip", () => {
+  global.AshpazPersist = {
+    onPantry() {
+      throw new Error("down");
+    },
+  };
+  try {
+    const store = fresh();
+    assert.equal(store.add("روغن").ok, true);
+    assert.deepEqual(store.items(), ["روغن"]);
+  } finally {
+    delete global.AshpazPersist;
+  }
+});
+
+test("a remote pantry event refreshes the budget field", () => {
+  const storage = createMemoryStorage();
+  const model = createPantry({ storage });
+  model.setBudget("20");
+  const listeners = {};
+  const nodes = {};
+  function el() {
+    return {
+      hidden: false,
+      disabled: false,
+      value: "",
+      textContent: "",
+      className: "",
+      dataset: {},
+      children: [],
+      classList: { add() {}, toggle() {} },
+      append() {},
+      replaceChildren() {},
+      setAttribute() {},
+      addEventListener() {},
+      focus() {},
+      select() {},
+    };
+  }
+  ["add-form", "ingredient", "chips", "empty", "status", "week-budget", "seed", "clear"].forEach((id) => {
+    nodes[id] = el();
+  });
+  const doc = {
+    getElementById(id) {
+      return nodes[id] || null;
+    },
+    createElement: el,
+    createDocumentFragment() {
+      return { append() {} };
+    },
+    addEventListener(type, fn) {
+      listeners[type] = listeners[type] || [];
+      listeners[type].push(fn);
+    },
+  };
+  pantry.mount(doc, model);
+  assert.equal(nodes["week-budget"].value, "20");
+  model.replace({ items: ["برنج"], budget: "9" });
+  listeners["ashpaz-pantry-changed"].forEach((fn) => fn({ detail: { source: "remote" } }));
+  assert.equal(nodes["week-budget"].value, "9");
+  assert.deepEqual(model.items(), ["برنج"]);
+});
+
 test("empty pantry copy offers seed, a chip, and a fridge photo", () => {
   const html = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
   assert.match(html, /هنوز چیزی در آشپزخانه نیست/);
