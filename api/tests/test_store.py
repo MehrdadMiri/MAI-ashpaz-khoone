@@ -67,6 +67,46 @@ class SanitizeTests(unittest.TestCase):
         )
         missing = store.sanitize_pantry({"items": ["ماست"]})
         self.assertFalse(any(missing["filters"].values()))
+        self.assertEqual(missing["household"], 4)
+
+    def test_household_defaults_to_four_and_servings_stay_on_the_recipe(self):
+        pantry = store.sanitize_pantry({"items": ["برنج"], "household": "۸"})
+        self.assertEqual(pantry["household"], 8)
+        junk = store.sanitize_pantry({"items": ["برنج"], "household": "nope"})
+        self.assertEqual(junk["household"], 4)
+        wide = store.sanitize_pantry({"items": ["برنج"], "household": 99})
+        self.assertEqual(wide["household"], 4)
+        self.assertEqual(store.sanitize_household(True), 4)
+
+        plan = store.sanitize_plan(
+            {
+                "recipes": [
+                    {
+                        "title": "عدس‌پلو",
+                        "ingredients": ["۲۰۰ گرم برنج"],
+                        "steps": ["بپز"],
+                        "cost_toman": 10,
+                        "servings": 8,
+                    }
+                ]
+            }
+        )
+        self.assertEqual(plan["recipes"][0]["servings"], 8)
+        self.assertEqual(plan["recipes"][0]["ingredients"], ["۲۰۰ گرم برنج"])
+        self.assertEqual(plan["recipes"][0]["cost_toman"], 10)
+        dropped = store.sanitize_plan(
+            {
+                "recipes": [
+                    {
+                        "title": "سوپ",
+                        "ingredients": ["آب"],
+                        "steps": ["بپز"],
+                        "servings": 0,
+                    }
+                ]
+            }
+        )
+        self.assertNotIn("servings", dropped["recipes"][0])
 
     def test_plan_keeps_an_eaten_day_and_recomputes_ids(self):
         plan = store.sanitize_plan(

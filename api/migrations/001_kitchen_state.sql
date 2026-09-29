@@ -1,4 +1,5 @@
--- Pantry chips, week budget, and the 7-day dinner plan.
+-- Pantry chips, week budget, household size, and the 7-day meal plan.
+-- household (تعداد نفرات, default 4) lives inside the pantry jsonb object.
 -- local_user_id is a browser-local token, not an account and not a password.
 -- Do not store API keys or other secrets in these rows.
 -- Postgres runs this file when the data volume is first created.

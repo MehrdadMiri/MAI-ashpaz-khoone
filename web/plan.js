@@ -134,6 +134,34 @@
     return "حدود " + formatToman(value);
   }
 
+  function currentHousehold() {
+    var shared = global.AshpazHousehold;
+    var pantryApi = global.AshpazPantry;
+    var pantry = pantryApi && pantryApi.active;
+    var raw = pantry && typeof pantry.household === "function" ? pantry.household() : null;
+    if (shared && typeof shared.householdOrDefault === "function") return shared.householdOrDefault(raw);
+    return 4;
+  }
+
+  function shownCost(recipe) {
+    if (!recipe || typeof recipe.cost_toman !== "number" || !isFinite(recipe.cost_toman)) return null;
+    var shared = global.AshpazHousehold;
+    if (!shared || typeof shared.scaleCost !== "function") return recipe.cost_toman;
+    return shared.scaleCost(recipe.cost_toman, currentHousehold(), recipe.servings);
+  }
+
+  function peoplePhrase() {
+    var shared = global.AshpazHousehold;
+    if (shared && typeof shared.peoplePhrase === "function") return shared.peoplePhrase(currentHousehold());
+    return "";
+  }
+
+  function readServings(value) {
+    var shared = global.AshpazHousehold;
+    if (!shared || typeof shared.parseHousehold !== "function") return null;
+    return shared.parseHousehold(value);
+  }
+
   function cleanLine(value, limit) {
     if (typeof value !== "string") return "";
     var text = value
@@ -287,23 +315,28 @@
     if (typeof recipe.cost_toman === "number" && isFinite(recipe.cost_toman) && recipe.cost_toman >= 0) {
       cost = Math.round(recipe.cost_toman);
     }
-    return {
+    var normalized = {
       id: "r:" + key,
       title: title,
       ingredients: cleanList(recipe.ingredients, 16, 80),
       steps: cleanList(recipe.steps, 12, 400),
       cost_toman: cost,
     };
+    var servings = readServings(recipe.servings);
+    if (servings != null) normalized.servings = servings;
+    return normalized;
   }
 
   function copyRecipe(recipe) {
-    return {
+    var copy = {
       id: recipe.id,
       title: recipe.title,
       ingredients: recipe.ingredients.slice(),
       steps: recipe.steps.slice(),
       cost_toman: recipe.cost_toman,
     };
+    if (typeof recipe.servings === "number" && isFinite(recipe.servings)) copy.servings = recipe.servings;
+    return copy;
   }
 
   function budgetLine(spent, budget) {
@@ -319,8 +352,9 @@
   function mealLine(meal) {
     var text = meal.recipe ? meal.recipe.title : COPY.empty;
     if (meal.recipe && meal.used) text += " — " + COPY.eaten;
-    if (meal.recipe && typeof meal.recipe.cost_toman === "number" && meal.recipe.cost_toman > 0) {
-      var cost = formatApprox(meal.recipe.cost_toman);
+    var scaled = shownCost(meal.recipe);
+    if (typeof scaled === "number" && scaled > 0) {
+      var cost = formatApprox(scaled);
       if (cost) text += " — " + cost;
     }
     return text;
@@ -475,6 +509,9 @@
     var steps = safeList(recipe.steps, 12, 400);
     if (ingredients.length) row.ingredients = ingredients;
     if (steps.length) row.steps = steps;
+    if (typeof recipe.servings === "number" && isFinite(recipe.servings)) {
+      row.servings = Math.round(recipe.servings);
+    }
     if (containsSecret(row)) return null;
     return row;
   }
@@ -550,6 +587,7 @@
       ingredients: row.ingredients,
       steps: row.steps,
       cost_toman: row.cost,
+      servings: row.servings,
     });
     if (!recipe) return;
     rememberSharedRecipe(recipes, recipe);
@@ -853,6 +891,8 @@
         existing.ingredients = recipe.ingredients;
         existing.steps = recipe.steps;
         existing.cost_toman = recipe.cost_toman;
+        if (recipe.servings != null) existing.servings = recipe.servings;
+        else delete existing.servings;
         return existing;
       }
       state.recipes.push(recipe);
@@ -881,9 +921,8 @@
       var total = 0;
       week().forEach(function (day) {
         day.meals.forEach(function (meal) {
-          if (meal.recipe && typeof meal.recipe.cost_toman === "number" && meal.recipe.cost_toman > 0) {
-            total += meal.recipe.cost_toman;
-          }
+          var scaled = shownCost(meal.recipe);
+          if (typeof scaled === "number" && scaled > 0) total += scaled;
         });
       });
       return total;
@@ -1001,7 +1040,10 @@
         return { filled: filled };
       },
       markdown: function (budget) {
-        return markdownDocument(week(), budgetLine(spend(), budget));
+        var note = budgetLine(spend(), budget);
+        var phrase = peoplePhrase();
+        if (note && phrase) note = { text: note.text + "، " + phrase, over: note.over };
+        return markdownDocument(week(), note);
       },
       setUsed: function (dayId, eaten, mealId) {
         var day = dayById(dayId);
@@ -1149,8 +1191,9 @@
 
     slot.append(kicker, title);
 
-    if (meal.recipe && typeof meal.recipe.cost_toman === "number" && meal.recipe.cost_toman > 0) {
-      var costLabel = formatApprox(meal.recipe.cost_toman);
+    var scaledCost = shownCost(meal.recipe);
+    if (typeof scaledCost === "number" && scaledCost > 0) {
+      var costLabel = formatApprox(scaledCost);
       if (costLabel) {
         var cost = doc.createElement("p");
         cost.className = "day-cost";
@@ -1349,7 +1392,8 @@
         return;
       }
       budgetEl.hidden = false;
-      budgetEl.textContent = note.text;
+      var phrase = peoplePhrase();
+      budgetEl.textContent = phrase ? note.text + "، " + phrase : note.text;
       if (budgetEl.classList) budgetEl.classList.toggle("is-over", note.over);
     }
 
@@ -1364,10 +1408,18 @@
       banner.hidden = filled;
     }
 
+    function renderPeople() {
+      var peopleEl = doc.getElementById("plan-people");
+      if (!peopleEl) return;
+      var phrase = peoplePhrase();
+      peopleEl.textContent = phrase ? "هزینه وعده‌ها " + phrase + " است." : "";
+    }
+
     function render() {
       renderWeek(doc, grid, plan);
       renderEmpty();
       renderBudget();
+      renderPeople();
       emitPlan(doc);
     }
 
@@ -1478,7 +1530,8 @@
       var choices = recipes.map(function (recipe) {
         var same = meal.recipe && meal.recipe.id === recipe.id;
         var detail = "";
-        if (!same && recipe.cost_toman) detail = formatApprox(recipe.cost_toman);
+        var scaled = shownCost(recipe);
+        if (!same && scaled) detail = formatApprox(scaled);
         return {
           id: recipe.id,
           label: recipe.title,
@@ -1675,6 +1728,10 @@
     if (closeBtn) closeBtn.addEventListener("click", closeSheet);
     if (cancelBtn) cancelBtn.addEventListener("click", closeSheet);
     if (budgetInput) budgetInput.addEventListener("input", renderBudget);
+
+    doc.addEventListener("ashpaz-pantry-changed", function () {
+      render();
+    });
 
     sheet.addEventListener("click", function (event) {
       if (event && event.target === sheet) closeSheet();

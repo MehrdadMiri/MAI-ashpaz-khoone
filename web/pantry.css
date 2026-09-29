@@ -150,6 +150,14 @@ h1 {
   color: var(--muted);
 }
 
+.top-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: stretch;
+}
+
+.household-chip,
 .budget-chip {
   display: flex;
   flex-direction: column;
@@ -169,10 +177,45 @@ h1 {
   font-weight: 600;
 }
 
+.household-field,
 .budget-field {
   display: flex;
   align-items: center;
   gap: 0.45rem;
+}
+
+.household-field button {
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: #f6efe4;
+  color: var(--ink);
+  font: inherit;
+  font-size: 1.2rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.household-field button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.household-field input {
+  width: 2.4rem;
+  min-width: 0;
+  padding: 0.15rem 0.2rem;
+  border: 0;
+  border-radius: 0.45rem;
+  background: #f6efe4;
+  color: var(--ink);
+  font-weight: 700;
+  font-size: 1.2rem;
+  direction: ltr;
+  text-align: center;
 }
 
 .budget-field input {
@@ -688,9 +731,10 @@ h2 {
 
 .recipe-card-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 0.6rem;
+  gap: 0.35rem 0.6rem;
 }
 
 .recipe-card h3 {
@@ -703,6 +747,14 @@ h2 {
 .recipe-steps,
 .recipe-tags li {
   overflow-wrap: anywhere;
+}
+
+.recipe-people {
+  flex: 1 0 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 600;
 }
 
 .cost-badge {
@@ -1496,6 +1548,8 @@ h2 {
     align-items: stretch;
   }
 
+  .top-controls,
+  .household-chip,
   .budget-chip {
     width: 100%;
   }

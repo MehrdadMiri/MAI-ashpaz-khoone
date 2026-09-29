@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+require("./household.js");
 const pantry = require("./pantry.js");
 
 const { SEED_STAPLES, STORAGE_KEY, createPantry, createMemoryStorage, identityKey } = pantry;
@@ -168,6 +169,7 @@ test("replace loads a saved pantry without notifying a remote hook", () => {
       items: ["برنج", "کرفس"],
       budget: "20",
       filters: { vegetarian: false, no_onion: false, diabetic: false },
+      household: 4,
     });
   } finally {
     delete global.AshpazPersist;
@@ -283,4 +285,38 @@ test("empty pantry copy offers seed, a chip, and a fridge photo", () => {
   assert.match(html, /id="seed"/);
   assert.match(html, /عکس یخچال/);
   assert.equal(html.includes(["GAP", "CODE", "API", "KEY"].join("_")), false);
+  assert.match(html, /id="household-size"/);
+  assert.match(html, /data-testid="household-size"/);
+  assert.match(html, /id="household-dec"/);
+  assert.match(html, /id="household-inc"/);
+  assert.match(html, /تعداد نفرات/);
+  assert.match(html, /کم کردن تعداد نفرات/);
+  assert.match(html, /زیاد کردن تعداد نفرات/);
+  assert.match(html, /household\.js/);
+  assert.ok(html.indexOf("household.js") < html.indexOf("pantry.js"));
+});
+
+test("household size defaults to 4, persists, and clear keeps it", () => {
+  const storage = createMemoryStorage();
+  const store = createPantry({ storage });
+  assert.equal(store.household(), 4);
+  assert.equal(store.setHousehold(0).ok, false);
+  assert.equal(store.household(), 4);
+  assert.deepEqual(store.setHousehold("۸"), { ok: true, household: 8, changed: true });
+  assert.equal(store.setHousehold(13).ok, false);
+  assert.equal(store.household(), 8);
+  assert.equal(store.setHousehold(8).changed, false);
+  store.add("برنج");
+  store.setBudget("20");
+  store.clear();
+  assert.deepEqual(store.items(), []);
+  assert.equal(store.budget(), "20");
+  assert.equal(store.household(), 8);
+  const again = createPantry({ storage });
+  assert.equal(again.household(), 8);
+  assert.equal(again.budget(), "20");
+  again.replace({ items: ["پیاز"], household: "nope" });
+  assert.equal(again.household(), 4);
+  again.replace({ items: ["پیاز"], household: 2 });
+  assert.equal(again.household(), 2);
 });

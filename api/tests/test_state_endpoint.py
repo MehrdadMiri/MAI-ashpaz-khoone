@@ -75,6 +75,7 @@ class EndpointTests(unittest.TestCase):
                 "items": ["کرفس"],
                 "budget": "1500",
                 "filters": {"vegetarian": False, "no_onion": False, "diabetic": False},
+                "household": 4,
             },
         )
         self.assertNotIn(KEY, saved.get_data(as_text=True))
@@ -254,6 +255,7 @@ class PostgresEndpointTests(unittest.TestCase):
                 "items": ["پیاز"],
                 "budget": "20",
                 "filters": {"vegetarian": False, "no_onion": False, "diabetic": False},
+                "household": 4,
             },
         )
         self.assertNotIn("change-me", loaded.get_data(as_text=True))

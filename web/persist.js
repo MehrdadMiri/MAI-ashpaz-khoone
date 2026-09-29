@@ -79,6 +79,18 @@
     };
   }
 
+  function copyHousehold(snapshot) {
+    var shared = global.AshpazHousehold;
+    if (shared && typeof shared.householdOrDefault === "function") {
+      return shared.householdOrDefault(snapshot && snapshot.household);
+    }
+    var value = snapshot && snapshot.household;
+    if (typeof value !== "number" || !isFinite(value)) return 4;
+    var people = Math.round(value);
+    if (people < 1 || people > 12) return 4;
+    return people;
+  }
+
   function copyPantry(snapshot) {
     var items = [];
     if (snapshot && Array.isArray(snapshot.items)) {
@@ -90,6 +102,7 @@
       items: items,
       budget: snapshot && typeof snapshot.budget === "string" ? snapshot.budget : "",
       filters: copyFilters(snapshot),
+      household: copyHousehold(snapshot),
     };
   }
 
@@ -98,13 +111,17 @@
     if (snapshot && Array.isArray(snapshot.recipes)) {
       snapshot.recipes.forEach(function (recipe) {
         if (!recipe || typeof recipe !== "object") return;
-        recipes.push({
+        var copied = {
           id: recipe.id,
           title: recipe.title,
           ingredients: Array.isArray(recipe.ingredients) ? recipe.ingredients.slice() : [],
           steps: Array.isArray(recipe.steps) ? recipe.steps.slice() : [],
           cost_toman: recipe.cost_toman,
-        });
+        };
+        if (typeof recipe.servings === "number" && isFinite(recipe.servings)) {
+          copied.servings = Math.round(recipe.servings);
+        }
+        recipes.push(copied);
       });
     }
     var slots = {};
@@ -142,7 +159,8 @@
     if (Array.isArray(snapshot.items) && snapshot.items.length) return true;
     if (typeof snapshot.budget === "string" && snapshot.budget !== "") return true;
     var filters = copyFilters(snapshot);
-    return filters.vegetarian || filters.no_onion || filters.diabetic;
+    if (filters.vegetarian || filters.no_onion || filters.diabetic) return true;
+    return copyHousehold(snapshot) !== 4;
   }
 
   function hasPlan(snapshot) {

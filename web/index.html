@@ -18,6 +18,42 @@
           <h1>آشپزخونه</h1>
           <p class="lede">مواد اولیه همین هفته</p>
         </div>
+        <div class="top-controls">
+        <div class="household-chip">
+          <span class="budget-kicker" id="household-label">تعداد نفرات</span>
+          <span class="household-field">
+            <button
+              type="button"
+              id="household-dec"
+              data-testid="household-dec"
+              aria-label="کم کردن تعداد نفرات"
+            >
+              −
+            </button>
+            <input
+              id="household-size"
+              name="household-size"
+              type="text"
+              inputmode="numeric"
+              dir="ltr"
+              maxlength="2"
+              placeholder="۴"
+              autocomplete="off"
+              spellcheck="false"
+              aria-labelledby="household-label"
+              data-testid="household-size"
+            />
+            <button
+              type="button"
+              id="household-inc"
+              data-testid="household-inc"
+              aria-label="زیاد کردن تعداد نفرات"
+            >
+              +
+            </button>
+            <span class="budget-unit">نفر</span>
+          </span>
+        </div>
         <label class="budget-chip">
           <span class="budget-kicker" id="budget-label">بودجه هفته</span>
           <span class="budget-field">
@@ -37,6 +73,7 @@
             <span class="budget-unit">تومان</span>
           </span>
         </label>
+        </div>
       </header>
 
       <main class="stack">
@@ -139,7 +176,7 @@
               <h2 id="recipes-title">پیشنهاد دستور</h2>
               <p class="hint">
                 پیشنهاد دستور مواد باقی‌مانده را ترجیح می‌دهد و وعده خورده‌شده را تکرار نمی‌کند. «بازتولید کامل»
-                همه مواد را با همان بودجه از نو می‌چیند.
+                همه مواد را با همان بودجه از نو می‌چیند. مقدار مواد و هزینه با تعداد نفرات عوض می‌شود.
               </p>
             </div>
             <div class="recipes-actions">
@@ -190,7 +227,7 @@
           <p id="recipe-status" class="status" role="status" aria-live="polite" data-testid="recipe-status"></p>
           <div id="recipe-empty" class="empty recipe-empty" data-testid="recipe-empty">
             <p class="empty-title">هنوز دستوری پیشنهاد نشده</p>
-            <p class="empty-help">بودجه هفته را وارد کنید و «پیشنهاد دستور» را بزنید.</p>
+            <p class="empty-help">بودجه هفته و تعداد نفرات را تنظیم کنید و «پیشنهاد دستور» را بزنید.</p>
           </div>
           <div id="recipe-skeleton" class="recipe-skeleton" hidden data-testid="recipe-skeleton" aria-hidden="true">
             <div class="skeleton-card"><span></span><span></span><span></span></div>
@@ -211,6 +248,7 @@
               <p class="print-only plan-poster-brand">آشپزخونه</p>
               <h2 id="plan-title">برنامه ۷ روزه</h2>
               <p class="hint plan-screen-hint">صبحانه، ناهار و شام، از شنبه تا جمعه.</p>
+              <p id="plan-people" class="hint" data-testid="plan-people"></p>
               <p class="print-only plan-poster-range">صبحانه، ناهار و شام، از شنبه تا جمعه</p>
             </div>
             <div class="plan-toolbar">
@@ -247,6 +285,7 @@
                 <span id="shop-count" class="count" data-testid="shop-count" hidden></span>
               </h2>
               <p class="hint">آنچه برای وعده‌های این هفته در آشپزخانه نیست.</p>
+              <p id="shop-scale" class="hint" data-testid="shop-scale"></p>
             </div>
             <div class="shop-toolbar">
               <button
@@ -287,7 +326,7 @@
       </main>
 
       <footer class="footer">
-        <span>مواد، بودجه و برنامه در همین مرورگر می‌ماند. مواد خرید از روی آن‌ها ساخته می‌شود.</span>
+        <span>مواد، بودجه، تعداد نفرات و برنامه در همین مرورگر می‌ماند. مواد خرید از روی آن‌ها ساخته می‌شود.</span>
         <a href="/health">سلامت سرویس</a>
         <p class="install-note" id="install-note" data-testid="install-note">
           برای نصب برنامه، در منوی مرورگر «افزودن به صفحهٔ اصلی» را بزنید.
@@ -448,6 +487,7 @@
     <noscript>
       <p class="noscript">برای استفاده از آشپزخانه، جاوااسکریپت را روشن کنید.</p>
     </noscript>
+    <script src="household.js"></script>
     <script src="pantry.js"></script>
     <script src="fridge.js"></script>
     <script src="recipes.js"></script>
