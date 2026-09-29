@@ -671,6 +671,52 @@ h2 {
   white-space: nowrap;
 }
 
+.recipe-nutrition {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px dashed #c5d7c4;
+  border-radius: 0.85rem;
+  background: #f4f8f3;
+}
+
+.recipe-nutrition[hidden] {
+  display: none;
+}
+
+.nutrition-pending,
+.nutrition-kcal,
+.nutrition-macros,
+.nutrition-note {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.nutrition-pending {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.nutrition-kcal {
+  color: #245c32;
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+.nutrition-macros {
+  color: #3d5344;
+  font-size: 0.82rem;
+  line-height: 1.7;
+}
+
+.nutrition-note {
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
 .recipe-kicker {
   color: var(--muted);
   font-size: 0.8rem;

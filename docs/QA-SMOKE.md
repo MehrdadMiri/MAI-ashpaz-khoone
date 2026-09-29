@@ -99,6 +99,7 @@ Repeat the two-photo curl with real fridge JPEGs instead of the tiny file. Expec
 - Before the first success, the recipe panel asks you to set the budget and press «پیشنهاد دستور».
 - Press «پیشنهاد دستور» once. The status is «در حال پختن ایده‌ها…», skeleton cards show, and the button does not send a second request while the first is in flight.
 - At least three Persian cards appear. Each has a title, ingredient tags, and steps. Spot-check them against the pantry names. A تومان badge appears when the model returned a cost.
+- After the cards appear, each one may show «حدود … کیلوکالری در هر وعده», and protein, carbohydrate, and fat when those numbers came back. The card says «این عددها برآورد هوش مصنوعی هستند، نه مقدار دقیق غذا.» If the estimate call fails, the cards stay and that block is absent. It does not use the recipe error or «تلاش دوباره».
 
 ### 5. Seven-day plan
 
