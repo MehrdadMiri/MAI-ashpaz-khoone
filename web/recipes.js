@@ -1,20 +1,27 @@
-/* Recipe suggestions for آشپزخونه (US-05).
+/* Recipe suggestions for آشپزخونه (US-05, US-10).
    Reads the active pantry (chips + week budget) and asks POST /api/recipes/generate.
+   «پیشنهاد دستور» is leftover-aware: remaining chips and eaten dinners.
+   «بازتولید کامل» sends the full pantry and does not skip those dinners.
    The API key stays on the server. This file never sees it. */
 (function (global) {
   "use strict";
 
   var COPY = {
     suggest: "پیشنهاد دستور",
+    full: "بازتولید کامل",
     loading: "در حال پختن ایده‌ها…",
     retry: "تلاش دوباره",
     addToPlan: "افزودن به برنامه",
     ingredients: "مواد",
     steps: "مراحل",
+    leftoverNote: "از مواد باقی‌مانده، بدون تکرار شام‌های خورده‌شده.",
+    fullNote: "بازتولید کامل، با همه مواد و همان بودجه هفته.",
   };
 
   var ERROR_COPY = {
     empty_ingredients: "برای پیشنهاد دستور، حداقل یک ماده به آشپزخانه اضافه کنید.",
+    no_remaining:
+      "بعد از شام‌های خورده‌شده ماده‌ای نمانده. یک ماده اضافه کنید یا «بازتولید کامل» را بزنید.",
     invalid_budget: "بودجه هفته درست نیست. یک عدد به تومان وارد کنید.",
     not_configured: "سرویس پیشنهاد دستور هنوز آماده نیست.",
     invalid_config: "سرویس پیشنهاد دستور هنوز آماده نیست.",
@@ -35,6 +42,7 @@
 
   var LOCAL_ERRORS = {
     empty_ingredients: true,
+    no_remaining: true,
     invalid_budget: true,
     invalid_request: true,
   };
@@ -69,7 +77,42 @@
     return items.length ? items : null;
   }
 
-  function buildGeneratePayload(pantry) {
+  function identityKey(value) {
+    var pantryApi = global.AshpazPantry;
+    if (pantryApi && typeof pantryApi.identityKey === "function") return pantryApi.identityKey(value);
+    return String(value || "")
+      .replace(/[\u200e\u200f\u200c\u200d]/g, "")
+      .replace(/\s+/g, "")
+      .toLowerCase();
+  }
+
+  function readLeftovers(pantry) {
+    var items = pantry.items().slice();
+    var planApi = global.AshpazPlan && global.AshpazPlan.active;
+    var skip = [];
+    var seen = Object.create(null);
+    var used = false;
+    if (planApi && typeof planApi.week === "function") {
+      planApi.week().forEach(function (day) {
+        if (!day || !day.used || !day.recipe || typeof day.recipe.title !== "string") return;
+        used = true;
+        var title = day.recipe.title.replace(/\s+/g, " ").trim();
+        if (!title) return;
+        var key = identityKey(title);
+        if (!key || seen[key]) return;
+        seen[key] = true;
+        skip.push(title);
+      });
+    }
+    var remaining = items.slice();
+    if (used && planApi && typeof planApi.remainingChips === "function") {
+      var next = planApi.remainingChips(items);
+      if (Array.isArray(next)) remaining = next.slice();
+    }
+    return { remaining: remaining, skip: skip, used: used };
+  }
+
+  function buildGeneratePayload(pantry, mode) {
     var items = pantry.items().slice();
     var raw = pantry.budget();
     var budget = null;
@@ -77,7 +120,17 @@
       var number = Number(raw);
       if (isFinite(number)) budget = number;
     }
-    return { ingredients: items, budget: budget };
+    var full = !!(mode && mode.full);
+    if (full) return { ingredients: items, budget: budget, full: true };
+    var leftovers = readLeftovers(pantry);
+    if (!leftovers.used) return { ingredients: items, budget: budget };
+    return {
+      ingredients: items,
+      budget: budget,
+      remaining: leftovers.remaining,
+      skip: leftovers.skip,
+      full: false,
+    };
   }
 
   function sanitizeDisplay(text) {
@@ -157,13 +210,16 @@
     };
   }
 
-  function publishRecipes(doc, recipes) {
+  function publishRecipes(doc, recipes, meta) {
     if (!doc || typeof doc.dispatchEvent !== "function") return;
+    var detail = { recipes: recipes };
+    if (meta && meta.full) detail.full = true;
+    if (meta && Array.isArray(meta.skip) && meta.skip.length) detail.skip = meta.skip.slice();
     var event;
     if (typeof CustomEvent === "function") {
-      event = new CustomEvent("ashpaz-recipes", { detail: { recipes: recipes } });
+      event = new CustomEvent("ashpaz-recipes", { detail: detail });
     } else {
-      event = { type: "ashpaz-recipes", detail: { recipes: recipes } };
+      event = { type: "ashpaz-recipes", detail: detail };
     }
     doc.dispatchEvent(event);
   }
@@ -240,6 +296,7 @@
 
   function mount(doc, pantry, fetchImpl) {
     var suggestBtn = doc.getElementById("suggest");
+    var fullBtn = doc.getElementById("regenerate-full");
     var retryBtn = doc.getElementById("recipe-retry");
     var status = doc.getElementById("recipe-status");
     var errorBox = doc.getElementById("recipe-error");
@@ -252,12 +309,15 @@
     if (!suggestBtn || !status || !errorBox || !errorText || !grid || !pantry) return;
 
     var gate = createSubmitGate();
+    var lastFull = false;
     var request = typeof fetchImpl === "function" ? fetchImpl : null;
 
     function setBusy(busy) {
       suggestBtn.disabled = busy;
+      if (fullBtn) fullBtn.disabled = busy;
       if (retryBtn) retryBtn.disabled = busy;
       suggestBtn.setAttribute("aria-busy", busy ? "true" : "false");
+      if (fullBtn) fullBtn.setAttribute("aria-busy", busy ? "true" : "false");
       if (panel) panel.setAttribute("aria-busy", busy ? "true" : "false");
       if (panel) panel.classList.toggle("is-busy", busy);
     }
@@ -290,14 +350,17 @@
       status.textContent = COPY.loading;
     }
 
-    function showRecipes(recipes) {
+    function showRecipes(recipes, payload) {
       errorBox.hidden = true;
       setHint("");
-      status.textContent = "";
+      var note = "";
+      if (payload && payload.full) note = COPY.fullNote;
+      else if (payload && payload.skip && payload.skip.length) note = COPY.leftoverNote;
+      status.textContent = note;
       if (emptyBox) emptyBox.hidden = true;
       if (skeleton) skeleton.hidden = true;
       renderRecipeGrid(doc, grid, recipes);
-      publishRecipes(doc, recipes);
+      publishRecipes(doc, recipes, payload);
       grid.hidden = false;
     }
 
@@ -316,14 +379,23 @@
       setBusy(false);
     }
 
-    function run() {
+    function run(full) {
       if (!gate.begin()) return;
-      var payload = buildGeneratePayload(pantry);
+      lastFull = !!full;
+      var payload = buildGeneratePayload(pantry, { full: lastFull });
       if (!payload.ingredients.length) {
         gate.end();
         showError(
           messageForFailure(400, { error: "empty_ingredients" }),
           hintForFailure({ error: "empty_ingredients" })
+        );
+        return;
+      }
+      if (!payload.full && Array.isArray(payload.remaining) && !payload.remaining.length) {
+        gate.end();
+        showError(
+          messageForFailure(400, { error: "no_remaining" }),
+          hintForFailure({ error: "no_remaining" })
         );
         return;
       }
@@ -375,7 +447,7 @@
             );
             return;
           }
-          showRecipes(recipes);
+          showRecipes(recipes, payload);
         })
         .catch(function (err) {
           var aborted = err && (err.name === "AbortError" || err.code === 20);
@@ -387,8 +459,19 @@
         });
     }
 
-    suggestBtn.addEventListener("click", run);
-    if (retryBtn) retryBtn.addEventListener("click", run);
+    suggestBtn.addEventListener("click", function () {
+      run(false);
+    });
+    if (fullBtn) {
+      fullBtn.addEventListener("click", function () {
+        run(true);
+      });
+    }
+    if (retryBtn) {
+      retryBtn.addEventListener("click", function () {
+        run(lastFull);
+      });
+    }
     showIdle();
   }
 
@@ -405,6 +488,7 @@
     SERVICE_HINT: SERVICE_HINT,
     ENDPOINT: ENDPOINT,
     buildGeneratePayload: buildGeneratePayload,
+    readLeftovers: readLeftovers,
     sanitizeDisplay: sanitizeDisplay,
     messageForFailure: messageForFailure,
     hintForFailure: hintForFailure,

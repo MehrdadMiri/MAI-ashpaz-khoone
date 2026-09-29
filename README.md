@@ -10,7 +10,7 @@ Persian RTL AI meal and recipe demo (آشپزخونه).
 | api | Python (Flask + Gunicorn) | http://localhost:8000 |
 | db | Postgres 16 | localhost:5432 |
 
-The web page is a Persian RTL pantry. You can add and remove ingredient chips, load a sample set of Iranian staples, and set a numeric week budget. The list and budget stay in this browser (`localStorage`); they are not stored in Postgres. «پیشنهاد دستور» asks the shared GapGPT client (`api/gapgpt.py`) for at least three Persian recipes from those chips and the week budget. «عکس یخچال» sends one photo to the same client and shows candidate chips; nothing is added to the pantry until you confirm. «برنامه ۷ روزه» assigns those recipes to شنبه through جمعه and can print or download the week. The plan does not call GapGPT. «مواد خرید» diffs those planned dinners against the pantry chips and can print or download the missing items. That list does not call GapGPT either. Product UI is Persian RTL. This scaffold’s docs and code comments are English.
+The web page is a Persian RTL pantry. You can add and remove ingredient chips, load a sample set of Iranian staples, and set a numeric week budget. The list and budget stay in this browser (`localStorage`); they are not stored in Postgres. «پیشنهاد دستور» asks the shared GapGPT client (`api/gapgpt.py`) for at least three Persian recipes from those chips and the week budget. If a شام is marked «خورده شد», that call prefers the chips still left and asks the model not to repeat those dinners. «بازتولید کامل» uses every chip again and does not skip them. «عکس یخچال» sends one photo to the same client and shows candidate chips; nothing is added to the pantry until you confirm. «برنامه ۷ روزه» assigns those recipes to شنبه through جمعه and can print or download the week. The plan does not call GapGPT. «مواد خرید» diffs those planned dinners against the pantry chips and can print or download the missing items. That list does not call GapGPT either. Product UI is Persian RTL. This scaffold’s docs and code comments are English.
 
 The GitHub repository is public.
 
@@ -100,7 +100,7 @@ Web `/health` is unchanged.
 
 The browser calls `http://localhost:8080/api/recipes/generate`. Nginx proxies `/api/` to the api service and forwards that path. The api accepts `/api/...` as an alias of the same routes, so `POST /recipes/generate` on port 8000 and `POST /api/recipes/generate` on port 8080 are the same call. The web `/health` check is still the nginx `ok` response. API health through the proxy is `http://localhost:8080/api/health`.
 
-The request JSON is `{ "ingredients": ["برنج"], "budget": 1500000 }`. `budget` may be `null` when the week field is empty; the model prompt still includes that budget context. The api service calls GapGPT with `GapGPTClient.chat_text` and the configured model (`gpt-5.6-luna` unless `GAPGPT_MODEL` is set). The key stays in the api container. The page never receives it.
+The request JSON is `{ "ingredients": ["برنج"], "budget": 1500000 }`. `budget` may be `null` when the week field is empty; the model prompt still includes that budget context. Leftover regenerate adds `remaining`, `skip`, and `full` (see [Leftover regenerate](#leftover-regenerate)). The api service calls GapGPT with `GapGPTClient.chat_text` and the configured model (`gpt-5.6-luna` unless `GAPGPT_MODEL` is set). The key stays in the api container. The page never receives it.
 
 A successful body is `ok: true` and `recipes` with three objects. Each object has `title`, `ingredients`, `steps`, and `cost_toman` (`null` when the model gives no number). The page shows those as RTL cards: title, ingredient tags, steps, and a rough cost badge when a cost is present. «افزودن به برنامه» on each card opens the day sheet for the meal plan.
 
@@ -111,6 +111,7 @@ While the request is in flight the status line is «در حال پختن اید�
 | Situation | HTTP | `error` | What the page says |
 | --- | --- | --- | --- |
 | No pantry items | 400 | `empty_ingredients` | ask for at least one ingredient (the page does this before calling) |
+| Eaten dinners used every chip | 400 | `no_remaining` | add an ingredient, or press «بازتولید کامل» (the page does this before calling) |
 | Bad budget | 400 | `invalid_budget` | the week budget is not a number |
 | Key missing | 503 | `not_configured` | the suggestion service is not ready, plus the key hint |
 | Upstream rejects the key | 502 | `unauthorized` | friendly retry, plus the key hint |
@@ -167,6 +168,7 @@ The week is شنبه through جمعه, one شام per day. An empty day shows «
 - «افزودن به برنامه» on a recipe card opens a sheet of the seven days, the same sheet pattern as fridge confirm. Pick a day to assign that recipe. A day that already has a شام offers «جایگزین».
 - «برنامه ۷ روزه» fills every empty day from the recipes already on the page, repeating them when there are fewer than seven. Days you already filled stay as they are. With no recipes yet, the seven days stay «خالی» and the status line asks you to suggest recipes first. «انتخاب» on an empty day opens the recipe list once recipes exist.
 - On a filled day, «جایگزین» opens that list, plus «خالی» to clear the day.
+- «خورده شد» on a filled day marks that شام as eaten. Press it again to undo. Replacing or clearing the day clears the mark. The mark is stored in the same `ashpaz-khoone.plan.v1` object (`used`) and is what leftover regenerate skips. Print and Markdown add «خورده شد» on that day. Empty days have no toggle.
 - If the week budget is set and a recipe has a تومان cost, a line under the title sums the شام costs. When the sum is over the budget the line says so and adds that چاپ و خروجی are still allowed. You can still assign, swap, print, and download.
 - «چاپ / خروجی» opens a sheet with «چاپ» and «دانلود مارک‌داون».
 
@@ -185,7 +187,65 @@ QA on http://localhost:8080, still with no key:
 1. Confirm seven days, شنبه first and جمعه last. Each shows «خالی» and «انتخاب».
 2. Click «چاپ / خروجی», then «چاپ». The preview is white, in Persian, and does not show the pantry or the recipe controls. Close the preview.
 3. Click «چاپ / خروجی», then «دانلود مارک‌داون». The file lists all seven days as خالی.
-4. After «پیشنهاد دستور» (that call needs a key), «افزودن به برنامه» chooses a day, «جایگزین» swaps it, and «برنامه ۷ روزه» fills any day that is still «خالی».
+4. After «پیشنهاد دستور» (that call needs a key), «افزودن به برنامه» chooses a day, «جایگزین» swaps it, and «برنامه ۷ روزه» fills any day that is still «خالی». «خورده شد» on a filled day does not need a key.
+
+## Leftover regenerate
+
+«پیشنهاد دستور» is leftover-aware. «بازتولید کامل» is the explicit full path. Neither button clears the pantry chips or the week budget. Assigned dinners stay on the week until you change them. New cards are remembered for «افزودن به برنامه» and «برنامه ۷ روزه».
+
+On each filled day, «خورده شد» toggles that شام. While it is on, the day is marked eaten.
+
+- «پیشنهاد دستور» sends the full chip list as `ingredients`, plus `remaining` (chips not used by eaten dinners) and `skip` (those dinner titles), with `full: false`. A chip is treated as used when an eaten dinner’s ingredient line is the same pantry name, including «۲ عدد پیاز» for پیاز. «روغن» is not used up by «روغن زیتون». The prompt still includes the week budget. The model is told to cook from the remaining chips and not to repeat the skipped titles. The response drops a title that matches a skipped dinner (spacing and ZWNJ ignored). A successful body is `mode: "leftovers"`. The status line says the ideas came from what is left. If every chip was used, the page does not call the API; it asks you to add a chip or press «بازتولید کامل».
+- «بازتولید کامل» sends `ingredients`, `budget`, and `full: true`. It does not send `skip`. The prompt tells the model to ignore leftovers, and the week budget is still in that prompt. Eaten titles may come back. The body is `mode: "full"`. «تلاش دوباره» repeats whichever button failed.
+- With no شام marked eaten, «پیشنهاد دستور» stays `{ "ingredients", "budget" }` and `mode` is `"pantry"`.
+
+```json
+{
+  "ingredients": ["برنج", "عدس", "پیاز", "ماست"],
+  "budget": 1500000,
+  "remaining": ["ماست"],
+  "skip": ["عدس‌پلو"],
+  "full": false
+}
+```
+
+Checks without a browser and without an API key:
+
+```bash
+node --test web/recipes.test.js web/plan.test.js
+cd api && python3 -m unittest tests.test_recipes tests.test_recipes_endpoint -v
+```
+
+Live smoke, only with a real key in the host file `…/MAI/.env` (gitignored; never print it, never commit it). This repo’s `.env` is gitignored too. Load the variable without echoing it, recreate api, then call both shapes. Do not create a `v0.2.0` tag from this check.
+
+```bash
+set -a
+# shellcheck disable=SC1091
+source /path/to/MAI/.env
+set +a
+test -n "$GAP_CODE_API_KEY" && echo "GAP_CODE_API_KEY is set (value hidden)"
+docker compose up -d --force-recreate api
+```
+
+Leftover (remaining chips, skip the eaten dinner). Expect HTTP 200, `"mode": "leftovers"`, and three recipes whose titles are not the skipped dinner. The body must not contain the key.
+
+```bash
+curl -sS -X POST http://localhost:8000/recipes/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"ingredients":["برنج","عدس","پیاز","ماست"],"budget":1500000,"remaining":["ماست"],"skip":["عدس‌پلو"],"full":false}'
+```
+
+Full regenerate (ignore that skip, keep the budget). Expect HTTP 200 and `"mode": "full"`. The eaten title may appear. The body must not contain the key.
+
+```bash
+curl -sS -X POST http://localhost:8000/recipes/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"ingredients":["برنج","عدس","پیاز","ماست"],"budget":1500000,"full":true}'
+```
+
+Without a key, both curls return HTTP 503 and `"error": "not_configured"`. An explicit empty `remaining` list without `full: true` returns HTTP 400 and `"error": "no_remaining"`, and does not call GapGPT. If `skip` contains the API key, the call is refused before it is sent.
+
+On http://localhost:8080 with the same key: mark one filled day «خورده شد», press «پیشنهاد دستور», and confirm the new cards appear, that day stays, and the chips stay. Then press «بازتولید کامل» and confirm the chips still stay. With the key removed, both buttons show the Persian error and «تلاش دوباره», and retry repeats the same button.
 
 ## Shopping list
 
@@ -256,7 +316,7 @@ The release smoke for this slice is [docs/QA-SMOKE.md](docs/QA-SMOKE.md). Run it
 2. «بارگذاری نمونه» shows at least eight chips.
 3. Fridge photo, then confirm, adds only the checked names.
 4. Set a week budget and «پیشنهاد دستور» returns at least three cards.
-5. «برنامه ۷ روزه» fills شنبه through جمعه. Empty days stay «خالی» until filled.
+5. «برنامه ۷ روزه» fills شنبه through جمعه. Empty days stay «خالی» until filled. «خورده شد» marks a day; «پیشنهاد دستور» then prefers remaining chips and skips that dinner, and «بازتولید کامل» does not.
 6. Edit the pantry and generate again.
 7. «چاپ / خروجی» prints and downloads Markdown. A soft over-budget line does not block export.
 8. Break or unset `GAP_CODE_API_KEY`, recreate api, and confirm a Persian error with «تلاش دوباره» and no key value. Restore the key and generate again.

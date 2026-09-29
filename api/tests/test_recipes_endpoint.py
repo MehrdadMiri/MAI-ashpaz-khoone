@@ -296,6 +296,115 @@ class EndpointTests(unittest.TestCase):
         self.assertNotIn("Traceback", text)
         self.assertNotIn(KEY, "\n".join(records))
 
+    def test_leftover_prompt_skips_used_dinner_without_leaking_the_key(self):
+        seen = {}
+        extra = dish(
+            "کوکو سبزی",
+            ["سبزی", "تخم‌مرغ"],
+            ["سبزی را خرد کن", "تخم‌مرغ را بزن", "سرخ کن"],
+            110000,
+        )
+        payload = recipe_json()
+        payload["recipes"] = payload["recipes"] + [extra]
+
+        def transport(request, timeout):
+            del timeout
+            seen["payload"] = json.loads(request.data.decode("utf-8"))
+            return chat_response(json.dumps(payload, ensure_ascii=False))
+
+        gap_client = GapGPTClient(config(), transport=transport)
+        res, _builder = self._post(
+            {
+                "ingredients": ["برنج", "عدس", "پیاز", "ماست"],
+                "budget": 1500000,
+                "remaining": ["ماست"],
+                "skip": ["عدس‌پلو"],
+                "full": False,
+            },
+            gap_client,
+        )
+        self.assertEqual(res.status_code, 200, res.get_data(as_text=True))
+        body = res.get_json()
+        self.assertEqual(body["mode"], "leftovers")
+        titles = [item["title"] for item in body["recipes"]]
+        self.assertEqual(len(titles), 3)
+        self.assertNotIn("عدس‌پلو", titles)
+        self.assertNotIn(KEY, res.get_data(as_text=True))
+        user = seen["payload"]["messages"][1]["content"]
+        self.assertIn("مواد باقی‌مانده:", user)
+        self.assertIn("\n- ماست", user)
+        self.assertIn("عدس‌پلو", user)
+        self.assertIn("بودجه هفته: 1500000 تومان", user)
+        self.assertNotIn(KEY, user)
+
+    def test_full_regenerate_ignores_skip_and_keeps_budget(self):
+        seen = {}
+
+        def transport(request, timeout):
+            del timeout
+            seen["payload"] = json.loads(request.data.decode("utf-8"))
+            return chat_response(json.dumps(recipe_json(), ensure_ascii=False))
+
+        gap_client = GapGPTClient(config(), transport=transport)
+        res, _builder = self._post(
+            {
+                "ingredients": ["برنج", "عدس", "ماست"],
+                "budget": 1500000,
+                "remaining": ["ماست"],
+                "skip": ["عدس‌پلو"],
+                "full": True,
+            },
+            gap_client,
+        )
+        self.assertEqual(res.status_code, 200, res.get_data(as_text=True))
+        body = res.get_json()
+        self.assertEqual(body["mode"], "full")
+        self.assertEqual(body["recipes"][0]["title"], "عدس‌پلو")
+        self.assertNotIn(KEY, res.get_data(as_text=True))
+        user = seen["payload"]["messages"][1]["content"]
+        self.assertIn("بازتولید کامل:", user)
+        self.assertIn("بودجه هفته: 1500000 تومان", user)
+        self.assertIn("برنج", user)
+        self.assertNotIn("عدس‌پلو", user)
+        self.assertNotIn("شام‌های خورده‌شده:", user)
+
+    def test_empty_remaining_and_key_in_skip_are_not_sent(self):
+        seen = []
+
+        def transport(request, timeout):
+            del timeout
+            seen.append(request)
+            raise AssertionError("upstream was called")
+
+        gap_client = GapGPTClient(config(), transport=transport)
+        res, _builder = self._post(
+            {
+                "ingredients": ["برنج"],
+                "remaining": [],
+                "skip": [KEY],
+                "budget": 10,
+            },
+            gap_client,
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.get_json()["error"], "no_remaining")
+        self.assertEqual(seen, [])
+        self.assertNotIn(KEY, res.get_data(as_text=True))
+        self.assertNotIn("Traceback", res.get_data(as_text=True))
+
+        res, _builder = self._post(
+            {
+                "ingredients": ["برنج"],
+                "skip": [KEY],
+                "budget": 10,
+            },
+            gap_client,
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.get_json()["error"], "invalid_request")
+        self.assertEqual(seen, [])
+        self.assertNotIn(KEY, res.get_data(as_text=True))
+
 
 if __name__ == "__main__":
     unittest.main()

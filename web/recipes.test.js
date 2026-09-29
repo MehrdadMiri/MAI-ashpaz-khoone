@@ -108,7 +108,10 @@ test("pantry page wires the suggest button and recipe script", () => {
   const html = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
   assert.match(html, /id="suggest"/);
   assert.match(html, /data-testid="suggest-button"/);
+  assert.match(html, /id="regenerate-full"/);
+  assert.match(html, /data-testid="regenerate-full"/);
   assert.match(html, />پیشنهاد دستور</);
+  assert.match(html, />بازتولید کامل</);
   assert.match(html, /id="recipe-retry"/);
   assert.match(html, />تلاش دوباره</);
   assert.match(html, /recipes\.js/);
@@ -174,6 +177,7 @@ function fakeDocument() {
   }
   const doc = { events: [] };
   register("suggest", "button");
+  register("regenerate-full", "button");
   register("recipe-retry", "button");
   register("recipe-status", "p");
   register("recipe-error", "div");
@@ -361,4 +365,137 @@ test("retry asks again after an error", async () => {
   assert.equal(calls.length, 2);
   assert.equal(doc.nodes["recipe-grid"].hidden, false);
   assert.equal(cardsOf(doc.nodes["recipe-grid"]).length, 3);
+});
+
+test("leftover suggest sends remaining chips, skips eaten dinners, and keeps the pantry", async () => {
+  require("./pantry.js");
+  const plan = require("./plan.js");
+  require("./shop.js");
+  const model = plan.createPlan({ storage: plan.createMemoryStorage() });
+  model.assign(
+    "sat",
+    dish("عدس‌پلو", ["برنج", "عدس", "۲ عدد پیاز"], ["پیاز را تفت بده", "عدس را بپز", "برنج را دم کن"], 180000),
+  );
+  model.setUsed("sat", true);
+  const previous = global.AshpazPlan;
+  global.AshpazPlan = Object.assign({}, plan, { active: model });
+  const chips = ["برنج", "عدس", "پیاز", "ماست"];
+  let removed = false;
+  const source = {
+    items() {
+      return chips.slice();
+    },
+    budget() {
+      return "1500000";
+    },
+    remove() {
+      removed = true;
+    },
+    clear() {
+      removed = true;
+    },
+  };
+  const doc = fakeDocument();
+  const calls = [];
+  try {
+    recipes.mount(doc, source, (url, options) => {
+      calls.push({ url, options });
+      return Promise.resolve(jsonResponse(200, { ok: true, recipes: THREE }));
+    });
+    doc.nodes.suggest.listeners.click();
+    await flush();
+    await flush();
+    assert.equal(calls.length, 1);
+    assert.deepEqual(JSON.parse(calls[0].options.body), {
+      ingredients: chips,
+      budget: 1500000,
+      remaining: ["ماست"],
+      skip: ["عدس‌پلو"],
+      full: false,
+    });
+    assert.equal(doc.nodes["recipe-status"].textContent, COPY.leftoverNote);
+    assert.equal(doc.nodes["recipe-grid"].hidden, false);
+    assert.equal(cardsOf(doc.nodes["recipe-grid"]).length, 3);
+    assert.deepEqual(doc.events[0].detail.skip, ["عدس‌پلو"]);
+    assert.equal(doc.events[0].detail.full, undefined);
+    assert.equal(removed, false);
+    assert.deepEqual(source.items(), chips);
+    assert.equal(model.week()[0].used, true);
+    assert.equal(model.week()[0].recipe.title, "عدس‌پلو");
+  } finally {
+    global.AshpazPlan = previous;
+  }
+});
+
+test("full regenerate ignores the eaten skip and retry repeats that mode", async () => {
+  require("./pantry.js");
+  const plan = require("./plan.js");
+  const model = plan.createPlan({ storage: plan.createMemoryStorage() });
+  model.assign("sat", dish("عدس‌پلو", ["برنج"], ["برنج را بپز", "دم کن", "سرو کن"], 1000));
+  model.setUsed("sat", true);
+  const previous = global.AshpazPlan;
+  global.AshpazPlan = Object.assign({}, plan, { active: model });
+  const chips = ["برنج", "ماست"];
+  const doc = fakeDocument();
+  const calls = [];
+  try {
+    recipes.mount(doc, pantry(chips, "250000"), (url, options) => {
+      calls.push(JSON.parse(options.body));
+      if (calls.length === 1) {
+        return Promise.resolve(
+          jsonResponse(502, { ok: false, error: "unauthorized", message: "unit-test-key" }),
+        );
+      }
+      return Promise.resolve(jsonResponse(200, { ok: true, recipes: THREE }));
+    });
+    doc.nodes["regenerate-full"].listeners.click();
+    await flush();
+    await flush();
+    assert.deepEqual(calls[0], { ingredients: chips, budget: 250000, full: true });
+    assert.equal(doc.nodes["recipe-error-text"].textContent, ERROR_COPY.unauthorized);
+    assert.equal(doc.nodes["recipe-error-text"].textContent.includes("unit-test-key"), false);
+    doc.nodes["recipe-retry"].listeners.click();
+    await flush();
+    await flush();
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[1], { ingredients: chips, budget: 250000, full: true });
+    assert.equal(doc.nodes["recipe-status"].textContent, COPY.fullNote);
+    assert.equal(doc.nodes["recipe-grid"].hidden, false);
+    assert.equal(model.week()[0].recipe.title, "عدس‌پلو");
+    assert.equal(model.week()[0].used, true);
+    assert.deepEqual(pantry(chips, "250000").items(), chips);
+  } finally {
+    global.AshpazPlan = previous;
+  }
+});
+
+test("an eaten week with no chips left does not call the API until full regenerate", async () => {
+  const plan = require("./plan.js");
+  const model = plan.createPlan({ storage: plan.createMemoryStorage() });
+  model.assign("sat", dish("عدس‌پلو", ["برنج"], ["برنج را بپز", "دم کن", "سرو کن"], 1000));
+  model.setUsed("sat", true);
+  const previous = global.AshpazPlan;
+  global.AshpazPlan = Object.assign({}, plan, { active: model });
+  const doc = fakeDocument();
+  const calls = [];
+  try {
+    recipes.mount(doc, pantry(["برنج"], "10"), (url, options) => {
+      calls.push(JSON.parse(options.body));
+      return Promise.resolve(jsonResponse(200, { ok: true, recipes: THREE }));
+    });
+    doc.nodes.suggest.listeners.click();
+    await flush();
+    assert.equal(calls.length, 0);
+    assert.equal(doc.nodes["recipe-error-text"].textContent, ERROR_COPY.no_remaining);
+    assert.equal(doc.nodes["recipe-error-hint"].hidden, true);
+    assert.equal(doc.nodes.suggest.disabled, false);
+    assert.equal(doc.nodes["regenerate-full"].disabled, false);
+    doc.nodes["regenerate-full"].listeners.click();
+    await flush();
+    await flush();
+    assert.deepEqual(calls[0], { ingredients: ["برنج"], budget: 10, full: true });
+    assert.equal(doc.nodes["recipe-grid"].hidden, false);
+  } finally {
+    global.AshpazPlan = previous;
+  }
 });

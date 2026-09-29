@@ -1,7 +1,9 @@
-/* Seven-day dinner plan for آشپزخونه (US-06, US-07).
+/* Seven-day dinner plan for آشپزخونه (US-06, US-07, US-10).
    Recipes already on the page can be assigned to شنبه–جمعه.
-   State stays in localStorage. Print and Markdown export are
-   client-side. This file does not call GapGPT and never sees the API key. */
+   A day can be marked خورده شد. That flag stays in localStorage with the
+   plan and is how leftover regenerate knows which dinners to skip.
+   Print and Markdown export are client-side. This file does not call
+   GapGPT and never sees the API key. */
 (function (global) {
   "use strict";
 
@@ -30,6 +32,9 @@
     exportHint:
       "چاپ، پس‌زمینه سفید و خط فارسی است و بقیه صفحه را پنهان می‌کند. خروجی یک فایل مارک‌داون از روزها و نام غذاهاست.",
     filename: "برنامه-۷-روزه.md",
+    eaten: "خورده شد",
+    freshIdeas: "ایده‌های تازه آماده‌اند. شام‌های خورده‌شده سر جایشان ماندند.",
+    fullIdeas: "پیشنهاد کامل آماده است. شام‌های چیده‌شده سر جایشان ماندند.",
   };
 
   var DAYS = Object.freeze([
@@ -136,6 +141,25 @@
     return slots;
   }
 
+  function emptyUsed() {
+    var used = {};
+    DAYS.forEach(function (day) {
+      used[day.id] = false;
+    });
+    return used;
+  }
+
+  function lineUsesChip(chip, line) {
+    var shopApi = global.AshpazShop;
+    if (shopApi && typeof shopApi.lineUsesChip === "function") {
+      return !!shopApi.lineUsesChip(chip, line);
+    }
+    var chipKey = identityKey(chip);
+    var lineKey = identityKey(line);
+    if (!chipKey || chipKey.length < 2 || !lineKey) return false;
+    return lineKey.indexOf(chipKey) !== -1;
+  }
+
   function normalizeRecipe(recipe) {
     if (!recipe || typeof recipe !== "object") return null;
     var title = displayName(cleanLine(recipe.title, MAX_TITLE));
@@ -178,6 +202,7 @@
     var lines = ["# " + COPY.title, ""];
     week.forEach(function (day) {
       var meal = day.recipe ? day.recipe.title : COPY.empty;
+      if (day.recipe && day.used) meal += " — " + COPY.eaten;
       if (day.recipe && typeof day.recipe.cost_toman === "number" && day.recipe.cost_toman > 0) {
         var cost = formatApprox(day.recipe.cost_toman);
         if (cost) meal += " — " + cost;
@@ -203,10 +228,10 @@
     function load() {
       try {
         var raw = storage.getItem(STORAGE_KEY);
-        if (!raw) return { recipes: [], slots: emptySlots() };
+        if (!raw) return { recipes: [], slots: emptySlots(), used: emptyUsed() };
         return sanitize(JSON.parse(raw));
       } catch (err) {
-        return { recipes: [], slots: emptySlots() };
+        return { recipes: [], slots: emptySlots(), used: emptyUsed() };
       }
     }
 
@@ -214,7 +239,7 @@
       try {
         storage.setItem(
           STORAGE_KEY,
-          JSON.stringify({ recipes: state.recipes, slots: state.slots })
+          JSON.stringify({ recipes: state.recipes, slots: state.slots, used: state.used })
         );
       } catch (err) {
         /* Quota or privacy mode: keep the in-memory plan for this visit. */
@@ -229,7 +254,7 @@
     }
 
     function sanitize(parsed) {
-      var next = { recipes: [], slots: emptySlots() };
+      var next = { recipes: [], slots: emptySlots(), used: emptyUsed() };
       if (!parsed || typeof parsed !== "object") return next;
       var seen = Object.create(null);
       if (Array.isArray(parsed.recipes)) {
@@ -243,6 +268,8 @@
       DAYS.forEach(function (day) {
         var id = parsed.slots && typeof parsed.slots[day.id] === "string" ? parsed.slots[day.id] : "";
         next.slots[day.id] = seen[id] ? id : null;
+        var flagged = parsed.used && parsed.used[day.id] === true;
+        next.used[day.id] = !!(next.slots[day.id] && flagged);
       });
       return next;
     }
@@ -284,6 +311,7 @@
         return {
           id: day.id,
           label: day.label,
+          used: !!state.used[day.id],
           recipe: recipe ? copyRecipe(recipe) : null,
         };
       });
@@ -345,6 +373,7 @@
         if (!recipe) return { ok: false, reason: "recipe" };
         var previous = state.slots[day.id];
         state.slots[day.id] = recipe.id;
+        if (previous !== recipe.id) state.used[day.id] = false;
         prune();
         persist();
         return {
@@ -360,6 +389,7 @@
         if (!day) return { ok: false, reason: "day" };
         var had = !!state.slots[day.id];
         state.slots[day.id] = null;
+        state.used[day.id] = false;
         if (had) persist();
         return { ok: true, dayId: day.id, label: day.label, cleared: had };
       },
@@ -378,6 +408,50 @@
       },
       markdown: function (budget) {
         return markdownDocument(week(), budgetLine(spend(), budget));
+      },
+      setUsed: function (dayId, eaten) {
+        var day = dayById(dayId);
+        if (!day) return { ok: false, reason: "day" };
+        if (!state.slots[day.id]) return { ok: false, reason: "empty" };
+        state.used[day.id] = !!eaten;
+        persist();
+        var recipe = find(state.slots[day.id]);
+        return {
+          ok: true,
+          dayId: day.id,
+          label: day.label,
+          used: !!state.used[day.id],
+          title: recipe ? recipe.title : "",
+        };
+      },
+      usedTitles: function () {
+        var titles = [];
+        var seen = Object.create(null);
+        week().forEach(function (day) {
+          if (!day.used || !day.recipe || !day.recipe.title) return;
+          var key = identityKey(day.recipe.title);
+          if (!key || seen[key]) return;
+          seen[key] = true;
+          titles.push(day.recipe.title);
+        });
+        return titles;
+      },
+      remainingChips: function (pantryItems) {
+        var items = Array.isArray(pantryItems) ? pantryItems.slice() : [];
+        var lines = [];
+        week().forEach(function (day) {
+          if (!day.used || !day.recipe || !Array.isArray(day.recipe.ingredients)) return;
+          day.recipe.ingredients.forEach(function (line) {
+            if (typeof line === "string" && line) lines.push(line);
+          });
+        });
+        if (!lines.length) return items;
+        return items.filter(function (chip) {
+          for (var i = 0; i < lines.length; i += 1) {
+            if (lineUsesChip(chip, lines[i])) return false;
+          }
+          return true;
+        });
       },
     };
   }
@@ -431,9 +505,11 @@
   function renderWeek(doc, grid, plan) {
     var cards = plan.week().map(function (day) {
       var article = doc.createElement("article");
-      article.className = "day-card " + (day.recipe ? "is-filled" : "is-empty");
+      article.className =
+        "day-card " + (day.recipe ? "is-filled" : "is-empty") + (day.used ? " is-used" : "");
       article.dataset.testid = "day-card";
       article.dataset.day = day.id;
+      article.dataset.used = day.used ? "true" : "false";
       article.setAttribute("data-day", day.id);
 
       var name = doc.createElement("h3");
@@ -448,7 +524,9 @@
       var meal = doc.createElement("p");
       meal.className = "day-meal";
       meal.dataset.testid = "day-meal";
-      meal.textContent = day.recipe ? day.recipe.title : COPY.empty;
+      meal.textContent = day.recipe
+        ? day.recipe.title + (day.used ? " — " + COPY.eaten : "")
+        : COPY.empty;
 
       article.append(name, kicker, meal);
 
@@ -477,6 +555,24 @@
         (day.recipe ? COPY.swap : COPY.pick) + " " + COPY.dinner + " " + day.label
       );
       article.append(action);
+
+      if (day.recipe) {
+        var eaten = doc.createElement("button");
+        eaten.type = "button";
+        eaten.className = "day-eaten" + (day.used ? " is-on" : "");
+        eaten.dataset.testid = "day-eaten";
+        eaten.dataset.day = day.id;
+        eaten.setAttribute("data-day", day.id);
+        eaten.setAttribute("aria-pressed", day.used ? "true" : "false");
+        eaten.textContent = COPY.eaten;
+        eaten.setAttribute(
+          "aria-label",
+          day.used
+            ? "شام " + day.label + " خورده شد. برای برگرداندن بزنید."
+            : "علامت خورده شد برای شام " + day.label
+        );
+        article.append(eaten);
+      }
       return article;
     });
     grid.replaceChildren.apply(grid, cards);
@@ -805,12 +901,37 @@
     doc.addEventListener("ashpaz-recipes", function (event) {
       var detail = event && event.detail;
       var list = detail && detail.recipes;
-      if (Array.isArray(list)) plan.remember(list);
+      if (!Array.isArray(list)) return;
+      plan.remember(list);
+      render();
+      var hasMeal = plan.week().some(function (day) {
+        return !!(day && day.recipe);
+      });
+      if (!hasMeal || !list.length) return;
+      if (detail.full) setStatus(COPY.fullIdeas);
+      else if (detail.skip && detail.skip.length) setStatus(COPY.freshIdeas);
     });
 
     doc.addEventListener("click", function (event) {
       var target = event && event.target;
       if (!target) return;
+      var eaten = matchTestId(target, "day-eaten");
+      if (eaten) {
+        var eatenDay = nodeValue(eaten, "day", "data-day");
+        var current = null;
+        plan.week().forEach(function (day) {
+          if (day.id === eatenDay) current = day;
+        });
+        var result = plan.setUsed(eatenDay, !(current && current.used));
+        render();
+        if (!result.ok) return;
+        if (result.used) {
+          setStatus("شام " + result.label + " خورده شد. پیشنهاد بعدی آن را تکرار نمی‌کند.");
+        } else {
+          setStatus("شام " + result.label + " دوباره در پیشنهادها می‌آید.");
+        }
+        return;
+      }
       var add = matchTestId(target, "add-to-plan");
       if (add && !add.disabled) {
         var latest = currentLatest(hooks);

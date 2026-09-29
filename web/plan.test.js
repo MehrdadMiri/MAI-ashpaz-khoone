@@ -6,6 +6,7 @@ const path = require("node:path");
 require("./pantry.js");
 const recipes = require("./recipes.js");
 const plan = require("./plan.js");
+require("./shop.js");
 
 const { COPY, DAYS, STORAGE_KEY, MAX_RECIPES } = plan;
 
@@ -469,6 +470,95 @@ test("escape, backdrop, and انصراف close the sheet without changing the we
   assert.equal(view.model.week().every((day) => day.recipe === null), true);
 });
 
+test("خورده شد marks a dinner, survives reload, and frees the chip count", () => {
+  const storage = plan.createMemoryStorage();
+  const model = plan.createPlan({ storage });
+  model.assign("sat", THREE[0]);
+  model.assign("sun", THREE[2]);
+  assert.equal(model.setUsed("sat", true).ok, true);
+  assert.equal(model.setUsed("fri", true).ok, false);
+  assert.equal(model.week()[0].used, true);
+  assert.equal(model.week()[1].used, false);
+  assert.deepEqual(model.usedTitles(), ["عدس‌پلو"]);
+  assert.deepEqual(model.remainingChips(["برنج", "عدس", "پیاز", "ماست"]), ["پیاز", "ماست"]);
+  assert.match(model.markdown(null), /\*\*شنبه:\*\* عدس‌پلو — خورده شد/);
+
+  const again = plan.createPlan({ storage });
+  assert.equal(again.week()[0].used, true);
+  assert.equal(again.week()[0].recipe.title, "عدس‌پلو");
+  again.assign("sat", THREE[1]);
+  assert.equal(again.week()[0].used, false);
+  again.setUsed("sat", true);
+  again.clearDay("sat");
+  assert.equal(again.week()[0].used, false);
+  assert.equal(again.week()[0].recipe, null);
+
+  const measured = plan.createPlan({ storage: plan.createMemoryStorage() });
+  measured.assign("mon", dish("کتلت", ["۲ عدد پیاز متوسط", "روغن زیتون"], ["بپز"], 10));
+  measured.setUsed("mon", true);
+  assert.deepEqual(measured.remainingChips(["پیاز", "روغن", "ماست"]), ["روغن", "ماست"]);
+});
+
+test("the eaten toggle stays on the day and swap clears it", () => {
+  const view = mountPlan({ latest: THREE });
+  view.model.assign("sat", THREE[0]);
+  view.doc.nodes["build-plan"].listeners.click();
+  const eaten = dayCards(view.doc)[0].children.find((child) => child.dataset.testid === "day-eaten");
+  assert.equal(eaten.textContent, COPY.eaten);
+  assert.equal(eaten.getAttribute("aria-pressed"), "false");
+  click(view.doc, eaten);
+  assert.equal(view.doc.nodes["plan-sheet"].hidden, true);
+  assert.equal(view.model.week()[0].used, true);
+  const marked = dayCards(view.doc)[0];
+  assert.match(marked.className, /is-used/);
+  assert.match(
+    marked.children.find((child) => child.dataset.testid === "day-meal").textContent,
+    /خورده شد/,
+  );
+  assert.equal(
+    marked.children.find((child) => child.dataset.testid === "day-eaten").getAttribute("aria-pressed"),
+    "true",
+  );
+  assert.match(view.doc.nodes["plan-status"].textContent, /خورده شد/);
+  assert.match(view.doc.nodes["plan-status"].textContent, /تکرار نمی‌کند/);
+
+  click(view.doc, marked.children.find((child) => child.dataset.testid === "day-swap"));
+  const other = sheetChoices(view.doc).find((button) => button.children[0].textContent === "لوبیا پلو");
+  click(view.doc, other);
+  assert.equal(view.model.week()[0].used, false);
+  assert.equal(view.model.week()[0].recipe.title, "لوبیا پلو");
+});
+
+test("new suggestions stay beside eaten dinners and do not clear them", () => {
+  const view = mountPlan({ latest: [] });
+  view.model.assign("sat", THREE[0]);
+  view.model.setUsed("sat", true);
+  fire(view.doc, "ashpaz-recipes", {
+    detail: {
+      recipes: [
+        THREE[1],
+        THREE[2],
+        dish("کوکو سبزی", ["سبزی", "تخم‌مرغ"], ["سبزی را خرد کن"], 90000),
+      ],
+      skip: ["عدس‌پلو"],
+    },
+  });
+  assert.equal(view.model.week()[0].recipe.title, "عدس‌پلو");
+  assert.equal(view.model.week()[0].used, true);
+  assert.equal(
+    view.model.recipes().some((recipe) => recipe.title === "کوکو سبزی"),
+    true,
+  );
+  assert.equal(view.doc.nodes["plan-status"].textContent, COPY.freshIdeas);
+
+  fire(view.doc, "ashpaz-recipes", {
+    detail: { recipes: [dish("آبگوشت", ["لوبیا"], ["بپز"], 1000)], full: true },
+  });
+  assert.equal(view.model.week()[0].used, true);
+  assert.equal(view.model.week()[0].recipe.title, "عدس‌پلو");
+  assert.equal(view.doc.nodes["plan-status"].textContent, COPY.fullIdeas);
+});
+
 test("recipe events are stored for a later plan action", () => {
   const view = mountPlan({ latest: [] });
   fire(view.doc, "ashpaz-recipes", { detail: { recipes: THREE } });
@@ -501,6 +591,7 @@ test("the page, stylesheet, and image wire the plan without an API key", () => {
   assert.match(printCss, /\.topbar/);
   assert.match(printCss, /\.footer/);
   assert.match(printCss, /\.day-action/);
+  assert.match(printCss, /\.day-eaten/);
   assert.match(printCss, /#fff/);
   assert.match(printCss, /Vazirmatn/);
   assert.equal(printCss.includes("#week-grid"), false);
