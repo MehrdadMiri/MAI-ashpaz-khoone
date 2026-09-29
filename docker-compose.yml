@@ -58,6 +58,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-ashpaz}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # Applied only when pgdata is first created. The api also runs this
+      # file on startup so an existing volume still gets the tables.
+      - ./api/migrations/001_kitchen_state.sql:/docker-entrypoint-initdb.d/001_kitchen_state.sql:ro
     ports:
       - "5432:5432"
     healthcheck:

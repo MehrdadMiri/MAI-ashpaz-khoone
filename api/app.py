@@ -9,12 +9,13 @@ ignores that skip.
 POST /vision/fridge sends one or more fridge photos, in order, to that
 client's vision call and returns candidate ingredient names with confidence.
 It does not store them.
+GET and PUT /pantry and /plan store pantry chips and the 7-day plan in
+Postgres for a browser-local id. They do not call GapGPT.
 """
 
 import json
 import os
 
-import psycopg
 from flask import Flask, jsonify, request
 from werkzeug.exceptions import HTTPException
 
@@ -25,6 +26,7 @@ from recipes import (
     generate_recipes,
     parse_generate_body,
 )
+import store
 from vision import (
     VISION_CLIENT_TIMEOUT,
     VisionRequestError,
@@ -35,8 +37,11 @@ from vision import (
 # Recipe JSON stays small. Fridge photos need a higher cap; nginx matches it.
 # Each photo may arrive as base64 (about 4/3) plus a short JSON wrapper.
 JSON_MAX_BYTES = 64 * 1024
+STATE_MAX_BYTES = 256 * 1024
 _PER_IMAGE_BODY = ((MAX_IMAGE_BYTES + 2) // 3) * 4 + 2048
 VISION_REQUEST_MAX_BYTES = MAX_FRIDGE_IMAGES * _PER_IMAGE_BODY + 65536
+STATE_PATHS = {"/pantry", "/plan"}
+
 
 class ApiPrefixMiddleware:
     """Treat /api/... as an alias of /... so nginx can forward the path unchanged."""
@@ -64,10 +69,6 @@ app.config["MAX_CONTENT_LENGTH"] = VISION_REQUEST_MAX_BYTES
 app.config["MAX_FORM_MEMORY_SIZE"] = JSON_MAX_BYTES
 
 
-def setting(name, default=""):
-    return os.environ.get(name, default).strip()
-
-
 def gapgpt_status():
     # Report whether a key is present. Never include the key itself.
     return GapGPTConfig.from_env().public_status()
@@ -80,22 +81,9 @@ def build_gapgpt_client(timeout=None):
 
 
 def database_ok():
-    try:
-        with psycopg.connect(
-            host=setting("POSTGRES_HOST") or "db",
-            port=setting("POSTGRES_PORT") or "5432",
-            user=setting("POSTGRES_USER") or "ashpaz",
-            password=os.environ.get("POSTGRES_PASSWORD", "change-me"),
-            dbname=setting("POSTGRES_DB") or "ashpaz",
-            connect_timeout=3,
-        ) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1")
-                cur.fetchone()
-        return True
-    except Exception as exc:
-        app.logger.warning("database check failed: %s", exc.__class__.__name__)
-        return False
+    # SELECT 1, and CREATE TABLE IF NOT EXISTS for pantry and plan rows.
+    # The password and any pantry text stay out of the log.
+    return store.ping()
 
 
 def scrub_public_body(raw: bytes) -> bytes:
@@ -152,6 +140,8 @@ def limit_request_body():
         return None
     if request.path == "/vision/fridge":
         limit = VISION_REQUEST_MAX_BYTES
+    elif request.path in STATE_PATHS:
+        limit = STATE_MAX_BYTES
     else:
         limit = JSON_MAX_BYTES
     if length > limit:
@@ -217,6 +207,8 @@ def root():
             "gapgpt_smoke": "/gapgpt/smoke",
             "recipes_generate": "/recipes/generate",
             "vision_fridge": "/vision/fridge",
+            "pantry": "/pantry",
+            "plan": "/plan",
         }
     )
 
@@ -318,3 +310,87 @@ def vision_fridge():
         ),
         "Fridge vision failed",
     )
+
+
+def _state_response(fn):
+    try:
+        return jsonify(fn())
+    except store.StoreError as exc:
+        return jsonify(exc.to_dict()), exc.http_status
+    except Exception as exc:
+        app.logger.warning("state request failed: %s", exc.__class__.__name__)
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": "internal_error",
+                    "message": "Request failed",
+                }
+            ),
+            500,
+        )
+
+
+def _method_not_allowed(message):
+    return (
+        jsonify(
+            {
+                "ok": False,
+                "error": "method_not_allowed",
+                "message": message,
+            }
+        ),
+        405,
+    )
+
+
+@app.get("/pantry")
+def pantry_get():
+    def run():
+        user_id = store.user_id_from_request(request)
+        return store.get_store().load_pantry(user_id)
+
+    return _state_response(run)
+
+
+@app.put("/pantry")
+def pantry_put():
+    def run():
+        body = store.read_json_object(request)
+        user_id = store.user_id_from_request(request, body)
+        if "pantry" not in body:
+            raise store.StoreError("invalid_pantry", "JSON body must include pantry", 400)
+        return store.get_store().save_pantry(user_id, body.get("pantry"))
+
+    return _state_response(run)
+
+
+@app.post("/pantry")
+def pantry_post():
+    return _method_not_allowed("Use GET or PUT /pantry")
+
+
+@app.get("/plan")
+def plan_get():
+    def run():
+        user_id = store.user_id_from_request(request)
+        return store.get_store().load_plan(user_id)
+
+    return _state_response(run)
+
+
+@app.put("/plan")
+def plan_put():
+    def run():
+        body = store.read_json_object(request)
+        user_id = store.user_id_from_request(request, body)
+        if "plan" not in body:
+            raise store.StoreError("invalid_plan", "JSON body must include plan", 400)
+        return store.get_store().save_plan(user_id, body.get("plan"))
+
+    return _state_response(run)
+
+
+@app.post("/plan")
+def plan_post():
+    return _method_not_allowed("Use GET or PUT /plan")
