@@ -11,6 +11,7 @@ Release gate for tag `v0.2.0`. `v0.1.0` is already tagged (pantry chips, one fri
 | Nutrition on cards (soft-fail) | 4c |
 | Share/print week (`#p=` + A4 poster) | 7 |
 | Diet filters (گیاهی / بدون پیاز / مناسب دیابت) | 4b |
+| Household size (تعداد نفرات scales amounts and cost) | 4d |
 | PWA install (manifest, service worker shell-only, install note) | 9 |
 
 Do **not** create the `v0.2.0` tag or a GitHub Release from this checklist. SE tags after this path is green. Short notes for that tag are [RELEASE.md](RELEASE.md).
@@ -46,7 +47,7 @@ test -n "$GAP_CODE_API_KEY" && echo "GAP_CODE_API_KEY is set (value hidden)"
 No key and no network:
 
 ```bash
-node --test web/pantry.test.js web/recipes.test.js web/fridge.test.js web/plan.test.js web/shop.test.js web/persist.test.js web/pwa.test.js
+node --test web/household.test.js web/pantry.test.js web/recipes.test.js web/fridge.test.js web/plan.test.js web/shop.test.js web/persist.test.js web/pwa.test.js
 cd api && python3 -m unittest discover -s tests -v
 ```
 
@@ -172,7 +173,39 @@ curl -sS -X POST http://localhost:8000/recipes/nutrition \
   -d '{"recipes":[{"title":"عدس‌پلو","ingredients":["برنج","عدس"],"steps":["عدس را بپز","برنج را دم کن","سرو کن"]}]}'
 ```
 
-Expected: HTTP 200, `"available": false`, and `null` for that recipe. With a real key in the gitignored `.env` only, the same call is HTTP 200, `"available": true`, and a `kcal` on each estimate the model could read. Do not echo the key.
+Expected: HTTP 200, `"available": false`, and `null` for that recipe. With a real key in the gitignored `.env` only, the same call is HTTP 200, `"available": true`, and a `kcal` on each estimate the model could read. Do not echo the key. Calorie lines stay «در هر وعده». They are not multiplied by تعداد نفرات.
+
+### 4d. تعداد نفرات — portions and cost
+
+This check is the v0.3 household-size slice (ticket #19). Do **not** create a `v0.3.0` tag from it.
+
+The header control is «تعداد نفرات». It starts at ۴, next to «بودجه هفته». «−» and «+» move it. The allowed range is ۱ to ۱۲.
+
+Stored recipe amounts and `cost_toman` are for that recipe's `servings`. A recipe saved before this control, with no `servings`, is treated as 4 people. Displayed quantities and costs use `تعداد نفرات / servings`. Changing the number does not clear the week, the chips, or the cards.
+
+- With cards on the page, each card says «برای ۴ نفر». Set the control to ۲. Ingredient amounts that had a number are cut in half, the تومان badge is cut in half, and the week’s meal costs and budget line follow. Slots you already filled stay filled, with the same titles.
+- Set it to ۸. Those amounts and costs double from the 4-person base (or scale from each recipe’s own `servings`). A line with no number, such as «برنج», stays as written. Steps are not rewritten.
+- Reload http://localhost:8080. تعداد نفرات is still the number you set. It is `household` on `ashpaz-khoone.pantry.v1` and on the Postgres pantry row. «پاک کردن» empties the chips and leaves the headcount.
+- Press «پیشنهاد دستور», then «بازتولید کامل». Both requests include `household`. New cards are stamped for that headcount, so at the current number the new amounts match the model and are not scaled a second time. The week slots stay until you change them.
+- «مواد خرید» quantities follow the same scale. The section says the amounts were counted for that headcount. Chips you already have are still absent.
+- The calorie line, when it appears, still says «در هر وعده» and is not multiplied.
+
+Shell, no key (the body must not contain a key or a traceback):
+
+```bash
+curl -sS -X POST http://localhost:8000/recipes/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"ingredients":["برنج","عدس"],"budget":1500000,"household":8}'
+```
+
+Missing key: HTTP 503, `"error": "not_configured"`. The same call with `"household": 0` or `"household": 99` is HTTP 400, `"error": "invalid_household"`, and the message does not echo that value. A missing `household` is accepted as 4 once a key is present.
+
+Automated checks, no key and no network:
+
+```bash
+node --test web/household.test.js web/pantry.test.js web/recipes.test.js web/plan.test.js web/shop.test.js web/persist.test.js
+cd api && python3 -m unittest tests.test_recipes tests.test_store tests.test_state_endpoint -v
+```
 
 ### 5. Seven-day plan — صبحانه، ناهار، شام
 
@@ -239,7 +272,7 @@ After the week has at least one meal (step 5) and the pantry has chips (step 2).
 
 - «مواد خرید» on the plan scrolls to the shopping list.
 - Rows are ingredients on every planned meal (صبحانه، ناهار، شام) that are not already chips. A chip covers the usual spelling variants (spacing, ZWNJ, Arabic/Persian letters). Filling all ۲۱ slots still drops chips you already have and adds quantities across those slots.
-- If a stored line has a quantity, the row shows it. Rows are grouped (سبزی و صیفی، پروتئین، …).
+- If a stored line has a quantity, the row shows it, scaled for تعداد نفرات (step 4d). Rows are grouped (سبزی و صیفی، پروتئین، …). The section says the amounts were counted for that headcount.
 - «چاپ / خروجی» on that section → «چاپ» is a white RTL page of the list only. The week grid and the pantry are hidden.
 - «دانلود مارک‌داون» saves `مواد-خرید.md` with Persian headings.
 - With no meal left on the week, the section says «برنامه هفته خالی است».
@@ -251,9 +284,9 @@ Without a key, the same list can be checked after «بارگذاری نمونه�
 
 With `db` and `api` healthy. No API key is required. This step is part of the v0.2.0 gate.
 
-- Add a chip and a week budget. Turn on one diet chip (step 4b). Reload http://localhost:8080. The chip, the budget, and that diet chip are still there.
+- Add a chip and a week budget. Turn on one diet chip (step 4b). Set تعداد نفرات to something other than ۴ (step 4d). Reload http://localhost:8080. The chip, the budget, the diet chip, and the headcount are still there.
 - Assign a شام and a صبحانه, and mark «خورده شد» on one of them. Reload. Both meals and that mark are still there. The other meal is not marked eaten.
-- In this browser, `localStorage` holds `ashpaz-khoone.pantry.v1` (chips, budget, `filters`) and `ashpaz-khoone.plan.v1` (the week, including «خورده شد»). The browser id is `ashpaz-khoone.local-user.v1`. None of those values is `GAP_CODE_API_KEY`.
+- In this browser, `localStorage` holds `ashpaz-khoone.pantry.v1` (chips, budget, `filters`, `household`) and `ashpaz-khoone.plan.v1` (the week, including «خورده شد» and `servings` on recipes that have it). The browser id is `ashpaz-khoone.local-user.v1`. None of those values is `GAP_CODE_API_KEY`.
 - Stop the api container and reload. The same browser still shows that cached pantry and plan. Start api again and reload. The saved Postgres rows are back, including the diet filters.
 
 ```bash

@@ -32,6 +32,7 @@
     no_remaining:
       "بعد از وعده‌های خورده‌شده ماده‌ای نمانده. یک ماده اضافه کنید یا «بازتولید کامل» را بزنید.",
     invalid_budget: "بودجه هفته درست نیست. یک عدد به تومان وارد کنید.",
+    invalid_household: "تعداد نفرات درست نیست. عددی از ۱ تا ۱۲ وارد کنید.",
     not_configured: "سرویس پیشنهاد دستور هنوز آماده نیست.",
     invalid_config: "سرویس پیشنهاد دستور هنوز آماده نیست.",
     unauthorized: "سرویس پیشنهاد دستور پاسخ نداد. دوباره تلاش کنید.",
@@ -53,6 +54,7 @@
     empty_ingredients: true,
     no_remaining: true,
     invalid_budget: true,
+    invalid_household: true,
     invalid_request: true,
   };
 
@@ -174,6 +176,47 @@
     return COPY.dietLead + labels.join("، ") + ".";
   }
 
+  function currentHousehold(pantry) {
+    var shared = global.AshpazHousehold;
+    var fallback = shared && shared.DEFAULT_HOUSEHOLD ? shared.DEFAULT_HOUSEHOLD : 4;
+    if (!pantry || typeof pantry.household !== "function") return fallback;
+    if (shared && typeof shared.parseHousehold === "function") {
+      var parsed = shared.parseHousehold(pantry.household());
+      return parsed == null ? fallback : parsed;
+    }
+    var number = Number(pantry.household());
+    if (!isFinite(number)) return fallback;
+    return number;
+  }
+
+  function scaleLine(line, household, servings) {
+    var shared = global.AshpazHousehold;
+    if (!shared || typeof shared.scaleIngredientLine !== "function" || typeof shared.scaleFactor !== "function") {
+      return line;
+    }
+    return shared.scaleIngredientLine(line, shared.scaleFactor(household, servings));
+  }
+
+  function scaleCardCost(cost, household, servings) {
+    var shared = global.AshpazHousehold;
+    if (typeof cost !== "number" || !shared || typeof shared.scaleCost !== "function") return cost;
+    return shared.scaleCost(cost, household, servings);
+  }
+
+  function peoplePhrase(household) {
+    var shared = global.AshpazHousehold;
+    if (shared && typeof shared.peoplePhrase === "function") return shared.peoplePhrase(household);
+    return "";
+  }
+
+  function readServings(value, fallback) {
+    var shared = global.AshpazHousehold;
+    if (!shared || typeof shared.parseHousehold !== "function") return null;
+    var parsed = shared.parseHousehold(value);
+    if (parsed != null) return parsed;
+    return shared.parseHousehold(fallback);
+  }
+
   function withFilters(payload, pantry) {
     var filters = readFilters(pantry);
     if (filtersActive(filters)) payload.filters = filters;
@@ -188,14 +231,20 @@
       var number = Number(raw);
       if (isFinite(number)) budget = number;
     }
+    var household = currentHousehold(pantry);
     var full = !!(mode && mode.full);
-    if (full) return withFilters({ ingredients: items, budget: budget, full: true }, pantry);
+    if (full) {
+      return withFilters({ ingredients: items, budget: budget, household: household, full: true }, pantry);
+    }
     var leftovers = readLeftovers(pantry);
-    if (!leftovers.used) return withFilters({ ingredients: items, budget: budget }, pantry);
+    if (!leftovers.used) {
+      return withFilters({ ingredients: items, budget: budget, household: household }, pantry);
+    }
     return withFilters(
       {
         ingredients: items,
         budget: budget,
+        household: household,
         remaining: leftovers.remaining,
         skip: leftovers.skip,
         full: false,
@@ -416,7 +465,7 @@
     }
   }
 
-  function selectRecipes(recipes) {
+  function selectRecipes(recipes, servingsFallback) {
     if (!Array.isArray(recipes)) return null;
     var selected = [];
     for (var i = 0; i < recipes.length && selected.length < 6; i += 1) {
@@ -434,6 +483,8 @@
       ) {
         card.cost_toman = Math.round(recipe.cost_toman);
       }
+      var servings = readServings(recipe.servings, servingsFallback);
+      if (servings != null) card.servings = servings;
       selected.push(card);
     }
     if (selected.length < 3) return null;
@@ -471,8 +522,10 @@
     doc.dispatchEvent(event);
   }
 
-  function renderRecipeGrid(doc, grid, recipes) {
+  function renderRecipeGrid(doc, grid, recipes, household) {
     api.latestRecipes = recipes;
+    var people =
+      household == null ? currentHousehold(global.AshpazPantry && global.AshpazPantry.active) : household;
     var fragment = doc.createDocumentFragment();
     var rendered = [];
     recipes.forEach(function (card, index) {
@@ -488,13 +541,21 @@
       title.textContent = card.title;
 
       head.append(title);
-      var costLabel = formatCostToman(card.cost_toman);
+      var costLabel = formatCostToman(scaleCardCost(card.cost_toman, people, card.servings));
       if (costLabel) {
         var badge = doc.createElement("span");
         badge.className = "cost-badge";
         badge.dataset.testid = "recipe-cost";
         badge.textContent = costLabel;
         head.append(badge);
+      }
+      var phrase = peoplePhrase(people);
+      if (phrase) {
+        var peopleEl = doc.createElement("p");
+        peopleEl.className = "recipe-people";
+        peopleEl.dataset.testid = "recipe-people";
+        peopleEl.textContent = phrase;
+        head.append(peopleEl);
       }
 
       var ingredientLabel = doc.createElement("p");
@@ -507,7 +568,7 @@
       card.ingredients.forEach(function (name) {
         var li = doc.createElement("li");
         li.dataset.testid = "recipe-ingredient";
-        li.textContent = name;
+        li.textContent = scaleLine(name, people, card.servings);
         tags.append(li);
       });
 
@@ -713,6 +774,10 @@
       if (typeof doc.addEventListener === "function") {
         doc.addEventListener("ashpaz-pantry-changed", function () {
           paintDietChips();
+          if (grid && !grid.hidden && api.latestRecipes && api.latestRecipes.length) {
+            renderRecipeGrid(doc, grid, api.latestRecipes);
+            applyNutrition(grid, rememberedEstimates(api.latestRecipes));
+          }
         });
       }
     }
@@ -858,7 +923,7 @@
             showError(messageForFailure(result.response.status, body), hintForFailure(body));
             return;
           }
-          var recipes = selectRecipes(body.recipes);
+          var recipes = selectRecipes(body.recipes, body.household != null ? body.household : payload.household);
           if (!recipes) {
             showError(
               messageForFailure(502, { error: "bad_response" }),

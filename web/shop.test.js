@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
+require("./household.js");
 require("./pantry.js");
 const pantry = require("./pantry.js");
 const plan = require("./plan.js");
@@ -580,4 +581,70 @@ test("the page, stylesheet, and image wire مواد خرید without an API key"
   assert.match(printCss, /Vazirmatn/);
   assert.match(printCss, /#fff/);
   assert.equal(printCss.includes("#week-grid"), false);
+  assert.match(html, /id="shop-scale"/);
+});
+
+test("shopping quantities scale with household size and each recipe's servings", () => {
+  const doubled = shop.buildShoppingList(
+    [],
+    week([
+      {
+        id: "sat",
+        label: "شنبه",
+        recipe: {
+          title: "خوراک",
+          ingredients: ["۲۰۰ گرم گوشت", "نصف پیمانه ماست"],
+          steps: ["بپز"],
+          servings: 4,
+        },
+      },
+    ]),
+    8,
+  );
+  assert.equal(item(doubled, "گوشت").quantityLabel, "۴۰۰ گرم");
+  assert.equal(item(doubled, "ماست").quantityLabel, "۱ پیمانه");
+
+  const halved = shop.buildShoppingList(
+    [],
+    week([
+      {
+        id: "sat",
+        label: "شنبه",
+        recipe: { title: "خوراک", ingredients: ["۲ عدد پیاز"], steps: ["بپز"], servings: 4 },
+      },
+    ]),
+    2,
+  );
+  assert.equal(item(halved, "پیاز").quantityLabel, "۱ عدد");
+
+  const summed = shop.buildShoppingList(
+    [],
+    week([
+      {
+        id: "sat",
+        label: "شنبه",
+        recipe: { title: "الف", ingredients: ["۲۰۰ گرم گوشت"], steps: ["بپز"], servings: 4 },
+      },
+      {
+        id: "sun",
+        label: "یکشنبه",
+        recipe: { title: "ب", ingredients: ["۲۰۰ گرم گوشت"], steps: ["بپز"], servings: 4 },
+      },
+    ]),
+    8,
+  );
+  assert.equal(item(summed, "گوشت").quantityLabel, "۸۰۰ گرم");
+
+  const covered = shop.buildShoppingList(
+    ["پیاز"],
+    week([
+      {
+        id: "sat",
+        label: "شنبه",
+        recipe: { title: "خوراک", ingredients: ["۲ عدد پیاز متوسط"], steps: ["بپز"], servings: 4 },
+      },
+    ]),
+    8,
+  );
+  assert.equal(covered.itemCount, 0);
 });

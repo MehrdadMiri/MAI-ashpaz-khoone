@@ -10,7 +10,7 @@ Persian RTL AI meal and recipe demo (آشپزخونه).
 | api | Python (Flask + Gunicorn) | http://localhost:8000 |
 | db | Postgres 16 | localhost:5432 |
 
-The web page is a Persian RTL pantry. You can add and remove ingredient chips, load a sample set of Iranian staples, and set a numeric week budget. The list and budget are stored in Postgres for a browser-local id, and cached in this browser (`localStorage`) when the api or database is unavailable. «پیشنهاد دستور» asks the shared GapGPT client (`api/gapgpt.py`) for at least three Persian recipes from those chips and the week budget. If a meal is marked «خورده شد», that call prefers the chips still left and asks the model not to repeat those meals. «بازتولید کامل» uses every chip again and does not skip them. «عکس یخچال» sends one photo to the same client and shows candidate chips; nothing is added to the pantry until you confirm. «برنامه ۷ روزه» assigns those recipes to صبحانه، ناهار، and شام from شنبه through جمعه and can print or download the week. The plan does not call GapGPT. «مواد خرید» diffs every planned meal against the pantry chips and can print or download the missing items. That list does not call GapGPT either. After the recipe cards appear, the page asks the same client for a rough per-serving calorie estimate (and protein, carbohydrate, and fat when the model returns them). Each card says those numbers are an AI estimate. If that call fails, the cards stay without them. Product UI is Persian RTL. This scaffold’s docs and code comments are English.
+The web page is a Persian RTL pantry. You can add and remove ingredient chips, load a sample set of Iranian staples, set a numeric week budget, and set تعداد نفرات (how many people the amounts and prices are for). The list and budget are stored in Postgres for a browser-local id, and cached in this browser (`localStorage`) when the api or database is unavailable. «پیشنهاد دستور» asks the shared GapGPT client (`api/gapgpt.py`) for at least three Persian recipes from those chips and the week budget. If a meal is marked «خورده شد», that call prefers the chips still left and asks the model not to repeat those meals. «بازتولید کامل» uses every chip again and does not skip them. «عکس یخچال» sends one photo to the same client and shows candidate chips; nothing is added to the pantry until you confirm. «برنامه ۷ روزه» assigns those recipes to صبحانه، ناهار، and شام from شنبه through جمعه and can print or download the week. The plan does not call GapGPT. «مواد خرید» diffs every planned meal against the pantry chips and can print or download the missing items. That list does not call GapGPT either. After the recipe cards appear, the page asks the same client for a rough per-serving calorie estimate (and protein, carbohydrate, and fat when the model returns them). Each card says those numbers are an AI estimate. If that call fails, the cards stay without them. Product UI is Persian RTL. This scaffold’s docs and code comments are English.
 
 The GitHub repository is public: https://github.com/MehrdadMiri/MAI-ashpaz-khoone. `.env` is gitignored. `.env.example` has placeholders only, and `GAP_CODE_API_KEY` there is empty. Do not commit a real key.
 
@@ -58,7 +58,7 @@ node --test web/pwa.test.js
 
 ## Saved pantry and week plan
 
-Pantry chips, the week budget, diet filters, and the 7-day plan are stored in Postgres. The plan row includes recipe titles, ingredient lines, steps, costs, the شنبه–جمعه slots for صبحانه، ناهار، and شام, and «خورده شد» on each meal. An older dinner-only row is read as شام. There is no account and no password. On the first visit the page creates a random id, stores it in `localStorage` (`ashpaz-khoone.local-user.v1`) and a `ashpaz_local_user` cookie (`Path=/`, `SameSite=Lax`, one year), and sends it as `X-Local-User-Id`. The same id may also be a `local_user_id` query or JSON field. It is not a credential. Do not put `GAP_CODE_API_KEY`, or any other secret, in the pantry or the plan.
+Pantry chips, the week budget, diet filters, تعداد نفرات, and the 7-day plan are stored in Postgres. The plan row includes recipe titles, ingredient lines, steps, costs, the servings those amounts were written for, the شنبه–جمعه slots for صبحانه، ناهار، and شام, and «خورده شد» on each meal. An older dinner-only row is read as شام. There is no account and no password. On the first visit the page creates a random id, stores it in `localStorage` (`ashpaz-khoone.local-user.v1`) and a `ashpaz_local_user` cookie (`Path=/`, `SameSite=Lax`, one year), and sends it as `X-Local-User-Id`. The same id may also be a `local_user_id` query or JSON field. It is not a credential. Do not put `GAP_CODE_API_KEY`, or any other secret, in the pantry or the plan.
 
 `GET` and `PUT /pantry` and `GET` and `PUT /plan` are the routes. Nginx forwards `/api/pantry` and `/api/plan` to them. A missing row is `found: false` and does not wipe the browser. A saved row is what a refresh shows for that id.
 
@@ -145,7 +145,23 @@ Web `/health` is unchanged.
 
 The browser calls `http://localhost:8080/api/recipes/generate`. Nginx proxies `/api/` to the api service and forwards that path. The api accepts `/api/...` as an alias of the same routes, so `POST /recipes/generate` on port 8000 and `POST /api/recipes/generate` on port 8080 are the same call. The web `/health` check is still the nginx `ok` response. API health through the proxy is `http://localhost:8080/api/health`.
 
-The request JSON is `{ "ingredients": ["برنج"], "budget": 1500000 }`. `budget` may be `null` when the week field is empty; the model prompt still includes that budget context. Leftover regenerate adds `remaining`, `skip`, and `full` (see [Leftover regenerate](#leftover-regenerate)). Active diet chips add `filters` (see [Diet filters](#diet-filters)). The api service calls GapGPT with `GapGPTClient.chat_text` and the configured model (`gpt-5.6-luna` unless `GAPGPT_MODEL` is set). The key stays in the api container. The page never receives it.
+The request JSON is `{ "ingredients": ["برنج"], "budget": 1500000, "household": 4 }`. `budget` may be `null` when the week field is empty; the model prompt still includes that budget context. `household` is تعداد نفرات (1 to 12). Missing `household` means 4. The prompt asks for ingredient quantities and `cost_toman` for that many people, and each returned recipe is stamped with `servings` set to the same number. Leftover regenerate adds `remaining`, `skip`, and `full` (see [Leftover regenerate](#leftover-regenerate)). Active diet chips add `filters` (see [Diet filters](#diet-filters)).
+
+### تعداد نفرات
+
+«تعداد نفرات» sits in the header next to «بودجه هفته». It starts at ۴ and stays between ۱ and ۱۲. «−» and «+» step it. The value is stored on the pantry snapshot (`household` in `ashpaz-khoone.pantry.v1` and in the Postgres pantry row), so a reload keeps it. «پاک کردن» empties the chips and leaves the headcount, the week budget, and the diet filters as they are. Changing it does not clear the week or the recipe cards.
+
+Stored recipe lines and `cost_toman` are for that recipe's `servings` people. Older recipes with no `servings` are treated as **4 people**, the same default. The page multiplies displayed amounts and costs by `تعداد نفرات / servings`. A line with no number, such as «برنج», stays as written. Steps are not rewritten. The calorie line stays «در هر وعده» and is not multiplied.
+
+Recipe cards show «برای … نفر», the scaled ingredient tags, and the scaled تومان badge. The week plan's meal costs and the budget comparison use the scaled costs. The same dish on two slots still counts twice. «مواد خرید» scales each planned line by that meal's servings before it adds quantities. Generate and «بازتولید کامل» both send the current headcount.
+
+```bash
+curl -sS -X POST http://localhost:8000/recipes/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"ingredients":["برنج","عدس"],"budget":1500000,"household":4}'
+```
+
+A household outside 1–12 is HTTP 400 `invalid_household`. The message does not echo the value. The page asks for a number from ۱ to ۱۲. The api service calls GapGPT with `GapGPTClient.chat_text` and the configured model (`gpt-5.6-luna` unless `GAPGPT_MODEL` is set). The key stays in the api container. The page never receives it.
 
 ### Diet filters
 
@@ -256,7 +272,7 @@ Older saves stored one شام per day (`slots.sat` as a recipe id, `used.sat` as
 - «برنامه ۷ روزه» fills every empty slot from the recipes already on the page. When more than one recipe exists, a day does not get the same dish for صبحانه، ناهار، and شام. With only one recipe, that dish fills the empty slots. Slots you already filled stay as they are. With no recipes yet, every slot stays «خالی» and the status line asks you to suggest recipes first. «انتخاب» on an empty slot opens the recipe list once recipes exist.
 - On a filled slot, «جایگزین» opens that list, plus «خالی» to clear that slot only.
 - «خورده شد» on a filled slot marks that meal as eaten. Press it again to undo. Replacing or clearing that slot clears the mark. The mark is stored on the plan (`used.day.meal`), in Postgres and in `ashpaz-khoone.plan.v1`, and is what leftover regenerate skips. Print and Markdown add «خورده شد» on that meal. Empty slots have no toggle.
-- If the week budget is set and a recipe has a تومان cost, a line under the title sums every planned meal. The same dish on two slots counts twice. When the sum is over the budget the line says so and adds that چاپ و خروجی are still allowed. You can still assign, swap, print, and download.
+- If the week budget is set and a recipe has a تومان cost, a line under the title sums every planned meal at the current تعداد نفرات. The same dish on two slots counts twice. When the sum is over the budget the line says so and adds that چاپ و خروجی are still allowed. You can still assign, swap, print, and download. Changing تعداد نفرات updates that sum and does not clear the slots.
 - «کپی لینک» copies a link that reopens this week. The link is only a `#p=` hash on this page: day, meal, title, cost, «خورده شد», ingredients, and steps. It does not include the browser's local user id, `GAP_CODE_API_KEY`, or other environment values. Opening it replaces the plan in this browser; Postgres then stores that week under the reader's own id. An empty week still copies, and opening that link shows «برنامه هفته خالی است».
 - «چاپ / خروجی» opens a sheet with «چاپ» and «دانلود مارک‌داون», and shows the same share link so it can be copied from the field.
 
@@ -341,7 +357,7 @@ On http://localhost:8080 with the same key: mark one filled slot «خورده ش
 «مواد خرید» is on the week plan. It does not call GapGPT and does not read `GAP_CODE_API_KEY`. The browser diffs pantry chips against the ingredient lines already stored on each planned meal — صبحانه، ناهار، and شام — the same lines the recipe cards show. The shopping list is not its own Postgres row and it has no `localStorage` key. Change a chip or a slot and the list is rebuilt.
 
 - A chip covers a recipe line after the pantry's usual cleanup (spacing, ZWNJ, Arabic and Persian letters). A pantry name also covers a longer line when the extra words are only size or prep, so پیاز covers «۲ عدد پیاز متوسط». «روغن» does not cover «روغن زیتون».
-- A quantity on the stored line is kept (`۲۰۰ گرم`, `نصف پیمانه`, `۳ عدد`, `یک و نیم پیمانه`). The same item and unit are added across the meals that need it. Different units stay side by side. With no quantity, a repeated item says how many meals need it.
+- A quantity on the stored line is kept (`۲۰۰ گرم`, `نصف پیمانه`, `۳ عدد`, `یک و نیم پیمانه`) and then scaled by `تعداد نفرات / servings` (4 when the recipe has no servings). The same item and unit are added across the meals that need it. Different units stay side by side. With no quantity, a repeated item says how many meals need it. The section says the amounts were counted for that headcount.
 - Rows are grouped with a small built-in map: سبزی و صیفی، میوه، پروتئین، لبنیات، حبوبات و غلات، نان و آرد، چاشنی و ادویه، خشکبار. Anything else is «سایر».
 - «چاپ / خروجی» on this section prints only the list (white page, Vazirmatn, RTL) or downloads `مواد-خرید.md`. Printing the week still hides this section.
 
@@ -404,7 +420,7 @@ The release gate for `v0.2.0` is [docs/QA-SMOKE.md](docs/QA-SMOKE.md). `v0.1.0` 
 1. Compose up with the key set. The آشپزخونه page loads.
 2. «بارگذاری نمونه» shows at least eight chips.
 3. One fridge photo, then confirm, adds only the checked names. Several photos share one confirm sheet, with confidence and merged names.
-4. Set a week budget and «پیشنهاد دستور» returns at least three cards.
+4. Set a week budget and «پیشنهاد دستور» returns at least three cards. «تعداد نفرات» starts at ۴, survives a reload, and scales card amounts, meal costs, the budget line, and «مواد خرید» without clearing the week. Generate and «بازتولید کامل» send that headcount.
 5. Diet chips «گیاهی», «بدون پیاز», and «مناسب دیابت» can be combined, survive a reload, and are named on the status line.
 6. After the cards, a rough calorie line may appear. If that estimate fails, the cards stay and the recipe error is not used.
 7. «برنامه ۷ روزه» fills شنبه through جمعه. «خورده شد» marks a day; «پیشنهاد دستور» then prefers remaining chips and skips that dinner, and «بازتولید کامل» does not.
@@ -526,7 +542,7 @@ python3 -m venv .venv
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Expected: every test OK, with `LiveSmokeTest` skipped. Postgres persistence tests skip unless a database is reachable at `127.0.0.1:5432` (or `ASHPAZ_TEST_POSTGRES_HOST` / `ASHPAZ_TEST_POSTGRES_PORT`). From the repo root, `node --test web/pantry.test.js web/recipes.test.js web/fridge.test.js web/plan.test.js web/shop.test.js web/persist.test.js web/pwa.test.js` covers the pantry, the recipe page, the fridge confirm sheet, the meal plan, the shopping list, server persistence, and the installable web app.
+Expected: every test OK, with `LiveSmokeTest` skipped. Postgres persistence tests skip unless a database is reachable at `127.0.0.1:5432` (or `ASHPAZ_TEST_POSTGRES_HOST` / `ASHPAZ_TEST_POSTGRES_PORT`). From the repo root, `node --test web/household.test.js web/pantry.test.js web/recipes.test.js web/fridge.test.js web/plan.test.js web/shop.test.js web/persist.test.js web/pwa.test.js` covers household scaling, the pantry, the recipe page, the fridge confirm sheet, the meal plan, the shopping list, server persistence, and the installable web app.
 
 Smoke check without a key (controlled error, no stack trace). The stack from the demo path can already be running:
 

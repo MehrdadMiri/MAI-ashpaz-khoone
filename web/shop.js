@@ -636,7 +636,30 @@
     return [];
   }
 
-  function buildShoppingList(pantryItems, week) {
+  function listHousehold(explicit) {
+    var shared = global.AshpazHousehold;
+    if (explicit != null && explicit !== "") {
+      if (shared && typeof shared.parseHousehold === "function") {
+        var parsed = shared.parseHousehold(explicit);
+        if (parsed != null) return parsed;
+      }
+    }
+    var pantryApi = global.AshpazPantry;
+    var pantry = pantryApi && pantryApi.active;
+    if (pantry && typeof pantry.household === "function" && shared && typeof shared.householdOrDefault === "function") {
+      return shared.householdOrDefault(pantry.household());
+    }
+    return shared && shared.DEFAULT_HOUSEHOLD ? shared.DEFAULT_HOUSEHOLD : 4;
+  }
+
+  function dishFactor(recipe, people) {
+    var shared = global.AshpazHousehold;
+    if (!shared || typeof shared.scaleFactor !== "function") return 1;
+    return shared.scaleFactor(people, recipe && recipe.servings);
+  }
+
+  function buildShoppingList(pantryItems, week, householdSize) {
+    var people = listHousehold(householdSize);
     var pantryNames = [];
     var pantryKeys = [];
     (Array.isArray(pantryItems) ? pantryItems : []).forEach(function (item) {
@@ -671,6 +694,7 @@
         return;
       }
       hadIngredients = true;
+      var factor = dishFactor(dish.recipe, people);
       var local = Object.create(null);
       usable.forEach(function (line) {
         expandLine(line).forEach(function (parsed) {
@@ -678,8 +702,9 @@
           if (!key || coveredByPantry(parsed.name, pantryKeys)) return;
           if (!local[key]) local[key] = { name: parsed.name, parts: [] , bare: 0 };
           if (parsed.name.length < local[key].name.length) local[key].name = parsed.name;
-          if (parsed.qty != null && isFinite(parsed.qty)) local[key].parts.push({ qty: parsed.qty, unit: parsed.unit || "" });
-          else local[key].bare += 1;
+          if (parsed.qty != null && isFinite(parsed.qty)) {
+            local[key].parts.push({ qty: parsed.qty * factor, unit: parsed.unit || "" });
+          } else local[key].bare += 1;
         });
       });
       Object.keys(local).forEach(function (key) {
@@ -843,7 +868,8 @@
   }
 
   function currentList(hooks) {
-    return buildShoppingList(readPantry(hooks), readWeek(hooks));
+    var people = hooks && typeof hooks.household === "function" ? hooks.household() : undefined;
+    return buildShoppingList(readPantry(hooks), readWeek(hooks), people);
   }
 
   function emptyCopy(result) {
@@ -1060,7 +1086,17 @@
     var onChoice = null;
 
     function render() {
-      applyResult(doc, els, currentList(hooks));
+      var result = currentList(hooks);
+      applyResult(doc, els, result);
+      var scaleEl = doc.getElementById("shop-scale");
+      if (scaleEl) {
+        var shared = global.AshpazHousehold;
+        var people = listHousehold(hooks && typeof hooks.household === "function" ? hooks.household() : undefined);
+        scaleEl.textContent =
+          shared && typeof shared.peoplePhrase === "function"
+            ? "مقدارها " + shared.peoplePhrase(people) + " حساب شده."
+            : "";
+      }
     }
 
     function reveal() {

@@ -735,5 +735,42 @@ class DietFilterTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "timeout")
 
 
+class HouseholdTests(unittest.TestCase):
+    def test_missing_household_defaults_to_four(self):
+        parsed = parse_generate_body({"ingredients": ["برنج"], "budget": 10})
+        self.assertEqual(parsed.household, 4)
+        user = build_messages(["برنج"], 10)[1]["content"]
+        self.assertIn("تعداد نفرات: 4.", user)
+        self.assertIn("تعداد نفرات", SYSTEM_PROMPT)
+
+    def test_persian_digits_and_full_regenerate_keep_the_count(self):
+        parsed = parse_generate_body({"ingredients": ["برنج"], "household": "۸", "full": True})
+        self.assertEqual(parsed.household, 8)
+        self.assertTrue(parsed.full)
+        user = build_messages(["برنج"], None, full=True, household=2)[1]["content"]
+        self.assertIn("تعداد نفرات: 2.", user)
+        self.assertIn("بازتولید کامل", user)
+        self.assertIn("بودجه هفته: مشخص نشده.", user)
+
+    def test_bad_household_is_static_and_not_echoed(self):
+        secret = "household-secret-value"
+        for value in (secret, 0, 13, True, 4.5, "nope"):
+            with self.assertRaises(RecipeRequestError) as caught:
+                parse_generate_body({"ingredients": ["برنج"], "household": value})
+            self.assertEqual(caught.exception.code, "invalid_household")
+            rendered = caught.exception.message + json.dumps(caught.exception.to_dict())
+            self.assertNotIn(secret, rendered)
+            self.assertNotIn("Traceback", rendered)
+
+    def test_generate_stamps_servings_for_the_requested_headcount(self):
+        stub = StubClient(json.dumps(sample_payload(), ensure_ascii=False))
+        result = generate_recipes(stub, ["برنج", "عدس", "ماست"], 1000, household=8, full=True)
+        self.assertEqual(result["household"], 8)
+        self.assertEqual(result["mode"], "full")
+        self.assertTrue(all(item["servings"] == 8 for item in result["recipes"]))
+        self.assertIn("تعداد نفرات: 8.", stub.messages[1]["content"])
+        self.assertEqual(stub.messages[0]["content"], SYSTEM_PROMPT)
+
+
 if __name__ == "__main__":
     unittest.main()

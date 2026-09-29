@@ -325,3 +325,23 @@ test("the page wires persist.js after the plan and does not embed a key", () => 
   assert.match(script, /\/plan/);
   assert.match(script, /localStorage/);
 });
+
+test("household size is saved with the pantry and uploaded when that is the only change", async () => {
+  const store = storage();
+  const model = pantry.createPantry({ storage: store });
+  assert.equal(model.setHousehold(6).ok, true);
+  const fetchBox = mockFetch((call) => {
+    if (call.options.method === "GET") {
+      return jsonResponse(200, { ok: true, found: false, pantry: { items: [], budget: "" } });
+    }
+    return jsonResponse(200, { ok: true, found: true, pantry: call.body.pantry });
+  });
+  const { created } = session({ storage: store, fetchBox });
+  await created.hydrate(model, null);
+  const puts = fetchBox.calls.filter((call) => call.options && call.options.method === "PUT");
+  assert.equal(puts.length, 1);
+  assert.equal(puts[0].body.pantry.household, 6);
+  assert.deepEqual(puts[0].body.pantry.items, []);
+  const again = pantry.createPantry({ storage: store });
+  assert.equal(again.household(), 6);
+});

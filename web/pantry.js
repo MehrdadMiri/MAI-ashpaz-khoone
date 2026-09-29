@@ -1,6 +1,7 @@
 /* Client-side pantry for آشپزخونه (US-02 chips, US-04 week budget).
-   Diet filters (vegetarian, no onion, diabetic-friendly) live on the same
-   snapshot as the chips and the week budget.
+   Diet filters (vegetarian, no onion, diabetic-friendly) and household
+   size (تعداد نفرات) live on the same snapshot as the chips and the week
+   budget. Household defaults to 4 and stays between 1 and 12.
    Every change is written to localStorage. When AshpazPersist is loaded, the
    same snapshot is also sent to Postgres. If that api is down, this cache
    is what the page keeps using.
@@ -13,6 +14,9 @@
   var STORAGE_KEY = "ashpaz-khoone.pantry.v1";
   var MAX_NAME_LENGTH = 40;
   var MAX_BUDGET = 1000000000000;
+  var DEFAULT_HOUSEHOLD = 4;
+  var MIN_HOUSEHOLD = 1;
+  var MAX_HOUSEHOLD = 12;
   var DIET_KEYS = ["vegetarian", "no_onion", "diabetic"];
 
   var SEED_STAPLES = Object.freeze([
@@ -88,8 +92,30 @@
     return filters;
   }
 
+  function parseHousehold(raw) {
+    var shared = global.AshpazHousehold;
+    if (shared && typeof shared.parseHousehold === "function") return shared.parseHousehold(raw);
+    if (typeof raw === "boolean" || raw == null || raw === "") return null;
+    if (typeof raw === "number") {
+      if (!isFinite(raw) || Math.round(raw) !== raw) return null;
+      if (raw < MIN_HOUSEHOLD || raw > MAX_HOUSEHOLD) return null;
+      return raw;
+    }
+    var text = toAsciiDigits(raw).replace(/[\s,٬،]/g, "");
+    if (!/^\d+$/.test(text)) return null;
+    var value = Number(text);
+    if (!isFinite(value) || value < MIN_HOUSEHOLD || value > MAX_HOUSEHOLD) return null;
+    return value;
+  }
+
+  function readHousehold(raw) {
+    if (raw == null || raw === "") return DEFAULT_HOUSEHOLD;
+    var parsed = parseHousehold(raw);
+    return parsed == null ? DEFAULT_HOUSEHOLD : parsed;
+  }
+
   function emptyState() {
-    return { items: [], budget: "", filters: emptyFilters() };
+    return { items: [], budget: "", filters: emptyFilters(), household: DEFAULT_HOUSEHOLD };
   }
 
   function sanitizeState(parsed) {
@@ -116,6 +142,7 @@
     }
 
     state.filters = copyFilters(parsed.filters);
+    state.household = readHousehold(parsed.household);
     return state;
   }
 
@@ -150,6 +177,7 @@
         items: state.items.slice(),
         budget: state.budget,
         filters: copyFilters(state.filters),
+        household: state.household,
       };
     }
 
@@ -186,6 +214,17 @@
       },
       filters: function () {
         return copyFilters(state.filters);
+      },
+      household: function () {
+        return state.household;
+      },
+      setHousehold: function (raw) {
+        var next = parseHousehold(raw);
+        if (next == null) return { ok: false, household: state.household, changed: false };
+        var changed = next !== state.household;
+        state.household = next;
+        if (changed) persist();
+        return { ok: true, household: state.household, changed: changed };
       },
       setFilter: function (key, on) {
         if (DIET_KEYS.indexOf(key) === -1) {
@@ -263,6 +302,9 @@
     var empty = doc.getElementById("empty");
     var status = doc.getElementById("status");
     var budgetInput = doc.getElementById("week-budget");
+    var householdInput = doc.getElementById("household-size");
+    var householdDec = doc.getElementById("household-dec");
+    var householdInc = doc.getElementById("household-inc");
     var seedBtn = doc.getElementById("seed");
     var clearBtn = doc.getElementById("clear");
     var emptyActions = doc.getElementById("empty-actions");
@@ -278,9 +320,57 @@
     }
 
     budgetInput.value = pantry.budget();
+    paintHousehold();
 
     function setStatus(message) {
       status.textContent = message || "";
+    }
+
+    function paintHousehold() {
+      if (!householdInput && !householdDec && !householdInc) return;
+      var people = pantry.household();
+      var label = toPersianDigits(people);
+      var active = null;
+      try {
+        active = doc.activeElement || null;
+      } catch (err) {
+        active = null;
+      }
+      if (householdInput && active !== householdInput) {
+        householdInput.value = label;
+      } else if (householdInput && !householdInput.value) {
+        householdInput.value = label;
+      }
+      if (householdDec) householdDec.disabled = people <= MIN_HOUSEHOLD;
+      if (householdInc) householdInc.disabled = people >= MAX_HOUSEHOLD;
+    }
+
+    function commitHousehold(forcePaint) {
+      if (!householdInput) return;
+      var result = pantry.setHousehold(householdInput.value);
+      if (!result.ok) {
+        if (forcePaint) householdInput.value = toPersianDigits(pantry.household());
+        paintHousehold();
+        return;
+      }
+      if (forcePaint || result.changed) householdInput.value = toPersianDigits(result.household);
+      paintHousehold();
+      if (result.changed) {
+        setStatus("تعداد نفرات " + toPersianDigits(result.household) + " شد");
+        emitPantry();
+      }
+    }
+
+    function stepHousehold(delta) {
+      var result = pantry.setHousehold(pantry.household() + delta);
+      if (!result.ok || !result.changed) {
+        paintHousehold();
+        return;
+      }
+      if (householdInput) householdInput.value = toPersianDigits(result.household);
+      paintHousehold();
+      setStatus("تعداد نفرات " + toPersianDigits(result.household) + " شد");
+      emitPantry();
     }
 
     function emitPantry() {
@@ -426,10 +516,31 @@
       }
     });
 
+    if (householdInput) {
+      householdInput.addEventListener("change", function () {
+        commitHousehold(true);
+      });
+      householdInput.addEventListener("blur", function () {
+        commitHousehold(true);
+      });
+    }
+    if (householdDec) {
+      householdDec.addEventListener("click", function () {
+        stepHousehold(-1);
+      });
+    }
+    if (householdInc) {
+      householdInc.addEventListener("click", function () {
+        stepHousehold(1);
+      });
+    }
+
     doc.addEventListener("ashpaz-pantry-changed", function (event) {
       var detail = (event && event.detail) || {};
       if (detail.source === "pantry") return;
       if (budgetInput.value !== pantry.budget()) budgetInput.value = pantry.budget();
+      if (householdInput) householdInput.value = toPersianDigits(pantry.household());
+      paintHousehold();
       if (detail.message) setStatus(detail.message);
       render(detail.flash || "");
     });

@@ -26,6 +26,9 @@ MIGRATION_PATH = Path(__file__).resolve().parent / "migrations" / "001_kitchen_s
 DAYS = ("sat", "sun", "mon", "tue", "wed", "thu", "fri")
 MEALS = ("breakfast", "lunch", "dinner")
 MAX_PANTRY_ITEMS = 100
+MIN_HOUSEHOLD = 1
+MAX_HOUSEHOLD = 12
+DEFAULT_HOUSEHOLD = 4
 MAX_NAME_LENGTH = 40
 MAX_BUDGET = 1_000_000_000_000
 MAX_RECIPES = 24
@@ -172,8 +175,59 @@ def sanitize_filters(raw: Any) -> dict[str, bool]:
     return filters
 
 
+def sanitize_household(raw: Any) -> int:
+    """Keep 1–12. Anything else, including a missing value, is the default of 4."""
+    if isinstance(raw, bool) or raw is None or raw == "":
+        return DEFAULT_HOUSEHOLD
+    if isinstance(raw, int):
+        number = raw
+    elif isinstance(raw, float):
+        if not math.isfinite(raw) or not raw.is_integer():
+            return DEFAULT_HOUSEHOLD
+        number = int(raw)
+    elif isinstance(raw, str):
+        text = raw.translate(_DIGIT_TRANSLATION)
+        text = re.sub(r"[\s,٬،]", "", text)
+        if not text.isdigit():
+            return DEFAULT_HOUSEHOLD
+        number = int(text)
+    else:
+        return DEFAULT_HOUSEHOLD
+    if number < MIN_HOUSEHOLD or number > MAX_HOUSEHOLD:
+        return DEFAULT_HOUSEHOLD
+    return number
+
+
+def sanitize_servings(raw: Any) -> int | None:
+    """A recipe's base headcount. Missing or unusable values stay unset (base 4 on display)."""
+    if isinstance(raw, bool) or raw is None or raw == "":
+        return None
+    if isinstance(raw, int):
+        number = raw
+    elif isinstance(raw, float):
+        if not math.isfinite(raw) or not raw.is_integer():
+            return None
+        number = int(raw)
+    elif isinstance(raw, str):
+        text = raw.translate(_DIGIT_TRANSLATION)
+        text = re.sub(r"[\s,٬،]", "", text)
+        if not text.isdigit():
+            return None
+        number = int(text)
+    else:
+        return None
+    if number < MIN_HOUSEHOLD or number > MAX_HOUSEHOLD:
+        return None
+    return number
+
+
 def empty_pantry() -> dict[str, Any]:
-    return {"items": [], "budget": "", "filters": empty_diet_filters()}
+    return {
+        "items": [],
+        "budget": "",
+        "filters": empty_diet_filters(),
+        "household": DEFAULT_HOUSEHOLD,
+    }
 
 
 def empty_day_slots() -> dict[str, None]:
@@ -234,6 +288,7 @@ def sanitize_pantry(raw: Any) -> dict[str, Any]:
             state["items"].append(name)
     state["budget"] = sanitize_budget(raw.get("budget", ""))
     state["filters"] = sanitize_filters(raw.get("filters"))
+    state["household"] = sanitize_household(raw.get("household", DEFAULT_HOUSEHOLD))
     return state
 
 
@@ -283,13 +338,17 @@ def normalize_recipe(raw: Any) -> dict[str, Any] | None:
     key = identity_key(title)
     if not title or not key:
         return None
-    return {
+    recipe: dict[str, Any] = {
         "id": "r:" + key,
         "title": title,
         "ingredients": clean_list(raw.get("ingredients"), MAX_INGREDIENT_LINES, MAX_INGREDIENT_LINE),
         "steps": clean_list(raw.get("steps"), MAX_STEPS, MAX_STEP_LENGTH),
         "cost_toman": _cost(raw.get("cost_toman")),
     }
+    servings = sanitize_servings(raw.get("servings"))
+    if servings is not None:
+        recipe["servings"] = servings
+    return recipe
 
 
 def _assigned_ids(slots: dict[str, Any]) -> set[str]:
