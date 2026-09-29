@@ -34,53 +34,71 @@
         </label>
       </header>
 
-      <main class="panel" id="pantry">
-        <div class="panel-head">
-          <h2>
-            مواد آشپزخانه
-            <span id="count" class="count" data-testid="pantry-count" hidden></span>
-          </h2>
-          <p id="chip-hint" class="hint" hidden>برای حذف، روی ماده بزنید.</p>
-        </div>
-
-        <div id="empty" class="empty" data-testid="empty-state">
-          <p class="empty-title">هنوز چیزی در آشپزخانه نیست</p>
-          <p class="empty-help">یک ماده اضافه کنید یا نمونه را بارگذاری کنید.</p>
-          <div id="empty-actions" class="empty-actions">
-            <button type="button" id="seed" class="is-emphasis" data-testid="seed-button">
-              بارگذاری نمونه
-            </button>
+      <main class="stack">
+        <section class="panel" id="pantry">
+          <div class="panel-head">
+            <h2>
+              مواد آشپزخانه
+              <span id="count" class="count" data-testid="pantry-count" hidden></span>
+            </h2>
+            <p id="chip-hint" class="hint" hidden>برای حذف، روی ماده بزنید.</p>
           </div>
-        </div>
 
-        <ul
-          id="chips"
-          class="chips"
-          data-testid="pantry-chips"
-          aria-label="مواد آشپزخانه"
-          hidden
-        ></ul>
+          <div id="empty" class="empty" data-testid="empty-state">
+            <p class="empty-title">هنوز چیزی در آشپزخانه نیست</p>
+            <p class="empty-help">یک ماده اضافه کنید یا نمونه را بارگذاری کنید.</p>
+            <div id="empty-actions" class="empty-actions">
+              <button type="button" id="seed" class="is-emphasis" data-testid="seed-button">
+                بارگذاری نمونه
+              </button>
+            </div>
+          </div>
 
-        <form id="add-form" class="add-form" autocomplete="off">
-          <label class="sr-only" for="ingredient">نام ماده</label>
-          <input
-            id="ingredient"
-            name="ingredient"
-            type="text"
-            maxlength="40"
-            placeholder="مثلاً برنج"
-            autocomplete="off"
-            enterkeyhint="done"
-            data-testid="ingredient-input"
-          />
-          <button type="submit" data-testid="add-button">افزودن</button>
-        </form>
+          <ul
+            id="chips"
+            class="chips"
+            data-testid="pantry-chips"
+            aria-label="مواد آشپزخانه"
+            hidden
+          ></ul>
 
-        <div class="actions" id="actions" hidden>
-          <button type="button" id="clear" data-testid="clear-button" disabled>پاک کردن</button>
-        </div>
+          <form id="add-form" class="add-form" autocomplete="off">
+            <label class="sr-only" for="ingredient">نام ماده</label>
+            <input
+              id="ingredient"
+              name="ingredient"
+              type="text"
+              maxlength="40"
+              placeholder="مثلاً برنج"
+              autocomplete="off"
+              enterkeyhint="done"
+              data-testid="ingredient-input"
+            />
+            <button type="submit" data-testid="add-button">افزودن</button>
+          </form>
 
-        <p id="status" class="status" role="status" aria-live="polite" data-testid="status"></p>
+          <div class="actions" id="actions" hidden>
+            <button type="button" id="clear" data-testid="clear-button" disabled>پاک کردن</button>
+          </div>
+
+          <p id="status" class="status" role="status" aria-live="polite" data-testid="status"></p>
+        </section>
+
+        <section class="panel recipes-panel" id="recipes" aria-labelledby="recipes-title">
+          <div class="panel-head recipes-head">
+            <div>
+              <h2 id="recipes-title">پیشنهاد دستور</h2>
+              <p class="hint">از مواد آشپزخانه و بودجه همین هفته.</p>
+            </div>
+            <button type="button" id="suggest" data-testid="suggest-button">پیشنهاد دستور</button>
+          </div>
+          <p id="recipe-status" class="status" role="status" aria-live="polite" data-testid="recipe-status"></p>
+          <div id="recipe-error" class="recipe-error" role="alert" hidden data-testid="recipe-error">
+            <p id="recipe-error-text" data-testid="recipe-error-text"></p>
+            <button type="button" id="recipe-retry" data-testid="recipe-retry">تلاش دوباره</button>
+          </div>
+          <div id="recipe-grid" class="recipe-grid" data-testid="recipe-grid" hidden></div>
+        </section>
       </main>
 
       <footer class="footer">
@@ -92,5 +110,6 @@
       <p class="noscript">برای استفاده از آشپزخانه، جاوااسکریپت را روشن کنید.</p>
     </noscript>
     <script src="pantry.js"></script>
+    <script src="recipes.js"></script>
   </body>
 </html>
