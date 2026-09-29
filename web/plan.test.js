@@ -268,6 +268,21 @@ test("replace restores recipes, slots, and eaten days without a remote write", (
   }
 });
 
+test("a share event names an empty week without wiping a remote redraw", () => {
+  const view = mountPlan({ latest: [] });
+  view.model.assign("sat", THREE[0]);
+  fire(view.doc, "ashpaz-plan-changed", {
+    detail: { source: "share", shared: { ok: true, empty: true } },
+  });
+  assert.equal(view.doc.nodes["plan-status"].textContent, COPY.shareEmptyOpened);
+  assert.equal(view.model.week()[0].recipe.title, "عدس‌پلو");
+  fire(view.doc, "ashpaz-plan-changed", { detail: { source: "remote" } });
+  assert.equal(
+    dayCards(view.doc)[0].children.find((node) => node.dataset.testid === "day-meal").textContent,
+    "عدس‌پلو",
+  );
+});
+
 test("a remote plan event redraws the week", () => {
   const view = mountPlan({});
   view.model.replace({
@@ -630,6 +645,7 @@ test("the page, stylesheet, and image wire the plan without an API key", () => {
   assert.equal(html.includes("GAP_CODE_API_KEY"), false);
   assert.equal(script.includes("GAP_CODE_API_KEY"), false);
   assert.equal(script.includes("fetch("), false);
+  assert.match(script, /hashchange/);
   assert.match(docker, /plan\.js/);
 
   const printCss = css.slice(css.indexOf("@media print"));

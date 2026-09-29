@@ -1058,11 +1058,7 @@
     hooks = hooks || {};
     var incoming = hooks.shared || null;
     if (!hooks.shared && hooks.location && plan && typeof plan.applyShare === "function") {
-      var token = shareTokenFromLocation(hooks.location);
-      if (token) {
-        incoming = plan.applyShare(token);
-        clearShareHash(hooks.location);
-      }
+      incoming = consumeShareLocation(plan, hooks.location) || incoming;
     }
     var grid = doc.getElementById("week-grid");
     var sheet = doc.getElementById("plan-sheet");
@@ -1484,14 +1480,60 @@
 
     doc.addEventListener("ashpaz-plan-changed", function (event) {
       var detail = (event && event.detail) || {};
-      if (detail.source !== "remote") return;
+      if (detail.source !== "remote" && detail.source !== "share") return;
       render();
+      if (!detail.shared) return;
+      if (detail.shared.ok && detail.shared.empty) setStatus(COPY.shareEmptyOpened);
+      else if (detail.shared.ok) setStatus(COPY.shareOpened);
+      else if (detail.shared.ok === false) setStatus(COPY.shareBad);
     });
 
     render();
     if (incoming && incoming.ok && incoming.empty) setStatus(COPY.shareEmptyOpened);
     else if (incoming && incoming.ok) setStatus(COPY.shareOpened);
     else if (incoming && incoming.ok === false) setStatus(COPY.shareBad);
+  }
+
+  function consumeShareLocation(plan, loc) {
+    var token = shareTokenFromLocation(loc);
+    if (!token || !plan || typeof plan.applyShare !== "function") return null;
+    var shared = plan.applyShare(token);
+    clearShareHash(loc);
+    return shared;
+  }
+
+  function announceShare(shared) {
+    if (!shared || typeof document === "undefined" || typeof document.dispatchEvent !== "function") return;
+    var event;
+    try {
+      event =
+        typeof CustomEvent === "function"
+          ? new CustomEvent("ashpaz-plan-changed", { detail: { source: "share", shared: shared } })
+          : { type: "ashpaz-plan-changed", detail: { source: "share", shared: shared } };
+    } catch (err) {
+      event = { type: "ashpaz-plan-changed", detail: { source: "share", shared: shared } };
+    }
+    try {
+      document.dispatchEvent(event);
+    } catch (err2) {
+      /* The week is already stored. The next paint reads it. */
+    }
+  }
+
+  function watchShareHash() {
+    if (!global || typeof global.addEventListener !== "function" || global.__ashpazShareWatch) return;
+    global.__ashpazShareWatch = true;
+    global.addEventListener("hashchange", function () {
+      var plan = api.active;
+      var loc = null;
+      try {
+        loc = global.location;
+      } catch (err) {
+        loc = null;
+      }
+      var shared = consumeShareLocation(plan, loc);
+      if (shared) announceShare(shared);
+    });
   }
 
   function boot() {
@@ -1513,14 +1555,10 @@
     } catch (err) {
       loc = null;
     }
-    var shared = null;
-    var token = shareTokenFromLocation(loc);
-    if (token) {
-      shared = plan.applyShare(token);
-      clearShareHash(loc);
-    }
+    var shared = consumeShareLocation(plan, loc);
     api.active = plan;
     mount(document, plan, { shared: shared });
+    watchShareHash();
   }
 
   var api = {
