@@ -3,7 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#9f3d24" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="آشپزخونه" />
     <title>آشپزخونه</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <link rel="stylesheet" href="pantry.css" />
   </head>
   <body>
@@ -284,6 +289,9 @@
       <footer class="footer">
         <span>مواد، بودجه و برنامه در همین مرورگر می‌ماند. مواد خرید از روی آن‌ها ساخته می‌شود.</span>
         <a href="/health">سلامت سرویس</a>
+        <p class="install-note" id="install-note" data-testid="install-note">
+          برای نصب برنامه، در منوی مرورگر «افزودن به صفحهٔ اصلی» را بزنید.
+        </p>
       </footer>
     </div>
     <div
@@ -446,5 +454,6 @@
     <script src="plan.js"></script>
     <script src="shop.js"></script>
     <script src="persist.js"></script>
+    <script src="pwa.js"></script>
   </body>
 </html>

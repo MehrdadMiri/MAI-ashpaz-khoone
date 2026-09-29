@@ -31,6 +31,16 @@ docker compose up --build
 
 Stop the stack with `docker compose down`. Postgres data, including saved pantries and week plans, lives in the `pgdata` volume. `docker compose down -v` removes that volume. `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` are applied when that volume is first created, so change them only on an empty volume. See [Saved pantry and week plan](#saved-pantry-and-week-plan).
 
+## Add to Home Screen
+
+برای نصب، سایت را در مرورگر گوشی باز کنید و «افزودن به صفحهٔ اصلی» را بزنید.
+
+Add to Home Screen from the browser menu to install آشپزخونه as a standalone app. Chrome treats http://localhost:8080 as a secure context, so install works there; any other host needs HTTPS. The service worker caches the page shell only. Recipe generation, fridge photos, and the GapGPT key stay on the server.
+
+```bash
+node --test web/pwa.test.js
+```
+
 ## Environment variables
 
 | Variable | Required to boot | Default |
@@ -508,7 +518,7 @@ python3 -m venv .venv
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Expected: every test OK, with `LiveSmokeTest` skipped. Postgres persistence tests skip unless a database is reachable at `127.0.0.1:5432` (or `ASHPAZ_TEST_POSTGRES_HOST` / `ASHPAZ_TEST_POSTGRES_PORT`). From the repo root, `node --test web/pantry.test.js web/recipes.test.js web/fridge.test.js web/plan.test.js web/shop.test.js web/persist.test.js` covers the pantry, the recipe page, the fridge confirm sheet, the meal plan, the shopping list, and server persistence.
+Expected: every test OK, with `LiveSmokeTest` skipped. Postgres persistence tests skip unless a database is reachable at `127.0.0.1:5432` (or `ASHPAZ_TEST_POSTGRES_HOST` / `ASHPAZ_TEST_POSTGRES_PORT`). From the repo root, `node --test web/pantry.test.js web/recipes.test.js web/fridge.test.js web/plan.test.js web/shop.test.js web/persist.test.js web/pwa.test.js` covers the pantry, the recipe page, the fridge confirm sheet, the meal plan, the shopping list, server persistence, and the installable web app.
 
 Smoke check without a key (controlled error, no stack trace). The stack from the demo path can already be running:
 

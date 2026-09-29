@@ -451,11 +451,17 @@ h2 {
 
 .footer {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 1rem;
   margin-top: 1rem;
   color: var(--muted);
   font-size: 0.85rem;
+}
+
+.install-note {
+  flex: 1 0 100%;
+  margin: 0;
 }
 
 .footer a {
