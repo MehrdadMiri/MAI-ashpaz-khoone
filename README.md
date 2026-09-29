@@ -10,7 +10,7 @@ Persian RTL AI meal and recipe demo (آشپزخونه).
 | api | Python (Flask + Gunicorn) | http://localhost:8000 |
 | db | Postgres 16 | localhost:5432 |
 
-The web page is a Persian RTL pantry. You can add and remove ingredient chips, load a sample set of Iranian staples, and set a numeric week budget. The list and budget stay in this browser (`localStorage`); they are not stored in Postgres. «پیشنهاد دستور» asks the shared GapGPT client (`api/gapgpt.py`) for at least three Persian recipes from those chips and the week budget. «عکس یخچال» sends one photo to the same client and shows candidate chips; nothing is added to the pantry until you confirm. Later tickets add the meal plan. Product UI is Persian RTL. This scaffold’s docs and code comments are English.
+The web page is a Persian RTL pantry. You can add and remove ingredient chips, load a sample set of Iranian staples, and set a numeric week budget. The list and budget stay in this browser (`localStorage`); they are not stored in Postgres. «پیشنهاد دستور» asks the shared GapGPT client (`api/gapgpt.py`) for at least three Persian recipes from those chips and the week budget. «عکس یخچال» sends one photo to the same client and shows candidate chips; nothing is added to the pantry until you confirm. «برنامه ۷ روزه» assigns those recipes to شنبه through جمعه and can print or download the week. The plan does not call GapGPT. Product UI is Persian RTL. This scaffold’s docs and code comments are English.
 
 The GitHub repository is public.
 
@@ -102,7 +102,7 @@ The browser calls `http://localhost:8080/api/recipes/generate`. Nginx proxies `/
 
 The request JSON is `{ "ingredients": ["برنج"], "budget": 1500000 }`. `budget` may be `null` when the week field is empty; the model prompt still includes that budget context. The api service calls GapGPT with `GapGPTClient.chat_text` and the configured model (`gpt-5.6-luna` unless `GAPGPT_MODEL` is set). The key stays in the api container. The page never receives it.
 
-A successful body is `ok: true` and `recipes` with three objects. Each object has `title`, `ingredients`, `steps`, and `cost_toman` (`null` when the model gives no number). The page shows those as RTL cards: title, ingredient tags, steps, and a rough cost badge when a cost is present. «افزودن به برنامه» is on each card and disabled until the meal-plan ticket.
+A successful body is `ok: true` and `recipes` with three objects. Each object has `title`, `ingredients`, `steps`, and `cost_toman` (`null` when the model gives no number). The page shows those as RTL cards: title, ingredient tags, steps, and a rough cost badge when a cost is present. «افزودن به برنامه» on each card opens the day sheet for the meal plan.
 
 While the request is in flight the status line is «در حال پختن ایده‌ها…» and both «پیشنهاد دستور» and «تلاش دوباره» are disabled, so a second click does not send another request. Failures stay on the page as short Persian text plus «تلاش دوباره». The page does not show stack traces, upstream bodies, or the API key.
 
@@ -155,6 +155,35 @@ Checks without a browser:
 ```bash
 node --test web/fridge.test.js
 ```
+
+## Meal plan
+
+«برنامه ۷ روزه» is on the same page, under the recipe cards. It does not call GapGPT. No API key is required to view the week, print it, or download it.
+
+The week is شنبه through جمعه, one شام per day. An empty day shows «خالی». Assignments stay in this browser (`localStorage`, key `ashpaz-khoone.plan.v1`) with the recipe titles. They are not stored in Postgres.
+
+- «افزودن به برنامه» on a recipe card opens a sheet of the seven days, the same sheet pattern as fridge confirm. Pick a day to assign that recipe. A day that already has a شام offers «جایگزین».
+- «برنامه ۷ روزه» fills every empty day from the recipes already on the page, repeating them when there are fewer than seven. Days you already filled stay as they are. With no recipes yet, the seven days stay «خالی» and the status line asks you to suggest recipes first. «انتخاب» on an empty day opens the recipe list once recipes exist.
+- On a filled day, «جایگزین» opens that list, plus «خالی» to clear the day.
+- If the week budget is set and a recipe has a تومان cost, a line under the title sums the شام costs. When the sum is over the budget the line says so. You can still assign, swap, print, and download.
+- «چاپ / خروجی» opens a sheet with «چاپ» and «دانلود مارک‌داون».
+
+Print uses `@media print` in `web/pantry.css`. To print once: open http://localhost:8080, click «چاپ / خروجی», then «چاپ». The print stylesheet sets a white background, keeps Vazirmatn, and hides the pantry, recipe cards, fridge sheet, footer, and buttons. The page that remains is the seven days and the recipe title on each day, or «خالی».
+
+«دانلود مارک‌داون» saves `برنامه-۷-روزه.md`: a heading and one line per day, with the Persian day name and the recipe title (or «خالی»).
+
+Checks without a browser and without an API key:
+
+```bash
+node --test web/plan.test.js
+```
+
+QA on http://localhost:8080, still with no key:
+
+1. Confirm seven days, شنبه first and جمعه last. Each shows «خالی» and «انتخاب».
+2. Click «چاپ / خروجی», then «چاپ». The preview is white, in Persian, and does not show the pantry or the recipe controls. Close the preview.
+3. Click «چاپ / خروجی», then «دانلود مارک‌داون». The file lists all seven days as خالی.
+4. After «پیشنهاد دستور» (that call needs a key), «افزودن به برنامه» chooses a day, «جایگزین» swaps it, and «برنامه ۷ روزه» fills any day that is still «خالی».
 
 ## Demo path (QA)
 
@@ -221,7 +250,7 @@ node --test web/fridge.test.js
      -d '{"ingredients":["برنج","عدس","پیاز"],"budget":1500000}'
    ```
 
-9. With a real key only in the gitignored `.env` or the environment, recreate the api service and repeat step 8. After the loading line, at least three Persian cards appear. Each card has a title, ingredient tags, and steps. A rough تومان badge appears when the model returns a cost. «افزودن به برنامه» is visible and disabled.
+9. With a real key only in the gitignored `.env` or the environment, recreate the api service and repeat step 8. After the loading line, at least three Persian cards appear. Each card has a title, ingredient tags, and steps. A rough تومان badge appears when the model returns a cost. «افزودن به برنامه» on a card opens the seven days. Choosing one puts that title on the week. See [Meal plan](#meal-plan).
 
    Spot-check the cards against the sample pantry (برنج، پیاز، عدس، لوبیا، سیب‌زمینی، گوجه‌فرنگی، ماست، روغن). Those names should show up as the main ingredients. The request includes the week budget you typed.
 
@@ -242,6 +271,8 @@ node --test web/fridge.test.js
 
    On http://localhost:8080, use «عکس یخچال» with that photo. After «در حال تشخیص مواد…», edit or uncheck chips, then press «تأیید و افزودن به انبار». Only the names you left checked appear in the pantry, without duplicates. «انصراف» adds nothing. Tap a new chip to remove it, the same as any other pantry chip.
 
+11. Meal plan, print, and download do not need a key. On http://localhost:8080 confirm seven days from شنبه to جمعه, each «خالی». Use «چاپ / خروجی» once, as in [Meal plan](#meal-plan). With recipe cards from step 9, assign a day, swap it with «جایگزین», and click «برنامه ۷ روزه» to fill any day that is still «خالی».
+
 ## GapGPT checks (SE/QA)
 
 Unit tests mock HTTP or talk to a local socket. They do not need a key and do not call GapGPT. `LiveSmokeTest` is skipped unless you opt in.
@@ -253,7 +284,7 @@ python3 -m venv .venv
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Expected: every test OK, with `LiveSmokeTest` skipped. From the repo root, `node --test web/pantry.test.js web/recipes.test.js web/fridge.test.js` covers the pantry, the recipe page, and the fridge confirm sheet.
+Expected: every test OK, with `LiveSmokeTest` skipped. From the repo root, `node --test web/pantry.test.js web/recipes.test.js web/fridge.test.js web/plan.test.js` covers the pantry, the recipe page, the fridge confirm sheet, and the meal plan.
 
 Smoke check without a key (controlled error, no stack trace). The stack from the demo path can already be running:
 
